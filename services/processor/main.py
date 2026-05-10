@@ -60,6 +60,8 @@ async def start_processing(request: ProcessRequest):
     task = process_excel_task.delay(file_path, request.column_mapping)
     return {"task_id": task.id}
 
+from fastapi.responses import FileResponse
+
 @app.get("/status/{task_id}")
 async def get_status(task_id: str):
     res = AsyncResult(task_id, app=celery_app)
@@ -72,3 +74,12 @@ async def get_status(task_id: str):
     elif res.state == 'FAILURE':
         return {"state": res.state, "error": str(res.info)}
     return {"state": res.state}
+
+@app.get("/download/{task_id}")
+async def download_result(task_id: str):
+    res = AsyncResult(task_id, app=celery_app)
+    if res.state == 'SUCCESS':
+        output_path = res.result.get("output_path")
+        if output_path and os.path.exists(output_path):
+            return FileResponse(output_path, filename=os.path.basename(output_path))
+    raise HTTPException(status_code=404, detail="Result file not found or task not finished.")
