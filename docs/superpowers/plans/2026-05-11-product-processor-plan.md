@@ -30,12 +30,15 @@
 - [ ] **Step 4: 지수 백오프(Exponential Backoff) 유틸리티**
     - 429 에러 발생 시 재시도하는 공통 데코레이터/유틸리티 작성.
 
-### Task 3: Stage 1 - 상품명 정제 엔진 (LLM)
+### Task 3: Stage 1 - 상품명 정제 엔진 (Multi-LLM)
 
-- [ ] **Step 1: Gemini 클라이언트 및 3단계 재시도 로직**
-    - 실패 시 프롬프트를 변경하며 최대 3회 시도하는 로직 구현.
-- [ ] **Step 2: 정제 프롬프트 설계**
-    - JSON 응답(`{"refined_name": "..."}`) 강제 및 수량 표준화 규칙 포함.
+- [ ] **Step 1: LLM 클라이언트 추상화 및 구현**
+    - `services/processor/clients/llm_client.py`: 추상 베이스 클래스 정의.
+    - `services/processor/clients/gemini_client.py`: `gemini-3.1-flash-lite` 구현.
+    - `services/processor/clients/openai_client.py`: `gpt-5.4-nano` 구현.
+- [ ] **Step 2: 3단계 재시도 로직 및 프롬프트 설계**
+    - 선택된 LLM 제공자에 맞춰 실패 시 프롬프트를 변경하며 최대 3회 시도.
+    - JSON 응답(`{"refined_name": "..."}`) 강제.
 
 ### Task 4: Stage 2 - 키워드 큐레이션 (3-Phase)
 

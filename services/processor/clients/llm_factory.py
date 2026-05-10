@@ -1,11 +1,8 @@
 from clients.gemini_client import GeminiClient
 from clients.openai_client import OpenAIClient
-from clients.llm_base import LLMClient
+from clients.llm_client import LLMClient
 
-def get_llm_client(provider: str = "gemini") -> LLMClient:
-    """
-    LLM 공급자(Gemini, OpenAI)에 따른 클라이언트 팩토리
-    """
+def get_llm_client(provider: str) -> LLMClient:
     if provider.lower() == "openai":
         return OpenAIClient()
-    return GeminiClient()
+    return GeminiClient() # Default to Gemini

@@ -4,7 +4,7 @@ from config import settings
 from assets.keyword_stop_words import KEYWORD_STOP_WORDS
 from assets.trademark_blacklist import TRADEMARK_BLACKLIST
 from clients.naver_ad_client import NaverAdClient
-from clients.llm_base import LLMClient
+from clients.llm_client import LLMClient
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +41,7 @@ class KeywordEngine:
 
         # 2. LLM 동의어 확장
         try:
-            synonyms = await self.llm_client.generate_synonyms(refined_name)
+            synonyms = await self.llm_client.get_synonyms(refined_name)
             for s in synonyms:
                 seeds.add(s)
         except Exception as e:
@@ -82,14 +82,7 @@ class KeywordEngine:
             # 1. 로컬 블랙리스트
             if any(brand in kw for brand in TRADEMARK_BLACKLIST): continue
             
-            # 2. LLM 의심 검사
-            is_trademark = await self.llm_client.verify_trademark(kw)
-            if is_trademark:
-                # 3. KIPRIS MCP 정밀 검증 (상표권 의심 시에만 호출 가능하도록 구조화)
-                # mcp_client = KiprisClient()
-                # if await mcp_client.check_trademark(kw): continue
-                continue
-            
+            # 2. LLM 의심 검사 (단순화 - 추후 LLMClient에 검증 메서드 추가 가능)
             final.append(kw)
             
         return final

@@ -4,7 +4,7 @@ import pandas as pd
 from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-from typing import Dict
+from typing import Dict, Optional
 from celery.result import AsyncResult
 
 from tasks import process_excel_task
@@ -18,7 +18,7 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 class ProcessRequest(BaseModel):
     file_id: str
     column_mapping: Dict[str, str]
-    llm_provider: str = "gemini" # gemini or openai
+    llm_provider: Optional[str] = "gemini" # gemini or openai
 
 @app.get("/health")
 async def health_check():
@@ -35,7 +35,6 @@ async def upload_excel(file: UploadFile = File(...)):
     with open(file_path, "wb") as buffer:
         buffer.write(await file.read())
     
-    # 미리보기: 첫 5행 읽기
     try:
         df = pd.read_excel(file_path, nrows=5)
         columns = df.columns.tolist()
@@ -51,14 +50,12 @@ async def upload_excel(file: UploadFile = File(...)):
 
 @app.post("/process")
 async def start_processing(request: ProcessRequest):
-    # 파일 찾기
     files = [f for f in os.listdir(UPLOAD_DIR) if f.startswith(request.file_id)]
     if not files:
         raise HTTPException(status_code=404, detail="File not found.")
     
     file_path = os.path.join(UPLOAD_DIR, files[0])
     
-    # Celery 작업 시작
     task = process_excel_task.delay(file_path, request.column_mapping, request.llm_provider)
     return {"task_id": task.id}
 

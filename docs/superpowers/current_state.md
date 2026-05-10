@@ -23,6 +23,7 @@
 
 ## 4. Tech Stack Details
 - **FastAPI**: Main web framework.
-- **SQLAlchemy (Async)**: Database ORM.
-- **Alembic**: (To be added for migrations).
-- **Celery**: Task queue (Shared with Processor).
+- **LLM Support**: Multi-provider support (Gemini, OpenAI).
+    - Gemini: `gemini-3.1-flash-lite`
+    - OpenAI: `gpt-5.4-nano`
+- **Celery**: Task queue for async processing.
