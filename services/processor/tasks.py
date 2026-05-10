@@ -3,27 +3,26 @@ import pandas as pd
 from celery_app import celery_app
 from utils.keyword_engine import KeywordEngine
 from utils.category_mapper import CategoryMapper
-from clients.gemini_client import GeminiClient
+from clients.llm_factory import get_llm_client
 
 @celery_app.task(bind=True)
-def process_excel_task(self, file_path: str, column_mapping: dict):
+def process_excel_task(self, file_path: str, column_mapping: dict, llm_provider: str = "gemini"):
     """
     엑셀 가공 전체 파이프라인 Celery Task
     """
-    # Async 함수를 실행하기 위한 이벤트 루프 생성
     loop = asyncio.get_event_loop()
     if loop.is_closed():
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
     
-    return loop.run_until_complete(self._run_pipeline(file_path, column_mapping))
+    return loop.run_until_complete(self._run_pipeline(file_path, column_mapping, llm_provider))
 
-async def _run_pipeline(self, file_path: str, column_mapping: dict):
+async def _run_pipeline(self, file_path: str, column_mapping: dict, llm_provider: str):
     df = pd.read_excel(file_path)
     total_rows = len(df)
     
-    gemini = GeminiClient()
-    keyword_engine = KeywordEngine()
+    llm_client = get_llm_client(llm_provider)
+    keyword_engine = KeywordEngine(llm_client)
     category_mapper = CategoryMapper()
     
     results = []

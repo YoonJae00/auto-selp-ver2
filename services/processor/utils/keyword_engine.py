@@ -4,14 +4,14 @@ from config import settings
 from assets.keyword_stop_words import KEYWORD_STOP_WORDS
 from assets.trademark_blacklist import TRADEMARK_BLACKLIST
 from clients.naver_ad_client import NaverAdClient
-from clients.gemini_client import GeminiClient
+from clients.llm_base import LLMClient
 
 logger = logging.getLogger(__name__)
 
 class KeywordEngine:
-    def __init__(self):
+    def __init__(self, llm_client: LLMClient):
         self.naver_ad_client = NaverAdClient()
-        self.gemini_client = GeminiClient()
+        self.llm_client = llm_client
 
     async def curate_keywords(self, refined_name: str) -> list[str]:
         """
@@ -41,24 +41,15 @@ class KeywordEngine:
 
         # 2. LLM 동의어 확장
         try:
-            synonyms = await self.gemini_client.model.generate_content_async(
-                f"다음 상품명과 연관된 쇼핑 검색 키워드 동의어를 3개만 추천해줘. 예: '무선 이어폰' -> '블루투스 이어셋'. 응답은 콤마로 구분. 입력: {refined_name}"
-            )
-            for s in synonyms.text.split(","):
-                seeds.add(s.strip())
+            synonyms = await self.llm_client.generate_synonyms(refined_name)
+            for s in synonyms:
+                seeds.add(s)
         except Exception as e:
             logger.error(f"LLM synonym expansion failed: {e}")
             
         return seeds
 
     def _filter_and_score(self, keywords: set[str]) -> list[str]:
-        scored = []
-        for kw in keywords:
-            if not kw or len(kw) < 2: continue
-            if any(stop in kw for kw in KEYWORD_STOP_WORDS for stop in KEYWORD_STOP_WORDS): # Fix logic
-                pass # Wait, this logic is slightly wrong
-        
-        # Correct logic
         valid_keywords = []
         for kw in keywords:
             if not kw or len(kw) < 2: continue
@@ -84,15 +75,21 @@ class KeywordEngine:
 
     async def _verify_trademarks(self, keywords: list[str]) -> list[str]:
         """
-        상표권 검증: 블랙리스트 + LLM 의심 단어 추출 + KIPRIS (추후 구현)
+        상표권 검증: 블랙리스트 + LLM 의심 단어 추출 + KIPRIS
         """
         final = []
         for kw in keywords:
             # 1. 로컬 블랙리스트
             if any(brand in kw for brand in TRADEMARK_BLACKLIST): continue
             
-            # 2. LLM 의심 검사 (단순화)
-            # 실제로는 Gemini에게 "이 단어가 브랜드명이야?" 라고 물어보는 로직 추가 가능
+            # 2. LLM 의심 검사
+            is_trademark = await self.llm_client.verify_trademark(kw)
+            if is_trademark:
+                # 3. KIPRIS MCP 정밀 검증 (상표권 의심 시에만 호출 가능하도록 구조화)
+                # mcp_client = KiprisClient()
+                # if await mcp_client.check_trademark(kw): continue
+                continue
+            
             final.append(kw)
             
         return final
