@@ -8,6 +8,12 @@
 - `is_admin`: Boolean
 - `encrypted_api_keys`: JSON (AES-256 Fernet encrypted values)
 
+**Table: `prompts`**
+- `key`: String (Primary Key, e.g., 'refine_stage_1')
+- `template`: Text (Prompt content with placeholders)
+- `description`: String
+- `updated_at`: DateTime
+
 ## 2. API Specifications
 ### Auth Service (Port 8001 / Gateway /api/auth/)
 - `GET /health`: Health check

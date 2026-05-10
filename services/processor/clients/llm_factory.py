@@ -1,8 +1,9 @@
 from clients.gemini_client import GeminiClient
 from clients.openai_client import OpenAIClient
 from clients.llm_client import LLMClient
+from utils.prompt_manager import PromptManager
 
-def get_llm_client(provider: str) -> LLMClient:
+def get_llm_client(provider: str, prompt_manager: PromptManager = None) -> LLMClient:
     if provider.lower() == "openai":
-        return OpenAIClient()
-    return GeminiClient() # Default to Gemini
+        return OpenAIClient(prompt_manager)
+    return GeminiClient(prompt_manager) # Default to Gemini
