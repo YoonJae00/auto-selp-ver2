@@ -1,0 +1,12 @@
+fastapi
+uvicorn
+sqlalchemy[asyncio]
+asyncpg
+pydantic-settings
+redis
+celery
+pandas
+openpyxl
+httpx
+pytest
+pytest-asyncio
