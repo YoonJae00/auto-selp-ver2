@@ -2,6 +2,7 @@ import os
 import uuid
 import pandas as pd
 from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from typing import Dict
 from celery.result import AsyncResult
@@ -16,7 +17,8 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 class ProcessRequest(BaseModel):
     file_id: str
-    column_mapping: Dict[str, str] # e.g. {"original_name": "A열", "refined_name": "B열"}
+    column_mapping: Dict[str, str]
+    llm_provider: str = "gemini" # gemini or openai
 
 @app.get("/health")
 async def health_check():
@@ -57,10 +59,8 @@ async def start_processing(request: ProcessRequest):
     file_path = os.path.join(UPLOAD_DIR, files[0])
     
     # Celery 작업 시작
-    task = process_excel_task.delay(file_path, request.column_mapping)
+    task = process_excel_task.delay(file_path, request.column_mapping, request.llm_provider)
     return {"task_id": task.id}
-
-from fastapi.responses import FileResponse
 
 @app.get("/status/{task_id}")
 async def get_status(task_id: str):

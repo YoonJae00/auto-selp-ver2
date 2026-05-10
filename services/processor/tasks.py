@@ -37,7 +37,7 @@ async def _run_pipeline(self, file_path: str, column_mapping: dict, llm_provider
         original_name = str(row[orig_col])
         
         # Stage 1: 정제
-        refined_name = await gemini.refine_product_name(original_name)
+        refined_name = await llm_client.refine_product_name(original_name)
         
         # Stage 2: 키워드
         keywords = await keyword_engine.curate_keywords(refined_name)
