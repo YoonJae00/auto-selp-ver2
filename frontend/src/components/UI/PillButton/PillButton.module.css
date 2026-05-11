@@ -1,0 +1,29 @@
+.button {
+  padding: 11px 22px;
+  border-radius: 999px;
+  font-size: 17px;
+  cursor: pointer;
+  transition: transform 0.2s, background-color 0.2s;
+  border: none;
+  font-weight: 400;
+}
+
+.button:active {
+  transform: scale(0.95);
+}
+
+.primary {
+  background-color: var(--primary);
+  color: #fff;
+}
+
+.secondary {
+  background-color: var(--canvas-parchment);
+  color: var(--primary);
+}
+
+.link {
+  background: none;
+  color: var(--primary);
+  padding: 0;
+}
