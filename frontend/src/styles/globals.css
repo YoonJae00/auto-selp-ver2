@@ -1,0 +1,15 @@
+@import url('https://rsms.me/inter/inter.css');
+
+html, body {
+  padding: 0;
+  margin: 0;
+  font-family: var(--font-body);
+  background-color: var(--canvas);
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3, h4 {
+  font-family: var(--font-display);
+  letter-spacing: -0.02em;
+}
