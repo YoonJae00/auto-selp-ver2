@@ -1,0 +1,83 @@
+.container {
+  display: flex;
+  height: 100vh;
+  background-color: var(--canvas);
+}
+
+.sidebar {
+  width: 260px;
+  background-color: var(--canvas-parchment);
+  border-right: 1px solid var(--hairline);
+  display: flex;
+  flex-direction: column;
+  padding: 20px;
+}
+
+.sidebarBrand {
+  font-size: 17px;
+  font-weight: 600;
+  margin-bottom: 40px;
+  letter-spacing: -0.01em;
+}
+
+.sidebarNav {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sidebarNav div {
+  padding: 12px 16px;
+  font-size: 14px;
+  border-radius: 10px;
+  cursor: pointer;
+  color: var(--ink);
+  transition: background-color 0.2s;
+}
+
+.sidebarNav div:hover {
+  background-color: rgba(0, 0, 0, 0.05);
+}
+
+.activeNavItem {
+  background-color: rgba(0, 0, 0, 0.05);
+  font-weight: 600;
+}
+
+.main {
+  flex: 1;
+  padding: 40px 60px;
+  overflow-y: auto;
+}
+
+.pageTitle {
+  font-size: 34px;
+  font-weight: 600;
+  margin-bottom: 32px;
+  letter-spacing: -0.02em;
+}
+
+.statsGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 24px;
+}
+
+.card {
+  background-color: var(--canvas);
+  border: 1px solid var(--hairline);
+  border-radius: 18px;
+  padding: 24px;
+}
+
+.card h3 {
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--ink-muted-48);
+  margin: 0 0 8px;
+}
+
+.cardValue {
+  font-size: 28px;
+  font-weight: 600;
+}
