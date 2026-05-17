@@ -39,6 +39,32 @@ services:
     depends_on:
       - db
       - redis
+    volumes:
+      - uploads_data:/app/uploads
+
+  worker:
+    build: ./services/processor
+    command: celery -A tasks.celery_app worker --loglevel=info
+    env_file: .env
+    depends_on:
+      - db
+      - redis
+    volumes:
+      - uploads_data:/app/uploads
+    restart: always
+
+  kipris-mcp:
+    image: python:3.11-slim
+    command: >
+      bash -c "apt-get update && apt-get install -y git &&
+      git clone https://github.com/nuri428/mcp_kipris.git /app &&
+      cd /app && pip install uv && uv sync &&
+      uv run mcp_kipris"
+    environment:
+      - KIPRIS_API_KEY=${KIPRIS_API_KEY}
+    ports:
+      - "8080:8080"
 
 volumes:
   postgres_data:
+  uploads_data:
