@@ -26,17 +26,29 @@
   gap: 4px;
 }
 
-.sidebarNav div {
+.sidebarNav a, .sidebarNav div {
   padding: 12px 16px;
   font-size: 14px;
   border-radius: 10px;
   cursor: pointer;
   color: var(--ink);
+  text-decoration: none;
   transition: background-color 0.2s;
 }
 
-.sidebarNav div:hover {
+.sidebarNav a:hover, .sidebarNav div:hover {
   background-color: rgba(0, 0, 0, 0.05);
+}
+
+.userInfo {
+  margin-bottom: 24px;
+  padding: 0 16px;
+}
+
+.username {
+  font-size: 14px;
+  font-weight: 500;
+  margin-bottom: 4px;
 }
 
 .activeNavItem {
@@ -46,7 +58,8 @@
 
 .main {
   flex: 1;
-  padding: 40px 60px;
+  padding: 60px 80px;
+  background-color: #fbfbfd; /* Very soft light gray for workspace */
   overflow-y: auto;
 }
 
