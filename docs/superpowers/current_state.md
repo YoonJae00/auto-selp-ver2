@@ -40,7 +40,8 @@
 - **UI**: Apple-style design, Drag & Drop Excel upload, column mapping dropdowns.
 - **Dashboard**: Implemented 3-tier Command Center layout with refined workspace padding and soft background for premium feel.
 - **Components**: Reusable Dashboard components (KpiCard, ProgressBar, ActionItem) with Vanilla CSS modules.
-- **Task Polling**: Global `useTaskPolling` hook for background status monitoring.
+- **Intelligence Capsule**: Apple Intelligence-inspired global status indicator with Siri-glow animation and glassmorphism.
+- **Task Polling**: Global `useTaskPolling` hook for background status monitoring (Stabilized with stable frequency and Auth Guard).
 - **Settings**: Global LLM engine selection and mapping persistence (LocalStorage).
 
 

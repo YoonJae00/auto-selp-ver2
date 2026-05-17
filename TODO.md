@@ -23,5 +23,5 @@
 ## Phase 4: Intelligence Capsule & Background Processing
 - [x] **Global Task Store**: Create `taskStore` with Zustand persistence.
 - [x] **Background Polling**: Implement global `useTaskPolling` hook.
-- [ ] **Intelligence Capsule UI**: Implement Siri-glow animated capsule component.
+- [x] **Intelligence Capsule UI**: Implement Siri-glow animated capsule component.
 - [ ] **Process Page Refactoring**: Integrate global store and remove local polling.
