@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { useTaskStore } from '@/store/taskStore';
+import { useAuthStore } from '@/store/authStore';
 import { api } from '@/lib/api';
 
 /**
@@ -7,14 +8,20 @@ import { api } from '@/lib/api';
  * and update the task store with the latest progress and status.
  */
 export function useTaskPolling() {
-  const { tasks, updateTask } = useTaskStore();
+  const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
+  const updateTask = useTaskStore((state) => state.updateTask);
 
   useEffect(() => {
-    // Filter tasks that need polling
-    const activeTasks = tasks.filter(t => t.status === 'PENDING' || t.status === 'PROGRESS');
-    if (activeTasks.length === 0) return;
+    // Only poll if the user is authenticated
+    if (!isAuthenticated) return;
 
     const interval = setInterval(async () => {
+      // Get the latest tasks from the store state to avoid triggering effect re-runs
+      const { tasks } = useTaskStore.getState();
+      const activeTasks = tasks.filter(t => t.status === 'PENDING' || t.status === 'PROGRESS');
+      
+      if (activeTasks.length === 0) return;
+
       for (const task of activeTasks) {
         try {
           const res = await api.get<{ state: string; meta?: { percent: number } }>(`/api/processor/status/${task.id}`);
@@ -33,5 +40,5 @@ export function useTaskPolling() {
     }, 2000);
 
     return () => clearInterval(interval);
-  }, [tasks, updateTask]);
+  }, [isAuthenticated, updateTask]);
 }
