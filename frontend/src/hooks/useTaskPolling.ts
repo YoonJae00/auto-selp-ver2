@@ -29,7 +29,8 @@ export function useTaskPolling() {
           if (res.state === 'PROGRESS' && res.meta) {
             updateTask(task.id, { progress: res.meta.percent, status: 'PROGRESS' });
           } else if (res.state === 'SUCCESS') {
-            updateTask(task.id, { progress: 100, status: 'SUCCESS' });
+            const downloadUrl = `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost'}/api/processor/download/${task.id}`;
+            updateTask(task.id, { progress: 100, status: 'SUCCESS', resultPath: downloadUrl });
           } else if (res.state === 'FAILURE') {
             updateTask(task.id, { status: 'FAILURE' });
           }
