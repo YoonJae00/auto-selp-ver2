@@ -1,18 +1,18 @@
 .kpiCard {
-  background: #fff;
+  background: var(--canvas);
   padding: 24px;
   border-radius: 20px;
   border: 1px solid var(--hairline);
 }
 .kpiTitle { font-size: 14px; color: var(--ink-muted-48); margin-bottom: 8px; font-weight: 400; }
-.kpiValue { font-size: 28px; font-weight: 600; margin-bottom: 8px; }
+.kpiValue { font-size: 28px; font-weight: 600; margin-bottom: 8px; color: var(--ink); }
 .kpiTrend { font-size: 13px; font-weight: 500; }
 .kpiTrend.up { color: #34c759; }
 .kpiTrend.down { color: #ff3b30; }
 
 .progressContainer { margin-bottom: 20px; }
-.progressHeader { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 14px; }
-.progressTrack { height: 8px; background: #f0f0f2; border-radius: 4px; overflow: hidden; }
+.progressHeader { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 14px; color: var(--ink); }
+.progressTrack { height: 8px; background: var(--canvas-parchment); border-radius: 4px; overflow: hidden; }
 .progressFill { height: 100%; background: var(--primary); transition: width 0.3s ease; }
 
 .actionItem {
@@ -20,12 +20,15 @@
   justify-content: space-between;
   align-items: center;
   padding: 16px 20px;
-  background: #fff;
+  background: var(--canvas);
   border-radius: 16px;
   border-left: 4px solid var(--primary);
   margin-bottom: 12px;
+  border-top: 1px solid var(--hairline);
+  border-right: 1px solid var(--hairline);
+  border-bottom: 1px solid var(--hairline);
 }
 .actionItem.error { border-left-color: #ff3b30; }
 .actionItem.warning { border-left-color: #ff9500; }
-.actionTitle { font-size: 16px; font-weight: 600; margin: 0 0 4px; }
+.actionTitle { font-size: 16px; font-weight: 600; margin: 0 0 4px; color: var(--ink); }
 .actionDescription { font-size: 14px; color: var(--ink-muted-48); margin: 0; }

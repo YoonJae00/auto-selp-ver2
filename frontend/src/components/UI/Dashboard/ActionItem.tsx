@@ -1,5 +1,6 @@
 import styles from './Dashboard.module.css';
 import PillButton from '../PillButton/PillButton';
+import clsx from 'clsx';
 
 interface ActionItemProps {
   title: string;
@@ -9,12 +10,20 @@ interface ActionItemProps {
   type?: 'warning' | 'error' | 'info';
 }
 
-export const ActionItem = ({ title, description, actionLabel, onAction, type = 'info' }: ActionItemProps) => (
-  <div className={`${styles.actionItem} ${styles[type]}`}>
-    <div className={styles.actionContent}>
-      <h4 className={styles.actionTitle}>{title}</h4>
-      <p className={styles.actionDescription}>{description}</p>
+export default function ActionItem({ 
+  title, 
+  description, 
+  actionLabel, 
+  onAction, 
+  type = 'info' 
+}: ActionItemProps) {
+  return (
+    <div className={clsx(styles.actionItem, type && styles[type])}>
+      <div className={styles.actionContent}>
+        <h4 className={styles.actionTitle}>{title}</h4>
+        <p className={styles.actionDescription}>{description}</p>
+      </div>
+      <PillButton variant="secondary" onClick={onAction}>{actionLabel}</PillButton>
     </div>
-    <PillButton variant="secondary" onClick={onAction}>{actionLabel}</PillButton>
-  </div>
-);
+  );
+}
