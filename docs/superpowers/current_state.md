@@ -1,35 +1,41 @@
-# Auto-Selp Project Implementation State (2026-05-11)
+# Auto-Selp Project Implementation State (2026-05-17)
 
-## 1. DB Schema (Auth Service)
+## 1. DB Schema (Auth & Processor)
 **Table: `users`**
 - `id`: UUID (Primary Key)
 - `username`: String (Unique, Indexed)
 - `hashed_password`: String (PBKDF2-SHA256)
 - `is_admin`: Boolean
-- `encrypted_api_keys`: JSON (AES-256 Fernet encrypted values)
+- `encrypted_api_keys`: JSON (AES-256 encrypted)
 
 **Table: `prompts`**
-- `key`: String (Primary Key, e.g., 'refine_stage_1')
-- `template`: Text (Prompt content with placeholders)
+- `key`: String (Primary Key, e.g., 'refine_name')
+- `template`: Text
 - `description`: String
 - `updated_at`: DateTime
 
-## 2. API Specifications
-### Auth Service (Port 8001 / Gateway /api/auth/)
-- `GET /health`: Health check
-- `POST /register`: User registration
-- `POST /token`: Login & JWT acquisition
-- `GET /me`: Current user info (JWT required)
+## 2. Implemented Services
 
-## 3. Infrastructure Configuration
-- **API Gateway**: Nginx on port 80.
-- **Database**: PostgreSQL 16 on port 5432.
-- **Cache/Queue**: Redis 7 on port 6379.
-- **Encryption**: AES-256 (Fernet) with a 32-byte base64 key.
+### Auth Service (Port 8001)
+- JWT-based authentication flow (Register/Login/Me).
+- Password hashing and API key encryption (Fernet).
+- CORS enabled for frontend integration.
 
-## 4. Tech Stack Details
-- **FastAPI**: Main web framework.
-- **LLM Support**: Multi-provider support (Gemini, OpenAI).
-    - Gemini: `gemini-3.1-flash-lite`
-    - OpenAI: `gpt-5.4-nano`
-- **Celery**: Task queue for async processing.
+### Product Processor Service (Port 8002)
+- Async pipeline using Celery & Redis.
+- **Stage 1 (Refine)**: Gemini 3.1 Flash-Lite / GPT-4o based naming refinement.
+- **Stage 2 (Keyword)**: 3-Phase curation with Naver Search AD API (Signature & Encoding fixed).
+- **Stage 3 (Category)**: Naver/Coupang individual category matching (Independent columns).
+- **Infrastructure**: Shared Docker volume (`uploads_data`) for Processor and Worker containers.
+
+### Frontend (Port 3000)
+- **Auth**: Zustand-based persistent state management.
+- **UI**: Apple-style design, Drag & Drop Excel upload, column mapping dropdowns.
+- **Components**: Reusable Dashboard components (KpiCard, ProgressBar, ActionItem) with Vanilla CSS modules.
+- **Settings**: Global LLM engine selection and mapping persistence (LocalStorage).
+
+## 3. Tech Stack Details
+- **FastAPI**: Main backend framework.
+- **LLM Support**: Gemini 3.1 Flash-Lite, OpenAI gpt-5.4-nano.
+- **Celery**: Persistent worker processes for heavy tasks.
+- **Nginx**: API Gateway for service routing.
