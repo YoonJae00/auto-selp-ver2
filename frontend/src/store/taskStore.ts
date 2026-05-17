@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
+import { persist, createJSONStorage } from 'zustand/middleware';
 
 export interface Task {
   id: string;
@@ -8,6 +8,8 @@ export interface Task {
   status: 'PENDING' | 'PROGRESS' | 'SUCCESS' | 'FAILURE';
   resultPath?: string;
   startTime: number;
+  warnings?: Record<number, any[]>;
+  result?: any;
 }
 
 interface TaskState {
@@ -33,6 +35,9 @@ export const useTaskStore = create<TaskState>()(
         tasks: state.tasks.filter((t) => t.status !== 'SUCCESS' && t.status !== 'FAILURE')
       })),
     }),
-    { name: 'task-storage' }
+    { 
+      name: 'task-storage',
+      storage: createJSONStorage(() => localStorage),
+    }
   )
 );

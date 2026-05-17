@@ -16,7 +16,17 @@ from models import Prompt
 from schemas import ProcessRequest, PromptUpdate, PromptResponse
 from utils.prompt_manager import PromptManager
 
+from fastapi.middleware.cors import CORSMiddleware
+
 app = FastAPI(title="Auto-Selp Product Processor")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 UPLOAD_DIR = "uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -44,6 +54,8 @@ async def upload_excel(file: UploadFile = File(...)):
     
     try:
         df = pd.read_excel(file_path, nrows=5)
+        # Handle NaN values which are not JSON compliant
+        df = df.fillna("")
         columns = df.columns.tolist()
         preview = df.to_dict(orient="records")
         return {

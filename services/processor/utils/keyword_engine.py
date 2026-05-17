@@ -5,6 +5,7 @@ from assets.keyword_stop_words import KEYWORD_STOP_WORDS
 from assets.trademark_blacklist import TRADEMARK_BLACKLIST
 from clients.naver_ad_client import NaverAdClient
 from clients.llm_client import LLMClient
+from clients.kipris_client import KiprisClient
 
 logger = logging.getLogger(__name__)
 
@@ -12,10 +13,12 @@ class KeywordEngine:
     def __init__(self, llm_client: LLMClient):
         self.naver_ad_client = NaverAdClient()
         self.llm_client = llm_client
+        self.kipris_client = KiprisClient()
 
-    async def curate_keywords(self, refined_name: str) -> list[str]:
+    async def curate_keywords(self, refined_name: str) -> tuple[list[str], list[dict]]:
         """
         3-Phase 키워드 큐레이션 워크플로우
+        반환값: (safe_keywords, warnings)
         """
         # Phase 1: 시드 수집
         seeds = await self._collect_seeds(refined_name)
@@ -24,9 +27,9 @@ class KeywordEngine:
         scored_keywords = self._filter_and_score(seeds)
         
         # Phase 3: 상표권 및 최종 검증 (하이브리드)
-        final_keywords = await self._verify_trademarks(scored_keywords[:20])
+        safe_keywords, warnings = await self._verify_trademarks(scored_keywords[:20])
         
-        return final_keywords[:10]
+        return safe_keywords[:10], warnings
 
     async def _collect_seeds(self, refined_name: str) -> set[str]:
         seeds = {refined_name}
@@ -73,16 +76,31 @@ class KeywordEngine:
         valid_keywords.sort(key=lambda x: x[1], reverse=True)
         return [x[0] for x in valid_keywords]
 
-    async def _verify_trademarks(self, keywords: list[str]) -> list[str]:
+    async def _verify_trademarks(self, keywords: list[str]) -> tuple[list[str], list[dict]]:
         """
-        상표권 검증: 블랙리스트 + LLM 의심 단어 추출 + KIPRIS
+        상표권 검증: 블랙리스트 + KIPRIS 실시간 검색
         """
-        final = []
+        safe = []
+        warnings = []
+        
         for kw in keywords:
-            # 1. 로컬 블랙리스트
-            if any(brand in kw for brand in TRADEMARK_BLACKLIST): continue
+            # 1. 로컬 블랙리스트 (완전 제외)
+            if any(brand in kw for brand in TRADEMARK_BLACKLIST):
+                continue
             
-            # 2. LLM 의심 검사 (단순화 - 추후 LLMClient에 검증 메서드 추가 가능)
-            final.append(kw)
+            # 2. KIPRIS 실시간 검증
+            try:
+                res = await self.kipris_client.search_trademark(kw)
+                if res.get("exists"):
+                    warnings.append({
+                        "keyword": kw,
+                        "info": res
+                    })
+                else:
+                    safe.append(kw)
+            except Exception as e:
+                logger.error(f"KIPRIS verification failed for {kw}: {e}")
+                # 에러 발생 시 안전하게 safe에 추가 (또는 warning 처리)
+                safe.append(kw)
             
-        return final
+        return safe, warnings

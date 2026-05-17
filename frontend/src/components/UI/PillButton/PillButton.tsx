@@ -5,12 +5,21 @@ interface Props {
   children: React.ReactNode;
   variant?: 'primary' | 'secondary' | 'link';
   onClick?: () => void;
+  type?: 'button' | 'submit' | 'reset';
+  className?: string;
 }
 
-export default function PillButton({ children, variant = 'primary', onClick }: Props) {
+export default function PillButton({ 
+  children, 
+  variant = 'primary', 
+  onClick, 
+  type = 'button',
+  className 
+}: Props) {
   return (
     <button 
-      className={clsx(styles.button, styles[variant])}
+      type={type}
+      className={clsx(styles.button, styles[variant], className)}
       onClick={onClick}
     >
       {children}

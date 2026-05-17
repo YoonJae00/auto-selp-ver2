@@ -5,6 +5,7 @@ import { api } from '@/lib/api';
 import { useSettingsStore } from '@/store/settingsStore';
 import { useTaskStore } from '@/store/taskStore';
 import PillButton from '@/components/UI/PillButton/PillButton';
+import TrademarkModal from './TrademarkModal';
 import styles from './process.module.css';
 
 type Step = 'UPLOAD' | 'MAPPING' | 'PROCESSING' | 'COMPLETED';
@@ -29,7 +30,19 @@ export default function ProcessPage() {
   const activeTask = tasks.find(t => t.id === activeTaskId);
 
   const [error, setError] = useState<string | null>(null);
+  const [showWarnings, setShowWarnings] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Recovery logic on mount: if there's a running task, jump to processing step
+  useEffect(() => {
+    if (step === 'UPLOAD') {
+      const runningTask = tasks.find(t => t.status === 'PENDING' || t.status === 'PROGRESS');
+      if (runningTask) {
+        setActiveTaskId(runningTask.id);
+        setStep('PROCESSING');
+      }
+    }
+  }, [tasks, step]);
 
   // Sync local step with task status
   useEffect(() => {
@@ -51,12 +64,8 @@ export default function ProcessPage() {
 
     setError(null);
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost'}/api/processor/upload`, {
-        method: 'POST',
-        body: formData,
-      });
-      if (!res.ok) throw new Error('Upload failed');
-      const data = await res.json();
+      const data = await api.post<UploadResponse>('/api/processor/upload', formData);
+      
       setUploadData(data);
       
       // 기존에 저장된 매핑값이 업로드된 파일의 컬럼에 존재하는지 확인하고, 
@@ -245,6 +254,17 @@ export default function ProcessPage() {
             <div className={styles.statusText}>
               {step === 'PROCESSING' ? `상품을 가공하고 있습니다... (${activeTask?.progress || 0}%)` : '가공이 완료되었습니다!'}
             </div>
+
+            {step === 'COMPLETED' && activeTask?.warnings && Object.keys(activeTask.warnings).length > 0 && (
+              <div className={styles.warningSummary}>
+                <div className={styles.warningText}>
+                  <span className={styles.warningIcon}>⚠️</span>
+                  <span>상표권 침해 의심 키워드가 {Object.values(activeTask.warnings).flat().length}개 발견되었습니다.</span>
+                </div>
+                <PillButton variant="secondary" onClick={() => setShowWarnings(true)}>상세보기</PillButton>
+              </div>
+            )}
+
             <div className={styles.progressBar}>
               <div className={styles.progressFill} style={{ width: `${activeTask?.progress || 0}%` }}></div>
             </div>
@@ -253,6 +273,13 @@ export default function ProcessPage() {
             )}
           </div>
         </section>
+      )}
+
+      {showWarnings && activeTask?.warnings && (
+        <TrademarkModal 
+          warnings={activeTask.warnings} 
+          onClose={() => setShowWarnings(false)} 
+        />
       )}
     </div>
   );

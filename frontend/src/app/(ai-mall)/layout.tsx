@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
 import { useAuthStore } from '@/store/authStore';
@@ -23,7 +23,14 @@ export default function AiMallLayout({
     }
   }, [isLoading, isAuthenticated, router]);
 
-  if (isLoading) return <div>Loading...</div>; // Or a better loading spinner
+  if (isLoading) {
+    return (
+      <div className={styles.loadingContainer}>
+        접속 중...
+      </div>
+    );
+  }
+
   if (!isAuthenticated) return null;
 
   const handleLogout = async () => {

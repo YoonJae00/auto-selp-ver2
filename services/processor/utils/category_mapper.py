@@ -16,8 +16,13 @@ class CategoryMapper:
     def _load_mapping(self):
         if self._df is None:
             try:
-                # Naver mapping file usually has paths like "대>중>소>세"
+                # Naver mapping file: ['카테고리번호', '대분류', '중분류', '소분류', '세분류']
                 self._df = pd.read_excel(self.mapping_file)
+                # Fill NaN with empty string for path joining
+                temp_df = self._df.fillna("")
+                self._df['category_path'] = temp_df.apply(
+                    lambda x: f"{x['대분류']}>{x['중분류']}>{x['소분류']}>{x['세분류']}".strip(">"), axis=1
+                )
             except Exception as e:
                 logger.error(f"Failed to load Naver category mapping: {e}")
                 self._df = pd.DataFrame()
@@ -33,23 +38,25 @@ class CategoryMapper:
             if not items: return {"path": "", "id": ""}
             
             item = items[0]
-            path = f"{item['category1']}>{item['category2']}>{item['category3']}>{item['category4']}"
+            # Construct path from API response
+            api_path = f"{item['category1']}>{item['category2']}>{item['category3']}>{item['category4']}".strip(">")
             
             # 2. 로컬 매핑 (완전 일치)
             self._load_mapping()
-            # 파일 컬럼명 가정: 'category_path', 'category_id'
-            match = self._df[self._df['category_path'] == path]
-            if not match.empty:
-                return {"path": path, "id": str(match.iloc[0]['category_id'])}
             
-            # 3. 부분 일치 (세분류 기준)
-            last_cat = item['category4']
-            if last_cat:
-                partial_match = self._df[self._df['category_path'].str.contains(last_cat, na=False)]
-                if not partial_match.empty:
-                    return {"path": partial_match.iloc[0]['category_path'], "id": str(partial_match.iloc[0]['category_id'])}
+            if 'category_path' in self._df.columns:
+                match = self._df[self._df['category_path'] == api_path]
+                if not match.empty:
+                    return {"path": api_path, "id": str(match.iloc[0]['카테고리번호'])}
+                
+                # 3. 부분 일치 (세분류 기준)
+                last_cat = item.get('category4') or item.get('category3')
+                if last_cat:
+                    partial_match = self._df[self._df['category_path'].str.contains(last_cat, na=False)]
+                    if not partial_match.empty:
+                        return {"path": partial_match.iloc[0]['category_path'], "id": str(partial_match.iloc[0]['카테고리번호'])}
             
-            return {"path": path, "id": "Manual Check"}
+            return {"path": api_path, "id": "Manual Check"}
         except Exception as e:
             logger.error(f"Naver category mapping failed: {e}")
             return {"path": "Error", "id": ""}

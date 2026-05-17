@@ -1,7 +1,7 @@
 .container {
   position: fixed;
   top: 20px;
-  left: calc(50% + 130px); /* 130px = 260px sidebar / 2 */
+  left: calc(50% + (var(--sidebar-width) / 2));
   transform: translateX(-50%);
   z-index: 1000;
   display: flex;

@@ -24,13 +24,27 @@ export function useTaskPolling() {
 
       for (const task of activeTasks) {
         try {
-          const res = await api.get<{ state: string; meta?: { percent: number } }>(`/api/processor/status/${task.id}`);
+          const res = await api.get<{ 
+            state: string; 
+            meta?: { percent: number; warnings?: Record<number, any[]> };
+            result?: any;
+          }>(`/api/processor/status/${task.id}`);
           
           if (res.state === 'PROGRESS' && res.meta) {
-            updateTask(task.id, { progress: res.meta.percent, status: 'PROGRESS' });
+            updateTask(task.id, { 
+              progress: res.meta.percent, 
+              status: 'PROGRESS',
+              warnings: res.meta.warnings 
+            });
           } else if (res.state === 'SUCCESS') {
             const downloadUrl = `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost'}/api/processor/download/${task.id}`;
-            updateTask(task.id, { progress: 100, status: 'SUCCESS', resultPath: downloadUrl });
+            updateTask(task.id, { 
+              progress: 100, 
+              status: 'SUCCESS', 
+              resultPath: downloadUrl,
+              warnings: res.result?.warnings,
+              result: res.result
+            });
           } else if (res.state === 'FAILURE') {
             updateTask(task.id, { status: 'FAILURE' });
           }

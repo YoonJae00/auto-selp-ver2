@@ -1,0 +1,293 @@
+.container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  width: 100%;
+  padding: 40px 20px;
+  position: relative;
+  overflow: hidden;
+  /* Deep base color */
+  background-color: #f5f5f7;
+}
+
+/* Animated Mesh Gradient Blobs */
+.container::before,
+.container::after,
+.blob1,
+.blob2 {
+  content: '';
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(60px); /* Slightly reduced blur to keep color density */
+  z-index: 0;
+  opacity: 0.8; /* Increased opacity */
+  animation: move 20s infinite alternate ease-in-out;
+}
+
+/* Primary Blue Blob - Vibrant */
+.container::before {
+  width: 600px;
+  height: 600px;
+  background: radial-gradient(circle, rgba(0, 102, 204, 0.3) 0%, rgba(0, 102, 204, 0) 70%);
+  top: -150px;
+  right: -100px;
+  animation-duration: 25s;
+}
+
+/* Soft Indigo Blob */
+.container::after {
+  width: 700px;
+  height: 700px;
+  background: radial-gradient(circle, rgba(94, 92, 230, 0.25) 0%, rgba(94, 92, 230, 0) 70%);
+  bottom: -200px;
+  left: -150px;
+  animation-duration: 30s;
+  animation-delay: -5s;
+}
+
+/* Third Pinkish-Red Blob */
+.blob1 {
+  width: 500px;
+  height: 500px;
+  background: radial-gradient(circle, rgba(255, 59, 48, 0.2) 0%, rgba(255, 59, 48, 0) 70%);
+  top: 15%;
+  left: -100px;
+  animation-duration: 22s;
+  animation-delay: -10s;
+}
+
+/* Fourth Teal Blob */
+.blob2 {
+  width: 450px;
+  height: 450px;
+  background: radial-gradient(circle, rgba(48, 209, 88, 0.18) 0%, rgba(48, 209, 88, 0) 70%);
+  bottom: 15%;
+  right: -150px;
+  animation-duration: 28s;
+  animation-delay: -15s;
+}
+
+/* Subtle Grain Texture Overlay */
+.grain {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0.03;
+  pointer-events: none;
+  z-index: 1;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+}
+
+@keyframes move {
+  0% { transform: translate(0, 0) rotate(0deg) scale(1); }
+  33% { transform: translate(10%, 15%) rotate(120deg) scale(1.1); }
+  66% { transform: translate(-15%, 5%) rotate(240deg) scale(0.9); }
+  100% { transform: translate(0, 0) rotate(360deg) scale(1); }
+}
+
+.card {
+  background: rgba(255, 255, 255, 0.72);
+  backdrop-filter: saturate(180%) blur(30px);
+  -webkit-backdrop-filter: saturate(180%) blur(30px);
+  padding: 56px 48px;
+  border-radius: 32px;
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  box-shadow: 
+    0 20px 40px rgba(0, 0, 0, 0.04),
+    0 1px 1px rgba(0, 0, 0, 0.02);
+  width: 100%;
+  max-width: 440px;
+  z-index: 10;
+  position: relative;
+}
+
+.title {
+  font-family: var(--font-display);
+  font-size: 34px;
+  font-weight: 600;
+  letter-spacing: -0.022em;
+  margin-bottom: 12px;
+  text-align: center;
+  color: var(--ink);
+}
+
+.subtitle {
+  color: var(--ink-muted-80);
+  font-size: 17px;
+  text-align: center;
+  margin-bottom: 48px;
+  letter-spacing: -0.022em;
+  line-height: 1.4;
+}
+
+.formGroup {
+  margin-bottom: 28px;
+}
+
+.label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 10px;
+  color: var(--ink-muted-80);
+  padding-left: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.input {
+  width: 100%;
+  padding: 16px 18px;
+  border-radius: 16px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  background: rgba(255, 255, 255, 0.6);
+  font-size: 17px;
+  outline: none;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  color: var(--ink);
+}
+
+.input:focus {
+  border-color: var(--primary);
+  background: #fff;
+  box-shadow: 0 0 0 4px rgba(0, 102, 204, 0.12);
+}
+
+.input::placeholder {
+  color: var(--ink-muted-48);
+}
+
+.buttonWrapper {
+  margin-top: 48px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.submitButton {
+  width: 100%;
+  height: 54px;
+  font-weight: 600;
+  font-size: 17px;
+  border-radius: 18px; /* Slightly more squircle-friendly */
+}
+
+.error {
+  background: rgba(255, 59, 48, 0.08);
+  color: #ff3b30;
+  padding: 14px;
+  border-radius: 14px;
+  font-size: 14px;
+  margin-bottom: 28px;
+  text-align: center;
+  border: 1px solid rgba(255, 59, 48, 0.2);
+  animation: shake 0.4s ease-in-out;
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-4px); }
+  75% { transform: translateX(4px); }
+}
+
+.link {
+  color: var(--primary);
+  text-decoration: none;
+  font-size: 15px;
+  font-weight: 500;
+  text-align: center;
+  transition: opacity 0.2s;
+}
+
+.link:hover {
+  opacity: 0.7;
+}
+
+.checkboxGroup {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 4px;
+}
+
+.checkboxGroup input[type="checkbox"] {
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  cursor: pointer;
+  accent-color: var(--primary);
+}
+
+.divider {
+  display: flex;
+  align-items: center;
+  margin: 32px 0;
+  color: var(--ink-muted-48);
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.divider::before,
+.divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: rgba(0, 0, 0, 0.08);
+}
+
+.divider span {
+  padding: 0 16px;
+}
+
+.oauthWrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.oauthButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  width: 100%;
+  height: 52px;
+  border-radius: 16px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  background: #fff;
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--ink);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.oauthButton:hover {
+  background: #f9f9f9;
+  border-color: rgba(0, 0, 0, 0.15);
+  transform: translateY(-1px);
+}
+
+.oauthButton.google {
+  /* Google specific styles if needed */
+}
+
+.oauthButton.naver {
+  background: #03C75A;
+  color: #fff;
+  border: none;
+}
+
+.oauthButton.naver:hover {
+  background: #02b351;
+}
+
+.oauthIcon {
+  width: 20px;
+  height: 20px;
+}

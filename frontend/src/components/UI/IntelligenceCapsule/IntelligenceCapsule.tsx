@@ -8,14 +8,19 @@ import clsx from 'clsx';
 export default function IntelligenceCapsule() {
   const { tasks, removeTask, clearCompleted } = useTaskStore();
   const [isExpanded, setIsExpanded] = useState(false);
+  const [isMounted, setIsMounted] = React.useState(false);
+
+  React.useEffect(() => {
+    setIsMounted(true);
+  }, []);
 
   // Active tasks that are currently being processed
   const activeTasks = useMemo(() => 
     tasks.filter(t => t.status === 'PENDING' || t.status === 'PROGRESS'),
   [tasks]);
 
-  // If no tasks at all, don't show anything
-  if (tasks.length === 0) return null;
+  // If not mounted yet or no tasks at all, don't show anything
+  if (!isMounted || tasks.length === 0) return null;
 
   const isActive = activeTasks.length > 0;
   

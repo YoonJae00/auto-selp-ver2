@@ -31,8 +31,9 @@
 - Async pipeline using Celery & Redis.
 - **Stage 1 (Refine)**: Gemini 3.1 Flash-Lite / GPT-4o based naming refinement.
 - **Stage 2 (Keyword)**: 3-Phase curation with Naver Search AD API (Signature & Encoding fixed).
+- **Stage 2.5 (Trademark)**: KIPRIS MCP integration for real-time trademark verification with detailed warning data (Title, Status, Applicant).
 - **Stage 3 (Category)**: Naver/Coupang individual category matching (Independent columns).
-- **Infrastructure**: Shared Docker volume (`uploads_data`) for Processor and Worker containers.
+- **Infrastructure**: Shared Docker volume (`uploads_data`) for Processor and Worker containers, and **KIPRIS MCP** dedicated service.
 
 - **Frontend (Port 3000)**
 - **Auth**: Zustand-based persistent state management.
@@ -41,6 +42,7 @@
 - **Dashboard**: Implemented 3-tier Command Center layout with refined workspace padding and soft background for premium feel.
 - **Components**: Reusable Dashboard components (KpiCard, ProgressBar, ActionItem) with Vanilla CSS modules.
 - **Intelligence Capsule**: Apple Intelligence-inspired global status indicator with Siri-glow animation and glassmorphism.
+- **Trademark Verification**: Result modal and warning badges for potential copyright issues during processing.
 - **Task Polling**: Global `useTaskPolling` hook for background status monitoring (Stabilized with stable frequency and Auth Guard).
 - **Settings**: Global LLM engine selection and mapping persistence (LocalStorage).
 
@@ -48,5 +50,6 @@
 ## 3. Tech Stack Details
 - **FastAPI**: Main backend framework.
 - **LLM Support**: Gemini 3.1 Flash-Lite, OpenAI gpt-5.4-nano.
+- **MCP (Model Context Protocol)**: KIPRIS search integration for external data retrieval.
 - **Celery**: Persistent worker processes for heavy tasks.
 - **Nginx**: API Gateway for service routing.

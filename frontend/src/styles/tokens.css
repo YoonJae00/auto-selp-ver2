@@ -10,6 +10,8 @@
   --hairline: #e0e0e0;
   --surface-black: #000000;
   
+  --sidebar-width: 260px;
+  
   --font-display: 'Inter', system-ui, -apple-system, sans-serif;
   --font-body: 'Inter', system-ui, -apple-system, sans-serif;
 }
