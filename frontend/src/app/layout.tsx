@@ -1,5 +1,7 @@
 import '@/styles/globals.css';
 import '@/styles/tokens.css';
+import AuthProvider from '@/components/AuthProvider';
+import TaskPollingProvider from '@/components/TaskPollingProvider';
 
 export default function RootLayout({
   children,
@@ -8,7 +10,13 @@ export default function RootLayout({
 }) {
   return (
     <html lang="ko">
-      <body>{children}</body>
+      <body>
+        <AuthProvider>
+          <TaskPollingProvider>
+            {children}
+          </TaskPollingProvider>
+        </AuthProvider>
+      </body>
     </html>
   );
 }
