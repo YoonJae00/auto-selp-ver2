@@ -141,13 +141,13 @@ git commit -m "feat: add reusable dashboard components"
 
 ---
 
-### Task 2: Implement Main Dashboard Layout
+### Task 2: Implement Main Dashboard Layout (Completed)
 
 **Files:**
 - Create: `frontend/src/app/(ai-mall)/home/home.module.css`
 - Modify: `frontend/src/app/(ai-mall)/home/page.tsx`
 
-- [ ] **Step 1: Define Dashboard layout CSS**
+- [x] **Step 1: Define Dashboard layout CSS**
 ```css
 .dashboard { display: flex; flex-direction: column; gap: 48px; }
 .section { display: flex; flex-direction: column; gap: 24px; }
@@ -177,13 +177,13 @@ git commit -m "feat: add reusable dashboard components"
 }
 ```
 
-- [ ] **Step 2: Update HomePage with 3-tier structure**
+- [x] **Step 2: Update HomePage with 3-tier structure**
 ```tsx
 'use client';
 
-import { KpiCard } from '@/components/UI/Dashboard/KpiCard';
-import { ProgressBar } from '@/components/UI/Dashboard/ProgressBar';
-import { ActionItem } from '@/components/UI/Dashboard/ActionItem';
+import KpiCard from '@/components/UI/Dashboard/KpiCard';
+import ProgressBar from '@/components/UI/Dashboard/ProgressBar';
+import ActionItem from '@/components/UI/Dashboard/ActionItem';
 import styles from './home.module.css';
 
 export default function HomePage() {
@@ -255,7 +255,7 @@ export default function HomePage() {
 }
 ```
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 ```bash
 git add frontend/src/app/\(ai-mall\)/home/*
 git commit -m "feat: implement 3-tier Command Center dashboard layout"
@@ -263,12 +263,12 @@ git commit -m "feat: implement 3-tier Command Center dashboard layout"
 
 ---
 
-### Task 3: Final Polishing & Verification
+### Task 3: Final Polishing & Verification (Completed)
 
 **Files:**
 - Modify: `frontend/src/app/(ai-mall)/ai-mall.module.css`
 
-- [ ] **Step 1: Refine global layout spacing**
+- [x] **Step 1: Refine global layout spacing**
 ```css
 /* Update .main padding for cleaner look */
 .main {
@@ -279,10 +279,10 @@ git commit -m "feat: implement 3-tier Command Center dashboard layout"
 }
 ```
 
-- [ ] **Step 2: Verify responsive behavior**
+- [x] **Step 2: Verify responsive behavior**
 Ensure the `kpiGrid` and `storeRow` handle window resizing gracefully.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 ```bash
 git add frontend/src/app/\(ai-mall\)/ai-mall.module.css
 git commit -m "style: refine main layout padding and background color"

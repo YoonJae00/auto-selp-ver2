@@ -28,11 +28,13 @@
 - **Stage 3 (Category)**: Naver/Coupang individual category matching (Independent columns).
 - **Infrastructure**: Shared Docker volume (`uploads_data`) for Processor and Worker containers.
 
-### Frontend (Port 3000)
+- **Frontend (Port 3000)**
 - **Auth**: Zustand-based persistent state management.
 - **UI**: Apple-style design, Drag & Drop Excel upload, column mapping dropdowns.
+- **Dashboard**: Implemented 3-tier Command Center layout with refined workspace padding and soft background for premium feel.
 - **Components**: Reusable Dashboard components (KpiCard, ProgressBar, ActionItem) with Vanilla CSS modules.
 - **Settings**: Global LLM engine selection and mapping persistence (LocalStorage).
+
 
 ## 3. Tech Stack Details
 - **FastAPI**: Main backend framework.
