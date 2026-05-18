@@ -31,8 +31,7 @@
 - Async pipeline using Celery & Redis.
 - **Stage 1 (Refine)**: Gemini 3.1 Flash-Lite / GPT-4o based naming refinement.
 - **Stage 2 (Keyword)**: 3-Phase curation with Naver Search AD API (Signature & Encoding fixed).
-- **Stage 2.5 (Trademark)**: KIPRIS MCP integration for real-time trademark verification with detailed warning data (Title, Status, Applicant).
-- **Stage 3 (Category)**: Naver/Coupang individual category matching (Independent columns).
+- **Stage 2.5 (Trademark)**: KIPRIS MCP integration for real-time trademark verification. **Optimization**: Uses LLM-based brand detection first to filter suspected keywords, reducing KIPRIS API calls by ~99%.
 - **Infrastructure**: Shared Docker volume (`uploads_data`) for Processor and Worker containers, and **KIPRIS MCP** dedicated service.
 
 - **Frontend (Port 3000)**
@@ -42,9 +41,10 @@
 - **Dashboard**: Implemented 3-tier Command Center layout with refined workspace padding and soft background for premium feel.
 - **Components**: Reusable Dashboard components (KpiCard, ProgressBar, ActionItem) with Vanilla CSS modules.
 - **Intelligence Capsule**: Apple Intelligence-inspired global status indicator with Siri-glow animation and glassmorphism.
-- **Trademark Verification**: Result modal and warning badges for potential copyright issues during processing.
+- **Trademark Verification**: Result modal and warning badges for potential copyright issues during processing. **UI Update**: Separate sections for 🔴 KIPRIS confirmed and 🟡 LLM suspected brand keywords.
 - **Task Polling**: Global `useTaskPolling` hook for background status monitoring (Stabilized with stable frequency and Auth Guard).
-- **Settings**: Global LLM engine selection and mapping persistence (LocalStorage).
+- **Settings**: Global LLM engine selection, KIPRIS verification toggle, and mapping persistence (LocalStorage).
+
 
 
 ## 3. Tech Stack Details
