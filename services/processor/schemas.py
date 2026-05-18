@@ -6,6 +6,7 @@ class ProcessRequest(BaseModel):
     file_id: str
     column_mapping: Dict[str, str]
     llm_provider: Optional[str] = "gemini"
+    kipris_enabled: Optional[bool] = True
 
 class PromptBase(BaseModel):
     template: str

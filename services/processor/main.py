@@ -74,7 +74,7 @@ async def start_processing(request: ProcessRequest):
         raise HTTPException(status_code=404, detail="File not found.")
     
     file_path = os.path.join(UPLOAD_DIR, files[0])
-    task = process_excel_task.delay(file_path, request.column_mapping, request.llm_provider)
+    task = process_excel_task.delay(file_path, request.column_mapping, request.llm_provider, request.kipris_enabled)
     return {"task_id": task.id}
 
 @app.get("/status/{task_id}")

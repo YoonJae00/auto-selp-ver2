@@ -63,3 +63,46 @@ class GeminiClient(LLMClient):
         except Exception as e:
             logger.error(f"Gemini synonym expansion failed: {e}")
             return []
+
+    async def classify_brand_keywords(self, keywords: list[str]) -> dict:
+        """
+        키워드 목록을 배치로 분류: 브랜드 의심 vs 일반 명사
+        LLM 1회 호출로 처리 → KIPRIS 호출 최소화
+        """
+        if not keywords:
+            return {"brand_suspected": [], "generic": []}
+        
+        kw_list_str = "\n".join(f"- {kw}" for kw in keywords)
+        prompt = (
+            f"다음 키워드 목록을 분류해줘.\n"
+            f"기준: 특정 회사/제품의 고유 브랜드명이나 상표명이 포함된 경우 brand_suspected, "
+            f"일반적인 제품 카테고리나 소재/기능을 설명하는 일반 명사인 경우 generic.\n"
+            f"예시) '가스 쇼바' → generic, '3BOSS' → brand_suspected, '다이슨' → brand_suspected, '무보링 댐퍼' → generic\n"
+            f"\n키워드 목록:\n{kw_list_str}\n"
+            f"\n반드시 아래 JSON 형식으로만 응답해. 설명 없이 JSON만:\n"
+            f'{{"brand_suspected": ["..."], "generic": ["..."]}}'
+        )
+        
+        try:
+            response = await self.model.generate_content_async(prompt)
+            text = response.text
+            if "```json" in text:
+                text = text.split("```json")[1].split("```")[0].strip()
+            elif "{" in text and "}" in text:
+                text = text[text.find("{"):text.rfind("}")+1]
+            
+            result = json.loads(text)
+            brand_suspected = result.get("brand_suspected", [])
+            generic = result.get("generic", [])
+            
+            # LLM이 누락한 키워드는 안전하게 generic으로 처리
+            classified = set(brand_suspected) | set(generic)
+            unclassified = [kw for kw in keywords if kw not in classified]
+            generic.extend(unclassified)
+            
+            logger.info(f"브랜드 분류: brand_suspected={brand_suspected}, generic_count={len(generic)}")
+            return {"brand_suspected": brand_suspected, "generic": generic}
+        except Exception as e:
+            logger.error(f"Gemini brand classification failed: {e}")
+            # 실패 시 모두 generic으로 처리 (KIPRIS 호출 안 함)
+            return {"brand_suspected": [], "generic": keywords}
