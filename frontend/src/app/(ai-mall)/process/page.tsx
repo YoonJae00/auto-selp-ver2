@@ -22,7 +22,7 @@ export default function ProcessPage() {
   const [uploadData, setUploadData] = useState<UploadResponse | null>(null);
   
   // Use Global Settings
-  const { llmProvider, columnMapping, setColumnMapping } = useSettingsStore();
+  const { llmProvider, columnMapping, setColumnMapping, kiprisEnabled } = useSettingsStore();
   
   // Use Global Task Store
   const { tasks, addTask } = useTaskStore();
@@ -96,7 +96,8 @@ export default function ProcessPage() {
       const res = await api.post<{ task_id: string }>('/api/processor/process', {
         file_id: uploadData.file_id,
         column_mapping: columnMapping,
-        llm_provider: llmProvider
+        llm_provider: llmProvider,
+        kipris_enabled: kiprisEnabled
       });
       
       addTask({
