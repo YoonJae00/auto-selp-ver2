@@ -10,10 +10,11 @@ from clients.kipris_client import KiprisClient
 logger = logging.getLogger(__name__)
 
 class KeywordEngine:
-    def __init__(self, llm_client: LLMClient):
+    def __init__(self, llm_client: LLMClient, kipris_enabled: bool = True):
         self.naver_ad_client = NaverAdClient()
         self.llm_client = llm_client
         self.kipris_client = KiprisClient()
+        self.kipris_enabled = kipris_enabled
 
     async def curate_keywords(self, refined_name: str) -> tuple[list[str], list[dict]]:
         """
@@ -78,29 +79,65 @@ class KeywordEngine:
 
     async def _verify_trademarks(self, keywords: list[str]) -> tuple[list[str], list[dict]]:
         """
-        상표권 검증: 블랙리스트 + KIPRIS 실시간 검색
+        하이브리드 상표권 검증:
+        Step 1. 로컈 블랙리스트 (알려진 브랜드 → 즉시 제외)
+        Step 2. LLM 배치 분류 (1회 호출) → brand_suspected / generic 분류
+        Step 3. KIPRIS 검증 (kipris_enabled=True 시 brand_suspected만)
+                kipris_enabled=False 시 brand_suspected 키워드 제외 + llm_suspected 경고
         """
         safe = []
         warnings = []
-        
+
+        # Step 1: 로컈 블랙리스트 필터
+        after_blacklist = []
         for kw in keywords:
-            # 1. 로컬 블랙리스트 (완전 제외)
             if any(brand in kw for brand in TRADEMARK_BLACKLIST):
-                continue
-            
-            # 2. KIPRIS 실시간 검증
+                logger.info(f"블랙리스트 제외: {kw}")
+            else:
+                after_blacklist.append(kw)
+
+        if not after_blacklist:
+            return safe, warnings
+
+        # Step 2: LLM 배치 분류 (1회 호출)
+        try:
+            classification = await self.llm_client.classify_brand_keywords(after_blacklist)
+            brand_suspected = classification.get("brand_suspected", [])
+            generic = classification.get("generic", [])
+        except Exception as e:
+            logger.error(f"LLM 브랜드 분류 실패, 전체 generic 처리: {e}")
+            brand_suspected = []
+            generic = after_blacklist
+
+        # generic 키워드는 KIPRIS 스킵 → 바로 safe
+        safe.extend(generic)
+
+        if not brand_suspected:
+            return safe, warnings
+
+        # Step 3: KIPRIS 비활성화 시 — brand_suspected 제외 + llm_suspected 경고 반환
+        if not self.kipris_enabled:
+            logger.info(f"KIPRIS 비활성화: brand_suspected {len(brand_suspected)}개 키워드 제외")
+            for kw in brand_suspected:
+                warnings.append({
+                    "keyword": kw,
+                    "type": "llm_suspected",
+                    "reason": "LLM이 브랜드명으로 판단. KIPRIS 미사용으로 자동 제외."
+                })
+            return safe, warnings
+
+        # Step 3: KIPRIS 활성화 시 — brand_suspected만 검증
+        logger.info(f"KIPRIS 검증 대상: {len(brand_suspected)}개")
+        for kw in brand_suspected:
             try:
                 res = await self.kipris_client.search_trademark(kw)
                 if res.get("exists"):
-                    warnings.append({
-                        "keyword": kw,
-                        "info": res
-                    })
+                    warnings.append({"keyword": kw, "type": "kipris_confirmed", "info": res})
+                    logger.info(f"KIPRIS 상표 발견 → 제외: {kw}")
                 else:
                     safe.append(kw)
             except Exception as e:
-                logger.error(f"KIPRIS verification failed for {kw}: {e}")
-                # 에러 발생 시 안전하게 safe에 추가 (또는 warning 처리)
+                logger.error(f"KIPRIS 검증 실패 {kw}: {e}")
                 safe.append(kw)
-            
+
         return safe, warnings

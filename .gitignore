@@ -9,6 +9,9 @@ __pycache__/
 htmlcov/
 .cache/
 
+# Agent
+.agent/
+
 # Node
 node_modules/
 .next/

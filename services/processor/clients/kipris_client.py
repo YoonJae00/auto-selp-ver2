@@ -22,9 +22,7 @@ class KiprisClient:
         payload = {
             "name": "trademark_search",
             "arguments": {
-                "keyword": word,
-                "docs_count": 1,
-                "desc_sort": True
+                "word": word,
             }
         }
         
@@ -34,24 +32,40 @@ class KiprisClient:
                 response.raise_for_status()
                 data = response.json()
                 
-                # MCP response format: {"content": [{"type": "text", "text": "..."}]}
                 if "content" in data and len(data["content"]) > 0:
-                    text_content = data["content"][0].get("text", "{}")
-                    result_data = json.loads(text_content)
+                    text_content = data["content"][0].get("text", "")
                     
-                    items = result_data.get("items", [])
-                    total_count = result_data.get("total_count", 0)
-                    
+                    if not text_content or "there is no result" in text_content.lower():
+                        return {"exists": False, "title": "", "details": []}
+                        
+                    try:
+                        result_data = json.loads(text_content)
+                        items = result_data.get("items", [])
+                        total_count = result_data.get("total_count", 0)
+                    except json.JSONDecodeError:
+                        # Handle markdown table
+                        items = []
+                        lines = [line.strip() for line in text_content.strip().split('\n') if line.strip().startswith('|')]
+                        if len(lines) > 2:
+                            headers = [h.strip() for h in lines[0].split('|')[1:-1]]
+                            for line in lines[2:]:
+                                values = [v.strip() for v in line.split('|')[1:-1]]
+                                items.append(dict(zip(headers, values)))
+                        
+                        total_count = len(items)
+
                     exists = total_count > 0 or len(items) > 0
-                    title = items[0].get("title", "") if exists else ""
+                    
+                    # TrademarkName is the column used by mcp_kipris
+                    title = ""
+                    if exists and items:
+                        title = items[0].get("title", "") or items[0].get("TrademarkName", "")
                     
                     return {
                         "exists": exists,
                         "title": title,
                         "details": items
                     }
-                
-                return {"exists": False, "title": "", "details": []}
                 
         except Exception as e:
             logger.error(f"KIPRIS MCP call failed for {word}: {e}")

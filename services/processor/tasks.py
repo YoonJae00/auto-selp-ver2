@@ -11,7 +11,7 @@ from database import SessionLocal
 logger = logging.getLogger(__name__)
 
 @celery_app.task(bind=True)
-def process_excel_task(self, file_path: str, column_mapping: dict, llm_provider: str = "gemini"):
+def process_excel_task(self, file_path: str, column_mapping: dict, llm_provider: str = "gemini", kipris_enabled: bool = True):
     """
     엑셀 가공 전체 파이프라인 Celery Task
     """
@@ -20,9 +20,9 @@ def process_excel_task(self, file_path: str, column_mapping: dict, llm_provider:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
     
-    return loop.run_until_complete(_run_pipeline(self, file_path, column_mapping, llm_provider))
+    return loop.run_until_complete(_run_pipeline(self, file_path, column_mapping, llm_provider, kipris_enabled))
 
-async def _run_pipeline(task_instance, file_path: str, column_mapping: dict, llm_provider: str):
+async def _run_pipeline(task_instance, file_path: str, column_mapping: dict, llm_provider: str, kipris_enabled: bool = True):
     df = pd.read_excel(file_path)
     total_rows = len(df)
     all_warnings = {} # Store warnings by row index
@@ -33,7 +33,7 @@ async def _run_pipeline(task_instance, file_path: str, column_mapping: dict, llm
         # LLM 클라이언트 팩토리 사용 (PromptManager 전달)
         llm_client = get_llm_client(llm_provider, prompt_manager)
         
-        keyword_engine = KeywordEngine(llm_client)
+        keyword_engine = KeywordEngine(llm_client, kipris_enabled=kipris_enabled)
         category_mapper = CategoryMapper()
         
         # 컬럼 매핑 (사용자 지정)
