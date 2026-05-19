@@ -26,7 +26,7 @@ export function useTaskPolling() {
         try {
           const res = await api.get<{ 
             state: string; 
-            meta?: { percent: number; warnings?: Record<number, any[]> };
+            meta?: { percent: number; warnings?: Record<number, any[]>; stage?: any; current_name?: string };
             result?: any;
           }>(`/api/processor/status/${task.id}`);
           
@@ -34,6 +34,8 @@ export function useTaskPolling() {
             updateTask(task.id, { 
               progress: res.meta.percent, 
               status: 'PROGRESS',
+              stage: res.meta.stage,
+              currentName: res.meta.current_name,
               warnings: res.meta.warnings 
             });
           } else if (res.state === 'SUCCESS') {

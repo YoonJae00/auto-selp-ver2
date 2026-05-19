@@ -6,6 +6,8 @@ export interface Task {
   filename: string;
   progress: number;
   status: 'PENDING' | 'PROGRESS' | 'SUCCESS' | 'FAILURE';
+  stage?: 'refining' | 'keywords' | 'verifying' | 'categorizing' | 'completed_row';
+  currentName?: string;
   resultPath?: string;
   startTime: number;
   warnings?: Record<number, any[]>;
