@@ -17,6 +17,26 @@ interface UploadResponse {
   preview: any[];
 }
 
+const STEPS = [
+  { id: 'UPLOAD', label: '① 파일 업로드' },
+  { id: 'MAPPING', label: '② 컬럼 설정' },
+  { id: 'PROCESSING', label: '③ 가공 중' },
+  { id: 'COMPLETED', label: '④ 완료' }
+];
+
+const TimelineItem = ({ label, isActive, isPast }: { label: string, isActive: boolean, isPast: boolean }) => {
+  return (
+    <div className={styles.timelineItem}>
+      <div className={`${styles.timelineIcon} ${isPast ? styles.completed : isActive ? styles.active : styles.pending}`}>
+        {isPast ? '✓' : isActive ? '⟳' : '○'}
+      </div>
+      <div className={isActive ? styles.shimmerText : (isPast ? styles.completedText : styles.pendingText)}>
+        {label} {isActive && '...'}
+      </div>
+    </div>
+  );
+};
+
 export default function ProcessPage() {
   const [step, setStep] = useState<Step>('UPLOAD');
   const [uploadData, setUploadData] = useState<UploadResponse | null>(null);
@@ -124,10 +144,19 @@ export default function ProcessPage() {
     <div className={styles.container}>
       <h1 className={styles.title}>상품 가공</h1>
 
+      <div className={styles.stepIndicator}>
+        {STEPS.map((s, index) => (
+          <div key={s.id} className={`${styles.stepItem} ${step === s.id ? styles.activeStep : ''}`}>
+            {s.label}
+            {index < STEPS.length - 1 && <div className={styles.stepConnector} />}
+          </div>
+        ))}
+      </div>
+
       {error && <div className={styles.error}>{error}</div>}
 
       {step === 'UPLOAD' && (
-        <section className={styles.section}>
+        <section className={`${styles.section} ${styles.stepContainer}`}>
           <div 
             className={isDragging ? `${styles.uploadArea} ${styles.dragging}` : styles.uploadArea} 
             onClick={() => fileInputRef.current?.click()}
@@ -153,7 +182,7 @@ export default function ProcessPage() {
       )}
 
       {step === 'MAPPING' && uploadData && (
-        <section className={styles.section}>
+        <section className={`${styles.section} ${styles.stepContainer}`}>
           <h3 className={styles.sectionTitle}>컬럼 매핑 및 설정</h3>
           <p className={styles.sectionDesc}>가공 결과가 저장될 열을 선택해 주세요.</p>
           
@@ -250,28 +279,62 @@ export default function ProcessPage() {
       )}
 
       {(step === 'PROCESSING' || step === 'COMPLETED') && (
-        <section className={styles.section}>
-          <div className={styles.progressContainer}>
-            <div className={styles.statusText}>
-              {step === 'PROCESSING' ? `상품을 가공하고 있습니다... (${activeTask?.progress || 0}%)` : '가공이 완료되었습니다!'}
-            </div>
-
-            {step === 'COMPLETED' && activeTask?.warnings && Object.keys(activeTask.warnings).length > 0 && (
-              <div className={styles.warningSummary}>
-                <div className={styles.warningText}>
-                  <span className={styles.warningIcon}>⚠️</span>
-                  <span>상표권 침해 의심 키워드가 {Object.values(activeTask.warnings).flat().length}개 발견되었습니다.</span>
-                </div>
-                <PillButton variant="secondary" onClick={() => setShowWarnings(true)}>상세보기</PillButton>
+        <section className={`${styles.section} ${styles.stepContainer}`}>
+          <div className={styles.timelineSplit}>
+            {/* Left: Global Progress */}
+            <div className={styles.timelineLeft}>
+              <div className={styles.statusText}>
+                {step === 'PROCESSING' ? `상품을 가공하고 있습니다... (${activeTask?.progress || 0}%)` : '가공이 완료되었습니다!'}
               </div>
-            )}
 
-            <div className={styles.progressBar}>
-              <div className={styles.progressFill} style={{ width: `${activeTask?.progress || 0}%` }}></div>
+              {step === 'COMPLETED' && activeTask?.warnings && Object.keys(activeTask.warnings).length > 0 && (
+                <div className={styles.warningSummary}>
+                  <div className={styles.warningText}>
+                    <span className={styles.warningIcon}>⚠️</span>
+                    <span>상표권 침해 의심 키워드가 {Object.values(activeTask.warnings).flat().length}개 발견되었습니다.</span>
+                  </div>
+                  <PillButton variant="secondary" onClick={() => setShowWarnings(true)}>상세보기</PillButton>
+                </div>
+              )}
+
+              <div className={styles.progressBar}>
+                <div className={styles.progressFill} style={{ width: `${activeTask?.progress || 0}%`, background: 'var(--accent-gradient)' }}></div>
+              </div>
+              
+              {step === 'COMPLETED' && (
+                <div style={{ marginTop: '24px' }}>
+                  <PillButton variant="primary" onClick={handleDownload}>결과 파일 다운로드</PillButton>
+                </div>
+              )}
             </div>
-            {step === 'COMPLETED' && (
-              <PillButton variant="primary" onClick={handleDownload}>결과 파일 다운로드</PillButton>
-            )}
+
+            {/* Right: Live Timeline */}
+            <div className={styles.timelineRight}>
+              <h4 style={{ marginBottom: '16px', color: 'var(--ink)' }}>진행 현황</h4>
+              {activeTask?.currentName && step === 'PROCESSING' && (
+                <div style={{ marginBottom: '16px', padding: '12px', background: '#fff', borderRadius: '8px', fontSize: '13px' }}>
+                  현재 처리중: <strong>{activeTask.currentName}</strong>
+                </div>
+              )}
+              
+              <div className={styles.timelineList}>
+                 <TimelineItem 
+                   label="상품명 정제" 
+                   isActive={activeTask?.stage === 'refining'} 
+                   isPast={['keywords', 'categorizing', 'verifying', 'completed_row'].includes(activeTask?.stage || '') || step === 'COMPLETED'} 
+                 />
+                 <TimelineItem 
+                   label="키워드 생성" 
+                   isActive={activeTask?.stage === 'keywords'} 
+                   isPast={['categorizing', 'verifying', 'completed_row'].includes(activeTask?.stage || '') || step === 'COMPLETED'} 
+                 />
+                 <TimelineItem 
+                   label="카테고리 매핑" 
+                   isActive={activeTask?.stage === 'categorizing'} 
+                   isPast={['completed_row'].includes(activeTask?.stage || '') || step === 'COMPLETED'} 
+                 />
+              </div>
+            </div>
           </div>
         </section>
       )}
