@@ -28,6 +28,7 @@ export function useTaskPolling() {
             state: string; 
             meta?: { 
               percent: number;
+              total?: number;
               stage?: string;
               current_name?: string;
               completed_rows?: any[];
@@ -39,6 +40,7 @@ export function useTaskPolling() {
           if (res.state === 'PROGRESS' && res.meta) {
             updateTask(task.id, { 
               progress: res.meta.percent, 
+              total: res.meta.total,
               status: 'PROGRESS',
               stage: res.meta.stage as any,
               currentName: res.meta.current_name,

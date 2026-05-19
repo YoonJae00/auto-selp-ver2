@@ -17,6 +17,7 @@ export interface Task {
   id: string;
   filename: string;
   progress: number;
+  total?: number;
   status: 'PENDING' | 'PROGRESS' | 'SUCCESS' | 'FAILURE';
   stage?: 'refining' | 'keywords' | 'categorizing' | 'completed_row';
   currentName?: string;

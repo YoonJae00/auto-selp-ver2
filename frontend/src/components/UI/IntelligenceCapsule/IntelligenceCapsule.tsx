@@ -4,47 +4,79 @@ import React, { useState, useMemo } from 'react';
 import { useTaskStore, Task, CompletedRow } from '@/store/taskStore';
 import styles from './IntelligenceCapsule.module.css';
 
-// ─── Sub-components ─────────────────────────────────────────────────────────
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 
-const STAGE_LABELS: Record<string, string> = {
-  refining: '상품명 정제',
-  keywords: '키워드 생성',
-  categorizing: '카테고리 매핑',
+const STAGE_META: Record<string, { label: string; icon: string }> = {
+  refining:     { label: '상품명 가공',      icon: '✏️' },
+  keywords:     { label: '키워드 생성',      icon: '🔍' },
+  categorizing: { label: '카테고리 매핑',    icon: '📂' },
 };
 
 const STAGE_ORDER = ['refining', 'keywords', 'categorizing'];
 
 function formatMs(ms: number): string {
-  if (ms < 1000) return `${ms}ms`;
-  return `${(ms / 1000).toFixed(1)}s`;
+  return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`;
 }
 
-/** 완료된 행 하나 — accordion */
-function CompletedRowItem({ row, index }: { row: CompletedRow; index: number }) {
+// ─── Stage detail renderer ────────────────────────────────────────────────────
+
+function StageDetail({ stage }: { stage: any }) {
+  const meta = STAGE_META[stage.name] ?? { label: stage.name, icon: '▸' };
+  return (
+    <div className={styles.stageBody}>
+      <div className={styles.stageLabel}>{meta.icon} {meta.label}</div>
+      {stage.name === 'refining' && stage.refined_name && (
+        <div className={styles.stageDetail}>→ <strong>{stage.refined_name}</strong></div>
+      )}
+      {stage.name === 'keywords' && stage.keywords?.length > 0 && (
+        <div className={styles.stageDetail}>
+          {stage.keywords.join(', ')}
+          {stage.filtered?.length > 0 && (
+            <span style={{ color: '#ff3b30', marginLeft: 6 }}>
+              ({stage.filtered.join(', ')} 제거됨)
+            </span>
+          )}
+        </div>
+      )}
+      {stage.name === 'categorizing' && (
+        <div className={styles.stageDetail}>
+          {stage.naver_category && <>네이버: <strong>{stage.naver_category}</strong></>}
+          {stage.naver_category && stage.coupang_category && ' · '}
+          {stage.coupang_category && <>쿠팡: <strong>{stage.coupang_category}</strong></>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Completed Row (accordion) ────────────────────────────────────────────────
+
+function CompletedRowItem({ row }: { row: CompletedRow }) {
   const [open, setOpen] = useState(false);
   return (
     <div className={styles.rowItem}>
       <button className={styles.rowHeader} onClick={() => setOpen(!open)}>
-        <span className={styles.rowStatus}>
-          {row.error ? '❌' : '✅'}
-        </span>
+        <span className={styles.rowStatus}>{row.error ? '❌' : '✅'}</span>
         <span className={styles.rowName} title={row.name}>{row.name}</span>
         <span className={styles.rowTime}>{formatMs(row.total_ms)}</span>
         <span className={styles.rowChevron}>{open ? '▲' : '▼'}</span>
       </button>
       {open && (
         <div className={styles.stageList}>
-          {row.stages.map((s) => (
-            <div key={s.name} className={styles.stageItem}>
+          {row.stages?.map((s: any) => (
+            <div key={s.name} className={`${styles.stageItem} ${styles.stagePast}`}>
               <span className={styles.stageDot}>✓</span>
-              <span className={styles.stageLabel}>{STAGE_LABELS[s.name] ?? s.name}</span>
+              <StageDetail stage={s} />
               <span className={styles.stageTime}>{formatMs(s.ms)}</span>
             </div>
           ))}
           {row.error && (
             <div className={`${styles.stageItem} ${styles.stageError}`}>
               <span className={styles.stageDot}>✗</span>
-              <span className={styles.stageLabel}>{row.error}</span>
+              <div className={styles.stageBody}>
+                <div className={styles.stageLabel}>오류 발생</div>
+                <div className={styles.stageDetail}>{row.error}</div>
+              </div>
             </div>
           )}
         </div>
@@ -53,31 +85,37 @@ function CompletedRowItem({ row, index }: { row: CompletedRow; index: number }) 
   );
 }
 
-/** 현재 처리 중인 행 — 자동 펼침 + shimmer */
-function ActiveRowItem({ name, stage }: { name: string; stage?: string }) {
+// ─── Active Row (auto-expanded + shimmer) ─────────────────────────────────────
+
+function ActiveRowItem({ task }: { task: Task }) {
+  const { currentName, stage } = task;
   return (
     <div className={`${styles.rowItem} ${styles.rowItemActive}`}>
-      <div className={styles.rowHeader}>
+      <div className={styles.rowHeader} style={{ cursor: 'default' }}>
         <span className={styles.rowStatus}>🔄</span>
-        <span className={`${styles.rowName} ${styles.shimmer}`} title={name}>{name}</span>
+        <span className={`${styles.rowName} ${styles.shimmer}`} title={currentName}>{currentName}</span>
       </div>
       <div className={styles.stageList}>
         {STAGE_ORDER.map((s) => {
-          const isActive = stage === s;
-          const isPast = stage
-            ? STAGE_ORDER.indexOf(s) < STAGE_ORDER.indexOf(stage)
-            : false;
+          const currentIdx = stage ? STAGE_ORDER.indexOf(stage) : -1;
+          const sIdx = STAGE_ORDER.indexOf(s);
+          const isPast   = currentIdx > sIdx;
+          const isActive = currentIdx === sIdx;
+          const isPending = currentIdx < sIdx;
+          const meta = STAGE_META[s];
           return (
             <div
               key={s}
-              className={`${styles.stageItem} ${isActive ? styles.stageActive : isPast ? styles.stagePast : styles.stagePending}`}
+              className={`${styles.stageItem} ${isPast ? styles.stagePast : isActive ? styles.stageActive : styles.stagePending}`}
             >
               <span className={styles.stageDot}>
                 {isPast ? '✓' : isActive ? '⟳' : '○'}
               </span>
-              <span className={isActive ? `${styles.stageLabel} ${styles.shimmer}` : styles.stageLabel}>
-                {STAGE_LABELS[s]}
-              </span>
+              <div className={styles.stageBody}>
+                <div className={isActive ? `${styles.stageLabel} ${styles.shimmer}` : styles.stageLabel}>
+                  {meta.icon} {meta.label}{isActive ? ' 중...' : ''}
+                </div>
+              </div>
             </div>
           );
         })}
@@ -86,107 +124,96 @@ function ActiveRowItem({ name, stage }: { name: string; stage?: string }) {
   );
 }
 
-/** 트리 상세 뷰 */
-function DetailView({ task, onBack }: { task: Task; onBack: () => void }) {
+// ─── Full-screen Detail Modal ─────────────────────────────────────────────────
+
+function DetailModal({ task, onClose }: { task: Task; onClose: () => void }) {
   const completedRows = task.completedRows ?? [];
   const isProcessing = task.status === 'PROGRESS' || task.status === 'PENDING';
+  const total = task.total ?? '?';
 
   return (
-    <div className={styles.detailView}>
-      <button className={styles.backBtn} onClick={onBack}>
-        ← 목록으로
-      </button>
-      <div className={styles.detailHeader}>
-        <p className={styles.detailFilename} title={task.filename}>{task.filename}</p>
-        <div className={styles.detailProgressBar}>
-          <div
-            className={styles.detailProgressFill}
-            style={{ width: `${task.progress}%` }}
-          />
+    <div className={styles.modalOverlay} onClick={onClose}>
+      <div className={styles.modalPanel} onClick={(e) => e.stopPropagation()}>
+        {/* Header */}
+        <div className={styles.modalHeader}>
+          <button className={styles.backBtn} onClick={onClose}>← 목록</button>
+          <span className={styles.modalFilename} title={task.filename}>{task.filename}</span>
+          <span className={`${styles.badge} ${styles[`badge_${task.status}`]}`}>
+            {task.status === 'PROGRESS' ? `${task.progress}%`
+              : task.status === 'SUCCESS' ? '완료'
+              : task.status === 'PENDING' ? '대기' : '실패'}
+          </span>
+          <button className={styles.modalClose} onClick={onClose}>×</button>
         </div>
-        <span className={styles.detailProgressText}>
-          {completedRows.length} / {task.status === 'SUCCESS' ? completedRows.length : '?'} 완료 · {task.progress}%
-        </span>
-      </div>
 
-      <div className={styles.rowList}>
-        {/* 완료된 행들 (최신 순) */}
-        {[...completedRows].reverse().map((row, i) => (
-          <CompletedRowItem key={i} row={row} index={i} />
-        ))}
+        {/* Progress */}
+        <div className={styles.modalProgress}>
+          <div className={styles.modalProgressBar}>
+            <div className={styles.modalProgressFill} style={{ width: `${task.progress}%` }} />
+          </div>
+          <span className={styles.modalProgressText}>
+            {completedRows.length} / {total} 완료 · {task.progress}%
+          </span>
+        </div>
 
-        {/* 현재 진행 중인 행 */}
-        {isProcessing && task.currentName && task.stage !== 'completed_row' && (
-          <ActiveRowItem name={task.currentName} stage={task.stage} />
+        {/* Row list */}
+        <div className={styles.rowList}>
+          {/* Current active row (top, auto-expanded) */}
+          {isProcessing && task.currentName && task.stage !== 'completed_row' && (
+            <ActiveRowItem task={task} />
+          )}
+
+          {/* Completed rows in reverse order (most recent first) */}
+          {[...completedRows].reverse().map((row, i) => (
+            <CompletedRowItem key={i} row={row} />
+          ))}
+        </div>
+
+        {/* Download */}
+        {task.status === 'SUCCESS' && task.resultPath && (
+          <div className={styles.downloadSection}>
+            <a href={task.resultPath} className={styles.downloadBtn} target="_blank" rel="noopener noreferrer">
+              ⬇ 결과 파일 다운로드
+            </a>
+          </div>
         )}
       </div>
-
-      {task.status === 'SUCCESS' && task.resultPath && (
-        <div className={styles.downloadSection}>
-          <a
-            href={task.resultPath}
-            className={styles.downloadBtn}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            ⬇ 결과 다운로드
-          </a>
-        </div>
-      )}
     </div>
   );
 }
 
-/** 작업 목록 뷰 */
+// ─── List View ────────────────────────────────────────────────────────────────
+
 function ListView({
   tasks,
-  onSelectTask,
-  onClearCompleted,
-  onRemoveTask,
+  onSelect,
+  onClear,
 }: {
   tasks: Task[];
-  onSelectTask: (id: string) => void;
-  onClearCompleted: () => void;
-  onRemoveTask: (id: string) => void;
+  onSelect: (id: string) => void;
+  onClear: () => void;
 }) {
   return (
     <div className={styles.listView}>
       <div className={styles.listHeader}>
         <span className={styles.listTitle}>Intelligence Tasks</span>
-        <button className={styles.clearBtn} onClick={onClearCompleted}>
-          완료 지우기
-        </button>
+        <button className={styles.clearBtn} onClick={onClear}>완료 지우기</button>
       </div>
       <div className={styles.taskList}>
-        {tasks.length === 0 && (
-          <p className={styles.emptyState}>진행 중인 작업이 없습니다.</p>
-        )}
+        {tasks.length === 0 && <p className={styles.emptyState}>진행 중인 작업이 없습니다.</p>}
         {[...tasks].reverse().map((task) => (
-          <button
-            key={task.id}
-            className={styles.taskRow}
-            onClick={() => onSelectTask(task.id)}
-          >
+          <button key={task.id} className={styles.taskRow} onClick={() => onSelect(task.id)}>
             <div className={styles.taskRowTop}>
-              <span className={styles.taskFilename} title={task.filename}>
-                {task.filename}
-              </span>
+              <span className={styles.taskFilename} title={task.filename}>{task.filename}</span>
               <span className={`${styles.badge} ${styles[`badge_${task.status}`]}`}>
-                {task.status === 'PROGRESS'
-                  ? `${task.progress}%`
-                  : task.status === 'SUCCESS'
-                  ? '완료'
-                  : task.status === 'PENDING'
-                  ? '대기'
-                  : '실패'}
+                {task.status === 'PROGRESS' ? `${task.progress}%`
+                  : task.status === 'SUCCESS' ? '완료'
+                  : task.status === 'PENDING' ? '대기' : '실패'}
               </span>
             </div>
             {(task.status === 'PROGRESS' || task.status === 'PENDING') && (
               <div className={styles.taskProgressBar}>
-                <div
-                  className={styles.taskProgressFill}
-                  style={{ width: `${task.progress}%` }}
-                />
+                <div className={styles.taskProgressFill} style={{ width: `${task.progress}%` }} />
               </div>
             )}
           </button>
@@ -196,11 +223,11 @@ function ListView({
   );
 }
 
-// ─── Main Component ──────────────────────────────────────────────────────────
+// ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function IntelligenceCapsule() {
   const { tasks, removeTask, clearCompleted } = useTaskStore();
-  const [isOpen, setIsOpen] = useState(false);
+  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [isMounted, setIsMounted] = React.useState(false);
 
@@ -214,67 +241,68 @@ export default function IntelligenceCapsule() {
   if (!isMounted || tasks.length === 0) return null;
 
   const isActive = activeTasks.length > 0;
-  const displayTask = activeTasks.length > 0
-    ? activeTasks[activeTasks.length - 1]
-    : tasks[tasks.length - 1];
-
+  const displayTask = isActive ? activeTasks[activeTasks.length - 1] : tasks[tasks.length - 1];
   const selectedTask = selectedTaskId ? tasks.find((t) => t.id === selectedTaskId) : null;
 
   const handleCapsuleClick = () => {
-    setIsOpen((prev) => !prev);
-    if (isOpen) setSelectedTaskId(null);
+    setIsDrawerOpen((prev) => !prev);
+    if (isDrawerOpen) setSelectedTaskId(null);
+  };
+
+  const handleSelectTask = (id: string) => {
+    setSelectedTaskId(id);
+    setIsDrawerOpen(false); // close drawer, modal takes over
+  };
+
+  const handleCloseModal = () => {
+    setSelectedTaskId(null);
+    setIsDrawerOpen(true); // return to drawer
   };
 
   return (
-    <div className={`${styles.container} ${isActive ? styles.active : ''}`}>
-      {/* Drawer (opens above the capsule) */}
-      {isOpen && (
-        <div className={styles.drawer}>
-          {selectedTask ? (
-            <DetailView
-              task={selectedTask}
-              onBack={() => setSelectedTaskId(null)}
-            />
-          ) : (
-            <ListView
-              tasks={tasks}
-              onSelectTask={(id) => setSelectedTaskId(id)}
-              onClearCompleted={clearCompleted}
-              onRemoveTask={removeTask}
-            />
-          )}
-        </div>
+    <>
+      {/* Full-screen detail modal (rendered outside container for z-index) */}
+      {selectedTask && (
+        <DetailModal task={selectedTask} onClose={handleCloseModal} />
       )}
 
-      {/* Capsule */}
-      <button
-        className={styles.capsule}
-        onClick={handleCapsuleClick}
-        aria-label="작업 현황 열기"
-      >
-        {/* Rotating glow ring (active only) */}
-        {isActive && <div className={styles.glowRing} />}
+      <div className={`${styles.container} ${isActive ? styles.active : ''}`}>
+        {/* Compact list drawer */}
+        {isDrawerOpen && !selectedTask && (
+          <div className={styles.drawer}>
+            <ListView
+              tasks={tasks}
+              onSelect={handleSelectTask}
+              onClear={clearCompleted}
+            />
+          </div>
+        )}
 
-        <div className={styles.capsuleContent}>
-          {isActive ? (
-            <>
-              <span className={styles.capsuleIcon}>⚡</span>
-              <span>가공 중... ({displayTask.progress}%)</span>
-              <div className={styles.miniBar}>
-                <div
-                  className={styles.miniBarFill}
-                  style={{ width: `${displayTask.progress}%` }}
-                />
-              </div>
-            </>
-          ) : (
-            <>
-              <span className={styles.capsuleIcon}>✅</span>
-              <span>가공 완료</span>
-            </>
-          )}
-        </div>
-      </button>
-    </div>
+        {/* Capsule */}
+        <button
+          className={styles.capsule}
+          onClick={handleCapsuleClick}
+          aria-label="작업 현황 열기"
+        >
+          {isActive && <div className={styles.glowRing} />}
+          <div className={styles.capsuleContent}>
+            {isActive ? (
+              <>
+                <span className={styles.capsuleIcon}>⚡</span>
+                <span>가공 중... ({displayTask.progress}%)</span>
+                <div className={styles.miniBar}>
+                  <div className={styles.miniBarFill} style={{ width: `${displayTask.progress}%` }} />
+                </div>
+              </>
+            ) : (
+              <>
+                <span className={styles.capsuleIcon}>✅</span>
+                <span>가공 완료</span>
+              </>
+            )}
+          </div>
+        </button>
+      </div>
+    </>
   );
 }

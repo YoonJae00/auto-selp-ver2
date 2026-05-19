@@ -91,6 +91,12 @@ async def _run_pipeline(task_instance, file_path: str, column_mapping: dict, llm
                 keywords, warnings = await keyword_engine.curate_keywords(refined_name)
                 if warnings:
                     all_warnings[index] = warnings
+                # 필터링된 키워드 추적 (경고에 들어간 것들)
+                filtered_keywords = []
+                if warnings:
+                    for w in warnings:
+                        if isinstance(w, dict) and w.get('keyword'):
+                            filtered_keywords.append(w['keyword'])
                 
                 # Stage 3: 카테고리
                 update_stage('categorizing')
@@ -108,10 +114,23 @@ async def _run_pipeline(task_instance, file_path: str, column_mapping: dict, llm
                     df.at[index, coupang_cat_col] = coupang_cat_id
                 
                 _finish_prev_stages()
+                # 단계별 결과 데이터를 포함한 rich completed_rows
+                stage_results = {}
+                for k in stage_timings:
+                    stage_results[k] = {'ms': stage_timings[k].get('ms', 0)}
+                if 'refining' in stage_results:
+                    stage_results['refining']['refined_name'] = refined_name
+                if 'keywords' in stage_results:
+                    stage_results['keywords']['keywords'] = keywords
+                    stage_results['keywords']['filtered'] = filtered_keywords
+                if 'categorizing' in stage_results:
+                    stage_results['categorizing']['naver_category'] = naver_cat.get('name', str(naver_cat.get('id', '')))
+                    stage_results['categorizing']['coupang_category'] = str(coupang_cat_id)
+                
                 completed_rows.append({
                     'name': original_name,
                     'total_ms': int((time.time() - row_start) * 1000),
-                    'stages': [{'name': k, 'ms': v.get('ms', 0)} for k, v in stage_timings.items()]
+                    'stages': [{'name': k, **v} for k, v in stage_results.items()]
                 })
 
             except Exception as e:
@@ -141,8 +160,9 @@ async def _run_pipeline(task_instance, file_path: str, column_mapping: dict, llm
                 }
             )
 
-    # 결과 파일 저장
-    output_path = file_path.replace(".xlsx", "_processed.xlsx")
-    df.to_excel(output_path, index=False)
+    # 결과 파일 저장 — 항상 .xlsx 로 저장 (.xls 입력이어도)
+    import re
+    output_path = re.sub(r'\.xlsx?$', '_processed.xlsx', file_path)
+    df.to_excel(output_path, index=False, engine='openpyxl')
     
     return {"status": "Completed", "output_path": output_path, "warnings": all_warnings}
