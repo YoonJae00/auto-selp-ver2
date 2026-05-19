@@ -253,9 +253,9 @@ Task 1 (Backend) → Task 2 (Store) → Task 3 (Capsule 기본)
 
 ## 체크리스트
 
-- [ ] Task 1: 백엔드 completed_rows 누적
-- [ ] Task 2: 프론트 Store 타입 확장
-- [ ] Task 3: 캡슐 좌하단 이동 + glow 애니메이션
-- [ ] Task 4: 드로어 작업 목록 뷰
-- [ ] Task 5: 트리 상세 뷰 (accordion + shimmer)
-- [ ] Task 6: Process 페이지 PROCESSING 단계 단순화
+- [x] Task 1: 백엔드 completed_rows 누적
+- [x] Task 2: 프론트 Store 타입 확장
+- [x] Task 3: 캡슐 좌하단 이동 + glow 애니메이션
+- [x] Task 4: 드로어 작업 목록 뷰
+- [x] Task 5: 트리 상세 뷰 (accordion + shimmer)
+- [x] Task 6: Process 페이지 PROCESSING 단계 단순화
