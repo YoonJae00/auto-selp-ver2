@@ -54,6 +54,8 @@ export function useTaskPolling() {
               status: 'SUCCESS', 
               resultPath: downloadUrl,
               warnings: res.result?.warnings,
+              completedRows: res.result?.completed_rows,
+              total: res.result?.total,
               result: res.result
             });
           } else if (res.state === 'FAILURE') {

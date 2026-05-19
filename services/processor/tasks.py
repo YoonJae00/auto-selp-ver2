@@ -1,5 +1,6 @@
 import asyncio
 import time
+import re as _re
 import pandas as pd
 import logging
 from celery_app import celery_app
@@ -11,158 +12,183 @@ from database import SessionLocal
 
 logger = logging.getLogger(__name__)
 
+
 @celery_app.task(bind=True)
-def process_excel_task(self, file_path: str, column_mapping: dict, llm_provider: str = "gemini", kipris_enabled: bool = True):
-    """
-    엑셀 가공 전체 파이프라인 Celery Task
-    """
+def process_excel_task(
+    self,
+    file_path: str,
+    column_mapping: dict,
+    llm_provider: str = "gemini",
+    kipris_enabled: bool = True,
+):
+    """엑셀 가공 전체 파이프라인 Celery Task"""
     loop = asyncio.get_event_loop()
     if loop.is_closed():
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-    
-    return loop.run_until_complete(_run_pipeline(self, file_path, column_mapping, llm_provider, kipris_enabled))
+    return loop.run_until_complete(
+        _run_pipeline(self, file_path, column_mapping, llm_provider, kipris_enabled)
+    )
 
-async def _run_pipeline(task_instance, file_path: str, column_mapping: dict, llm_provider: str, kipris_enabled: bool = True):
+
+async def _run_pipeline(
+    task_instance,
+    file_path: str,
+    column_mapping: dict,
+    llm_provider: str,
+    kipris_enabled: bool = True,
+):
     df = pd.read_excel(file_path)
     total_rows = len(df)
-    all_warnings = {}
-    completed_rows = []
-    
+    all_warnings: dict = {}
+    completed_rows: list = []   # 완료된 행 상세 기록 (trace UI용)
+
     async with SessionLocal() as db:
         prompt_manager = PromptManager(db)
-        
-        # LLM 클라이언트 팩토리 사용 (PromptManager 전달)
         llm_client = get_llm_client(llm_provider, prompt_manager)
-        
         keyword_engine = KeywordEngine(llm_client, kipris_enabled=kipris_enabled)
         category_mapper = CategoryMapper()
-        
-        # 컬럼 매핑 (사용자 지정)
-        orig_col = column_mapping.get("original_name")
-        name_col = column_mapping.get("refined_name", "정제상품명")
-        kw_col = column_mapping.get("keywords", "키워드")
-        naver_cat_col = column_mapping.get("naver_category", "네이버카테고리")
+
+        orig_col       = column_mapping.get("original_name")
+        name_col       = column_mapping.get("refined_name", "정제상품명")
+        kw_col         = column_mapping.get("keywords", "키워드")
+        naver_cat_col  = column_mapping.get("naver_category", "네이버카테고리")
         coupang_cat_col = column_mapping.get("coupang_category", "쿠팡카테고리")
-        
-        # Output 컬럼 생성 (없으면)
+
         for col in [name_col, kw_col, naver_cat_col, coupang_cat_col]:
             if col:
                 if col not in df.columns:
                     df[col] = ""
-                # 강제로 object 타입으로 변환하여 문자열 저장이 가능하도록 함
                 df[col] = df[col].astype(object)
 
         for index, row in df.iterrows():
             original_name = str(row[orig_col])
-            progress = int((index) / total_rows * 100)
             row_start = time.time()
+
+            # stage_timings: {stage_name: {'start': float, 'ms': int}}
             stage_timings: dict = {}
 
-            def _finish_prev_stages():
-                """현재까지 열린 단계의 소요시간 확정"""
-                for v in stage_timings.values():
-                    if 'ms' not in v:
-                        v['ms'] = int((time.time() - v['start']) * 1000)
+            def _finish_stage(stage_name: str):
+                if stage_name in stage_timings and 'ms' not in stage_timings[stage_name]:
+                    stage_timings[stage_name]['ms'] = int(
+                        (time.time() - stage_timings[stage_name]['start']) * 1000
+                    )
 
-            def update_stage(stage_name: str):
-                _finish_prev_stages()
+            def _finish_all():
+                for sn in list(stage_timings):
+                    _finish_stage(sn)
+
+            def _emit(stage_name: str):
+                """단계 시작 → 이전 단계 마감 → Redis emit"""
+                if stage_timings:
+                    last = list(stage_timings)[-1]
+                    _finish_stage(last)
                 stage_timings[stage_name] = {'start': time.time()}
+                pct = int(index / total_rows * 100)
                 task_instance.update_state(
-                    state='PROGRESS', 
+                    state='PROGRESS',
                     meta={
-                        'percent': progress, 
-                        'current': index + 1, 
+                        'percent': pct,
+                        'current': index + 1,
                         'total': total_rows,
                         'stage': stage_name,
                         'current_name': original_name,
                         'completed_rows': completed_rows,
-                        'warnings': all_warnings
-                    }
+                        'warnings': all_warnings,
+                    },
                 )
-            
+
             try:
-                # Stage 1: 정제
-                update_stage('refining')
+                # ── Stage 1: 상품명 정제 ─────────────────────────────────
+                _emit('refining')
                 refined_name = await llm_client.refine_product_name(original_name)
-                
-                # Stage 2: 키워드
-                update_stage('keywords')
+                _finish_stage('refining')
+
+                # ── Stage 2: 키워드 생성 ─────────────────────────────────
+                _emit('keywords')
                 keywords, warnings = await keyword_engine.curate_keywords(refined_name)
+                _finish_stage('keywords')
                 if warnings:
                     all_warnings[index] = warnings
-                # 필터링된 키워드 추적 (경고에 들어간 것들)
-                filtered_keywords = []
-                if warnings:
-                    for w in warnings:
-                        if isinstance(w, dict) and w.get('keyword'):
-                            filtered_keywords.append(w['keyword'])
-                
-                # Stage 3: 카테고리
-                update_stage('categorizing')
-                naver_cat = await category_mapper.get_naver_category(refined_name)
-                coupang_cat_id = await category_mapper.get_coupang_category(refined_name)
-                
-                # 결과 업데이트
-                if name_col:
-                    df.at[index, name_col] = refined_name
-                if kw_col:
-                    df.at[index, kw_col] = ", ".join(keywords)
-                if naver_cat_col:
-                    df.at[index, naver_cat_col] = naver_cat['id']
-                if coupang_cat_col:
-                    df.at[index, coupang_cat_col] = coupang_cat_id
-                
-                _finish_prev_stages()
-                # 단계별 결과 데이터를 포함한 rich completed_rows
-                stage_results = {}
-                for k in stage_timings:
-                    stage_results[k] = {'ms': stage_timings[k].get('ms', 0)}
-                if 'refining' in stage_results:
-                    stage_results['refining']['refined_name'] = refined_name
-                if 'keywords' in stage_results:
-                    stage_results['keywords']['keywords'] = keywords
-                    stage_results['keywords']['filtered'] = filtered_keywords
-                if 'categorizing' in stage_results:
-                    stage_results['categorizing']['naver_category'] = naver_cat.get('name', str(naver_cat.get('id', '')))
-                    stage_results['categorizing']['coupang_category'] = str(coupang_cat_id)
-                
+                # 상표권 경고 키워드만 별도 수집
+                filtered_kw = [
+                    w['keyword'] for w in (warnings or [])
+                    if isinstance(w, dict) and w.get('keyword')
+                ]
+
+                # ── Stage 3: 카테고리 매핑 ──────────────────────────────
+                _emit('categorizing')
+                naver_cat    = await category_mapper.get_naver_category(refined_name)
+                coupang_cat  = await category_mapper.get_coupang_category(refined_name)
+                _finish_stage('categorizing')
+
+                # ── 결과 DataFrame 업데이트 ──────────────────────────────
+                if name_col:        df.at[index, name_col]        = refined_name
+                if kw_col:          df.at[index, kw_col]          = ", ".join(keywords)
+                if naver_cat_col:   df.at[index, naver_cat_col]   = naver_cat.get('id', '')
+                if coupang_cat_col: df.at[index, coupang_cat_col] = coupang_cat
+
+                # ── 완료 행 기록 (트레이스 UI용) ─────────────────────────
                 completed_rows.append({
                     'name': original_name,
                     'total_ms': int((time.time() - row_start) * 1000),
-                    'stages': [{'name': k, **v} for k, v in stage_results.items()]
+                    'stages': [
+                        {
+                            'name': 'refining',
+                            'ms': stage_timings.get('refining', {}).get('ms', 0),
+                            'refined_name': refined_name,
+                        },
+                        {
+                            'name': 'keywords',
+                            'ms': stage_timings.get('keywords', {}).get('ms', 0),
+                            'keywords': keywords,
+                            'filtered': filtered_kw,
+                        },
+                        {
+                            'name': 'categorizing',
+                            'ms': stage_timings.get('categorizing', {}).get('ms', 0),
+                            # naver_cat = {path, id}  →  path 가 사람이 읽기 좋음
+                            'naver_category': naver_cat.get('path') or naver_cat.get('id') or '',
+                            'coupang_category': str(coupang_cat),
+                        },
+                    ],
                 })
 
             except Exception as e:
                 logger.error(f"Error processing row {index}: {e}")
+                _finish_all()
                 if name_col:
                     df.at[index, name_col] = "Error"
-                _finish_prev_stages()
                 completed_rows.append({
                     'name': original_name,
                     'total_ms': int((time.time() - row_start) * 1000),
-                    'stages': [{'name': k, 'ms': v.get('ms', 0)} for k, v in stage_timings.items()],
-                    'error': str(e)
+                    'stages': [],
+                    'error': str(e),
                 })
-            
-            # 진행률 업데이트 (행 완료)
+
+            # ── 행 완료 emit ─────────────────────────────────────────────
             progress = int((index + 1) / total_rows * 100)
             task_instance.update_state(
-                state='PROGRESS', 
+                state='PROGRESS',
                 meta={
-                    'percent': progress, 
-                    'current': index + 1, 
+                    'percent': progress,
+                    'current': index + 1,
                     'total': total_rows,
                     'stage': 'completed_row',
                     'current_name': original_name,
                     'completed_rows': completed_rows,
-                    'warnings': all_warnings
-                }
+                    'warnings': all_warnings,
+                },
             )
 
-    # 결과 파일 저장 — 항상 .xlsx 로 저장 (.xls 입력이어도)
-    import re
-    output_path = re.sub(r'\.xlsx?$', '_processed.xlsx', file_path)
+    # ── 결과 파일 저장 (.xls/.xlsx 모두 → _processed.xlsx) ───────────────
+    output_path = _re.sub(r'\.xlsx?$', '_processed.xlsx', file_path, flags=_re.IGNORECASE)
     df.to_excel(output_path, index=False, engine='openpyxl')
-    
-    return {"status": "Completed", "output_path": output_path, "warnings": all_warnings}
+
+    return {
+        "status": "Completed",
+        "output_path": output_path,
+        "warnings": all_warnings,
+        "completed_rows": completed_rows,   # ← 완료 후에도 트레이스 데이터 보존
+        "total": total_rows,
+    }
