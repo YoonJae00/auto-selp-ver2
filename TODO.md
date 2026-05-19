@@ -24,5 +24,26 @@
 ## Phase 4: Intelligence Capsule & Background Processing
 - [x] **Global Task Store**: Create `taskStore` with Zustand persistence.
 - [x] **Background Polling**: Implement global `useTaskPolling` hook.
-- [x] **Intelligence Capsule UI**: Implement Siri-glow animated capsule component.
+- [x] **Intelligence Capsule UI (v1)**: Implement Siri-glow animated capsule component.
 - [x] **Process Page Refactoring**: Integrate global store and remove local polling.
+- [x] **Intelligence Capsule 전면 재설계 (v2)**:
+  - 위치: 우측 하단 고정 (`right: 24px; bottom: 24px`)
+  - 작업 중: Apple Watch 스타일 ambient conic-gradient 회전 glow
+  - 드로어: 작업 목록 → 클릭 시 풀스크린 모달 전환
+  - 풀스크린 모달: LangGraph Trace 스타일 트리 뷰 (accordion + shimmer)
+- [x] **Backend 단계별 타이밍 & 상세 데이터 수집**:
+  - `completed_rows`에 `refined_name`, `keywords`, `filtered`, `naver_category`, `coupang_category` 포함
+  - `result`에도 `completed_rows` + `total` 포함 → 완료 후 상세 열람 가능
+- [x] **.xls 파일 처리 버그 수정**: `re.sub(.xlsx?$ → _processed.xlsx)` + `engine='openpyxl'`
+- [x] **상표권 검증 모달 제거**: TrademarkModal 컴포넌트 및 관련 코드 정리
+- [x] **모달 스크롤 수정**: `min-height: 0` + 명시적 height 설정
+- [x] **Docker 이미지 리빌드**: `docker compose build worker` 워크플로우 확립
+
+## Phase 5: 다음 세션 예정 (Next Session)
+- [ ] **KIPRIS 저작권 로직 정리**: KIPRIS On/Off에 따른 UX 처리 방식 재기획
+  - 상표권 의심 키워드를 트레이스 뷰 내에서 인라인으로 표시하는 방식 검토
+- [ ] **상품 DB 마이그레이션**: 엑셀 업/다운로드 방식 → PostgreSQL 기반 상품 관리로 전환
+  - 상품 테이블 스키마 설계
+  - 가공 결과를 DB에 직접 저장
+  - 상품 목록 페이지 구현 (검색/필터/수정)
+
