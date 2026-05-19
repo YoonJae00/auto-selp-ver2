@@ -26,9 +26,8 @@ def process_excel_task(self, file_path: str, column_mapping: dict, llm_provider:
 async def _run_pipeline(task_instance, file_path: str, column_mapping: dict, llm_provider: str, kipris_enabled: bool = True):
     df = pd.read_excel(file_path)
     total_rows = len(df)
-    all_warnings = {} # Store warnings by row index
+    all_warnings = {}
     completed_rows = []
-    
     
     async with SessionLocal() as db:
         prompt_manager = PromptManager(db)
@@ -57,12 +56,18 @@ async def _run_pipeline(task_instance, file_path: str, column_mapping: dict, llm
         for index, row in df.iterrows():
             original_name = str(row[orig_col])
             progress = int((index) / total_rows * 100)
-            
             row_start = time.time()
-            stage_times = {}
-            
-            def update_stage(stage_name):
-                stage_times[stage_name] = {'start': time.time()}
+            stage_timings: dict = {}
+
+            def _finish_prev_stages():
+                """현재까지 열린 단계의 소요시간 확정"""
+                for v in stage_timings.values():
+                    if 'ms' not in v:
+                        v['ms'] = int((time.time() - v['start']) * 1000)
+
+            def update_stage(stage_name: str):
+                _finish_prev_stages()
+                stage_timings[stage_name] = {'start': time.time()}
                 task_instance.update_state(
                     state='PROGRESS', 
                     meta={
@@ -71,25 +76,19 @@ async def _run_pipeline(task_instance, file_path: str, column_mapping: dict, llm
                         'total': total_rows,
                         'stage': stage_name,
                         'current_name': original_name,
-                        'warnings': all_warnings,
-                        'completed_rows': completed_rows
+                        'completed_rows': completed_rows,
+                        'warnings': all_warnings
                     }
                 )
-                
-            def complete_stage(stage_name):
-                if stage_name in stage_times:
-                    stage_times[stage_name]['ms'] = int((time.time() - stage_times[stage_name]['start']) * 1000)
             
             try:
                 # Stage 1: 정제
                 update_stage('refining')
                 refined_name = await llm_client.refine_product_name(original_name)
-                complete_stage('refining')
                 
                 # Stage 2: 키워드
                 update_stage('keywords')
                 keywords, warnings = await keyword_engine.curate_keywords(refined_name)
-                complete_stage('keywords')
                 if warnings:
                     all_warnings[index] = warnings
                 
@@ -97,7 +96,6 @@ async def _run_pipeline(task_instance, file_path: str, column_mapping: dict, llm
                 update_stage('categorizing')
                 naver_cat = await category_mapper.get_naver_category(refined_name)
                 coupang_cat_id = await category_mapper.get_coupang_category(refined_name)
-                complete_stage('categorizing')
                 
                 # 결과 업데이트
                 if name_col:
@@ -108,16 +106,25 @@ async def _run_pipeline(task_instance, file_path: str, column_mapping: dict, llm
                     df.at[index, naver_cat_col] = naver_cat['id']
                 if coupang_cat_col:
                     df.at[index, coupang_cat_col] = coupang_cat_id
+                
+                _finish_prev_stages()
+                completed_rows.append({
+                    'name': original_name,
+                    'total_ms': int((time.time() - row_start) * 1000),
+                    'stages': [{'name': k, 'ms': v.get('ms', 0)} for k, v in stage_timings.items()]
+                })
+
             except Exception as e:
                 logger.error(f"Error processing row {index}: {e}")
-                df.at[index, name_col] = "Error"
-            
-            # 행 완료 정보 추가
-            completed_rows.append({
-                'name': original_name,
-                'total_ms': int((time.time() - row_start) * 1000),
-                'stages': [{'name': k, 'ms': v.get('ms', 0)} for k, v in stage_times.items()]
-            })
+                if name_col:
+                    df.at[index, name_col] = "Error"
+                _finish_prev_stages()
+                completed_rows.append({
+                    'name': original_name,
+                    'total_ms': int((time.time() - row_start) * 1000),
+                    'stages': [{'name': k, 'ms': v.get('ms', 0)} for k, v in stage_timings.items()],
+                    'error': str(e)
+                })
             
             # 진행률 업데이트 (행 완료)
             progress = int((index + 1) / total_rows * 100)
@@ -129,8 +136,8 @@ async def _run_pipeline(task_instance, file_path: str, column_mapping: dict, llm
                     'total': total_rows,
                     'stage': 'completed_row',
                     'current_name': original_name,
-                    'warnings': all_warnings,
-                    'completed_rows': completed_rows
+                    'completed_rows': completed_rows,
+                    'warnings': all_warnings
                 }
             )
 

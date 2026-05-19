@@ -10,6 +10,7 @@ export interface CompletedRow {
   name: string;
   total_ms: number;
   stages: CompletedRowStage[];
+  error?: string;
 }
 
 export interface Task {
@@ -17,7 +18,7 @@ export interface Task {
   filename: string;
   progress: number;
   status: 'PENDING' | 'PROGRESS' | 'SUCCESS' | 'FAILURE';
-  stage?: 'refining' | 'keywords' | 'verifying' | 'categorizing' | 'completed_row';
+  stage?: 'refining' | 'keywords' | 'categorizing' | 'completed_row';
   currentName?: string;
   completedRows?: CompletedRow[];
   resultPath?: string;

@@ -26,6 +26,7 @@ const STEPS = [
 
 
 
+
 export default function ProcessPage() {
   const [step, setStep] = useState<Step>('UPLOAD');
   const [uploadData, setUploadData] = useState<UploadResponse | null>(null);
@@ -119,7 +120,6 @@ export default function ProcessPage() {
       
       setActiveTaskId(res.task_id);
       setStep('PROCESSING');
-      // Toast notification logic could go here, or simple UI text does the job
     } catch (err: any) {
       setError(err.message);
     }
@@ -270,41 +270,38 @@ export default function ProcessPage() {
 
       {step === 'PROCESSING' && (
         <section className={`${styles.section} ${styles.stepContainer}`}>
-          <div style={{ textAlign: 'center', padding: '60px 0' }}>
-            <div style={{ fontSize: '48px', marginBottom: '16px' }}>⚡</div>
-            <h3 style={{ fontSize: '20px', fontWeight: 600, color: 'var(--ink)' }}>백그라운드에서 가공 중입니다</h3>
-            <p style={{ marginTop: '12px', color: 'var(--ink-muted-80)' }}>좌측 하단 캡슐에서 실시간 진행 현황을 확인할 수 있습니다.</p>
-            <p style={{ marginTop: '4px', color: 'var(--ink-muted-80)' }}>다른 작업을 계속하셔도 됩니다.</p>
+          <div style={{ textAlign: 'center', padding: '60px 20px' }}>
+            <div style={{ fontSize: '52px', marginBottom: '20px' }}>⚡</div>
+            <h3 style={{ fontSize: '20px', fontWeight: 700, marginBottom: '12px', color: 'var(--ink)' }}>
+              백그라운드에서 가공 중입니다
+            </h3>
+            <p style={{ fontSize: '15px', color: 'var(--ink-muted-48)', lineHeight: 1.6, marginBottom: '8px' }}>
+              좌측 하단의 캡슐에서 실시간 진행 현황을 확인할 수 있습니다.
+            </p>
+            <p style={{ fontSize: '14px', color: 'var(--ink-muted-48)' }}>
+              다른 작업을 계속하셔도 됩니다.
+            </p>
           </div>
         </section>
       )}
 
       {step === 'COMPLETED' && (
         <section className={`${styles.section} ${styles.stepContainer}`}>
-          <div className={styles.timelineSplit}>
-            <div className={styles.timelineLeft} style={{ width: '100%', borderRight: 'none', paddingRight: 0 }}>
-              <div className={styles.statusText}>
-                가공이 완료되었습니다!
-              </div>
-
-              {activeTask?.warnings && Object.keys(activeTask.warnings).length > 0 && (
-                <div className={styles.warningSummary}>
-                  <div className={styles.warningText}>
-                    <span className={styles.warningIcon}>⚠️</span>
-                    <span>상표권 침해 의심 키워드가 {Object.values(activeTask.warnings).flat().length}개 발견되었습니다.</span>
-                  </div>
-                  <PillButton variant="secondary" onClick={() => setShowWarnings(true)}>상세보기</PillButton>
+          <div style={{ textAlign: 'center', padding: '48px 20px' }}>
+            <div style={{ fontSize: '52px', marginBottom: '16px' }}>✅</div>
+            <h3 style={{ fontSize: '20px', fontWeight: 700, marginBottom: '12px', color: 'var(--ink)' }}>
+              가공이 완료되었습니다!
+            </h3>
+            {activeTask?.warnings && Object.keys(activeTask.warnings).length > 0 && (
+              <div className={styles.warningSummary} style={{ maxWidth: '400px', margin: '0 auto 24px' }}>
+                <div className={styles.warningText}>
+                  <span className={styles.warningIcon}>⚠️</span>
+                  <span>상표권 침해 의심 키워드 {Object.values(activeTask.warnings).flat().length}개</span>
                 </div>
-              )}
-
-              <div className={styles.progressBar}>
-                <div className={styles.progressFill} style={{ width: '100%', background: 'var(--accent-gradient)' }}></div>
+                <PillButton variant="secondary" onClick={() => setShowWarnings(true)}>상세보기</PillButton>
               </div>
-              
-              <div style={{ marginTop: '24px' }}>
-                <PillButton variant="primary" onClick={handleDownload}>결과 파일 다운로드</PillButton>
-              </div>
-            </div>
+            )}
+            <PillButton variant="primary" onClick={handleDownload}>결과 파일 다운로드</PillButton>
           </div>
         </section>
       )}

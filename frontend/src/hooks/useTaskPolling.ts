@@ -26,7 +26,13 @@ export function useTaskPolling() {
         try {
           const res = await api.get<{ 
             state: string; 
-            meta?: { percent: number; warnings?: Record<number, any[]>; stage?: any; current_name?: string; completed_rows?: any[] };
+            meta?: { 
+              percent: number;
+              stage?: string;
+              current_name?: string;
+              completed_rows?: any[];
+              warnings?: Record<number, any[]>;
+            };
             result?: any;
           }>(`/api/processor/status/${task.id}`);
           
@@ -34,10 +40,10 @@ export function useTaskPolling() {
             updateTask(task.id, { 
               progress: res.meta.percent, 
               status: 'PROGRESS',
-              stage: res.meta.stage,
+              stage: res.meta.stage as any,
               currentName: res.meta.current_name,
               completedRows: res.meta.completed_rows,
-              warnings: res.meta.warnings 
+              warnings: res.meta.warnings,
             });
           } else if (res.state === 'SUCCESS') {
             const downloadUrl = `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost'}/api/processor/download/${task.id}`;
