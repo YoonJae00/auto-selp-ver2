@@ -255,7 +255,8 @@
 .modalPanel {
   width: 100%;
   max-width: 800px;
-  max-height: calc(100vh - 48px);
+  height: calc(100vh - 48px);
+  max-height: 820px;
   background: #fff;
   border-radius: 24px;
   box-shadow: 0 24px 60px rgba(0, 0, 0, 0.22);
@@ -357,6 +358,7 @@
   flex-direction: column;
   gap: 4px;
   flex: 1;
+  min-height: 0;   /* critical: lets flex child shrink below content height */
 }
 
 /* ── Row Items ───────────────────────────────────────────────────────────── */

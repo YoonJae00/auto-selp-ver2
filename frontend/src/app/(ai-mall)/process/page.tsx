@@ -5,7 +5,7 @@ import { api } from '@/lib/api';
 import { useSettingsStore } from '@/store/settingsStore';
 import { useTaskStore } from '@/store/taskStore';
 import PillButton from '@/components/UI/PillButton/PillButton';
-import TrademarkModal from './TrademarkModal';
+
 import styles from './process.module.css';
 
 type Step = 'UPLOAD' | 'MAPPING' | 'PROCESSING' | 'COMPLETED';
@@ -40,7 +40,7 @@ export default function ProcessPage() {
   const activeTask = tasks.find(t => t.id === activeTaskId);
 
   const [error, setError] = useState<string | null>(null);
-  const [showWarnings, setShowWarnings] = useState(false);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Recovery logic on mount: if there's a running task, jump to processing step
@@ -292,26 +292,13 @@ export default function ProcessPage() {
             <h3 style={{ fontSize: '20px', fontWeight: 700, marginBottom: '12px', color: 'var(--ink)' }}>
               가공이 완료되었습니다!
             </h3>
-            {activeTask?.warnings && Object.keys(activeTask.warnings).length > 0 && (
-              <div className={styles.warningSummary} style={{ maxWidth: '400px', margin: '0 auto 24px' }}>
-                <div className={styles.warningText}>
-                  <span className={styles.warningIcon}>⚠️</span>
-                  <span>상표권 침해 의심 키워드 {Object.values(activeTask.warnings).flat().length}개</span>
-                </div>
-                <PillButton variant="secondary" onClick={() => setShowWarnings(true)}>상세보기</PillButton>
-              </div>
-            )}
+
             <PillButton variant="primary" onClick={handleDownload}>결과 파일 다운로드</PillButton>
           </div>
         </section>
       )}
 
-      {showWarnings && activeTask?.warnings && (
-        <TrademarkModal 
-          warnings={activeTask.warnings} 
-          onClose={() => setShowWarnings(false)} 
-        />
-      )}
+
     </div>
   );
 }
