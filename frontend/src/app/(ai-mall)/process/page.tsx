@@ -24,18 +24,7 @@ const STEPS = [
   { id: 'COMPLETED', label: '④ 완료' }
 ];
 
-const TimelineItem = ({ label, isActive, isPast }: { label: string, isActive: boolean, isPast: boolean }) => {
-  return (
-    <div className={styles.timelineItem}>
-      <div className={`${styles.timelineIcon} ${isPast ? styles.completed : isActive ? styles.active : styles.pending}`}>
-        {isPast ? '✓' : isActive ? '⟳' : '○'}
-      </div>
-      <div className={isActive ? styles.shimmerText : (isPast ? styles.completedText : styles.pendingText)}>
-        {label} {isActive && '...'}
-      </div>
-    </div>
-  );
-};
+
 
 export default function ProcessPage() {
   const [step, setStep] = useState<Step>('UPLOAD');
@@ -130,6 +119,7 @@ export default function ProcessPage() {
       
       setActiveTaskId(res.task_id);
       setStep('PROCESSING');
+      // Toast notification logic could go here, or simple UI text does the job
     } catch (err: any) {
       setError(err.message);
     }
@@ -278,16 +268,26 @@ export default function ProcessPage() {
         </section>
       )}
 
-      {(step === 'PROCESSING' || step === 'COMPLETED') && (
+      {step === 'PROCESSING' && (
+        <section className={`${styles.section} ${styles.stepContainer}`}>
+          <div style={{ textAlign: 'center', padding: '60px 0' }}>
+            <div style={{ fontSize: '48px', marginBottom: '16px' }}>⚡</div>
+            <h3 style={{ fontSize: '20px', fontWeight: 600, color: 'var(--ink)' }}>백그라운드에서 가공 중입니다</h3>
+            <p style={{ marginTop: '12px', color: 'var(--ink-muted-80)' }}>좌측 하단 캡슐에서 실시간 진행 현황을 확인할 수 있습니다.</p>
+            <p style={{ marginTop: '4px', color: 'var(--ink-muted-80)' }}>다른 작업을 계속하셔도 됩니다.</p>
+          </div>
+        </section>
+      )}
+
+      {step === 'COMPLETED' && (
         <section className={`${styles.section} ${styles.stepContainer}`}>
           <div className={styles.timelineSplit}>
-            {/* Left: Global Progress */}
-            <div className={styles.timelineLeft}>
+            <div className={styles.timelineLeft} style={{ width: '100%', borderRight: 'none', paddingRight: 0 }}>
               <div className={styles.statusText}>
-                {step === 'PROCESSING' ? `상품을 가공하고 있습니다... (${activeTask?.progress || 0}%)` : '가공이 완료되었습니다!'}
+                가공이 완료되었습니다!
               </div>
 
-              {step === 'COMPLETED' && activeTask?.warnings && Object.keys(activeTask.warnings).length > 0 && (
+              {activeTask?.warnings && Object.keys(activeTask.warnings).length > 0 && (
                 <div className={styles.warningSummary}>
                   <div className={styles.warningText}>
                     <span className={styles.warningIcon}>⚠️</span>
@@ -298,41 +298,11 @@ export default function ProcessPage() {
               )}
 
               <div className={styles.progressBar}>
-                <div className={styles.progressFill} style={{ width: `${activeTask?.progress || 0}%`, background: 'var(--accent-gradient)' }}></div>
+                <div className={styles.progressFill} style={{ width: '100%', background: 'var(--accent-gradient)' }}></div>
               </div>
               
-              {step === 'COMPLETED' && (
-                <div style={{ marginTop: '24px' }}>
-                  <PillButton variant="primary" onClick={handleDownload}>결과 파일 다운로드</PillButton>
-                </div>
-              )}
-            </div>
-
-            {/* Right: Live Timeline */}
-            <div className={styles.timelineRight}>
-              <h4 style={{ marginBottom: '16px', color: 'var(--ink)' }}>진행 현황</h4>
-              {activeTask?.currentName && step === 'PROCESSING' && (
-                <div style={{ marginBottom: '16px', padding: '12px', background: '#fff', borderRadius: '8px', fontSize: '13px' }}>
-                  현재 처리중: <strong>{activeTask.currentName}</strong>
-                </div>
-              )}
-              
-              <div className={styles.timelineList}>
-                 <TimelineItem 
-                   label="상품명 정제" 
-                   isActive={activeTask?.stage === 'refining'} 
-                   isPast={['keywords', 'categorizing', 'verifying', 'completed_row'].includes(activeTask?.stage || '') || step === 'COMPLETED'} 
-                 />
-                 <TimelineItem 
-                   label="키워드 생성" 
-                   isActive={activeTask?.stage === 'keywords'} 
-                   isPast={['categorizing', 'verifying', 'completed_row'].includes(activeTask?.stage || '') || step === 'COMPLETED'} 
-                 />
-                 <TimelineItem 
-                   label="카테고리 매핑" 
-                   isActive={activeTask?.stage === 'categorizing'} 
-                   isPast={['completed_row'].includes(activeTask?.stage || '') || step === 'COMPLETED'} 
-                 />
+              <div style={{ marginTop: '24px' }}>
+                <PillButton variant="primary" onClick={handleDownload}>결과 파일 다운로드</PillButton>
               </div>
             </div>
           </div>
