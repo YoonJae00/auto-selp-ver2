@@ -53,17 +53,34 @@ async def _run_pipeline(task_instance, file_path: str, column_mapping: dict, llm
 
         for index, row in df.iterrows():
             original_name = str(row[orig_col])
+            progress = int((index) / total_rows * 100)
+            
+            def update_stage(stage_name):
+                task_instance.update_state(
+                    state='PROGRESS', 
+                    meta={
+                        'percent': progress, 
+                        'current': index + 1, 
+                        'total': total_rows,
+                        'stage': stage_name,
+                        'current_name': original_name,
+                        'warnings': all_warnings
+                    }
+                )
             
             try:
                 # Stage 1: 정제
+                update_stage('refining')
                 refined_name = await llm_client.refine_product_name(original_name)
                 
                 # Stage 2: 키워드
+                update_stage('keywords')
                 keywords, warnings = await keyword_engine.curate_keywords(refined_name)
                 if warnings:
                     all_warnings[index] = warnings
                 
                 # Stage 3: 카테고리
+                update_stage('categorizing')
                 naver_cat = await category_mapper.get_naver_category(refined_name)
                 coupang_cat_id = await category_mapper.get_coupang_category(refined_name)
                 
@@ -80,7 +97,7 @@ async def _run_pipeline(task_instance, file_path: str, column_mapping: dict, llm
                 logger.error(f"Error processing row {index}: {e}")
                 df.at[index, name_col] = "Error"
             
-            # 진행률 업데이트
+            # 진행률 업데이트 (행 완료)
             progress = int((index + 1) / total_rows * 100)
             task_instance.update_state(
                 state='PROGRESS', 
@@ -88,6 +105,8 @@ async def _run_pipeline(task_instance, file_path: str, column_mapping: dict, llm
                     'percent': progress, 
                     'current': index + 1, 
                     'total': total_rows,
+                    'stage': 'completed_row',
+                    'current_name': original_name,
                     'warnings': all_warnings
                 }
             )
