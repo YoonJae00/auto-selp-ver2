@@ -21,16 +21,22 @@ interface UploadResponse {
 }
 
 const SYSTEM_FIELDS = [
-  { key: 'original_name', label: '원본 상품명 (필수)', required: true, defaultFallbacks: ['상품명', '원본상품명', '제품명'] },
-  { key: 'product_code', label: '상품 코드 / 도매코드 (필수)', required: true, defaultFallbacks: ['상품코드', '도매코드', '자체상품코드', '코드'] },
-  { key: 'price_wholesale', label: '공급가 / 도매가', required: false, defaultFallbacks: ['공급가', '도매가', '공급가격', '도매가격'] },
-  { key: 'price_retail', label: '소비자가 / 소매가', required: false, defaultFallbacks: ['소비자가', '소매가', '소매가격'] },
-  { key: 'price_min_selling', label: '최소 판매가', required: false, defaultFallbacks: ['최소판매가', '최저가'] },
-  { key: 'origin', label: '원산지 / 제조국', required: false, defaultFallbacks: ['원산지', '제조국', '제조국가'] },
-  { key: 'options', label: '옵션', required: false, defaultFallbacks: ['옵션', '선택사항', '옵션명'] },
-  { key: 'images_list', label: '대표 이미지 목록', required: false, defaultFallbacks: ['이미지', '대표이미지', '상품이미지'] },
-  { key: 'image_detail', label: '상세 이미지 HTML/URL', required: false, defaultFallbacks: ['상세이미지', '상세설명이미지'] },
-  { key: 'wholesale_status', label: '도매 상태 (품절여부)', required: false, defaultFallbacks: ['품절상태', '품절여부', '상태', '판매상태'] }
+  { key: 'wholesale_status', label: '상태 (필수)', required: true, defaultFallbacks: ['상태', '품절상태', '품절여부', '판매상태'] },
+  { key: 'wholesale_product_id', label: '제품번호 (필수)', required: true, defaultFallbacks: ['제품번호', '제품ID', '상품ID'] },
+  { key: 'product_code', label: '상품코드 (필수)', required: true, defaultFallbacks: ['상품코드', '도매코드', '자체상품코드', '코드'] },
+  { key: 'original_name', label: '상품명 (필수)', required: true, defaultFallbacks: ['상품명', '원본상품명', '제품명'] },
+  { key: 'option_values_raw', label: '옵션값', required: false, defaultFallbacks: ['옵션값', '옵션', '선택사항', '옵션명'] },
+  { key: 'price_wholesale_raw', label: '가격 (필수)', required: true, defaultFallbacks: ['가격', '공급가', '도매가', '공급가격', '도매가격'] },
+  { key: 'price_retail', label: '소비자가', required: false, defaultFallbacks: ['소비자가', '소매가', '소매가격'] },
+  { key: 'price_min_selling', label: '판매준수가', required: false, defaultFallbacks: ['판매준수가', '최소판매가', '최저가'] },
+  { key: 'origin', label: '원산지 (필수)', required: true, defaultFallbacks: ['원산지', '제조국', '제조국가'] },
+  { key: 'image_list_1', label: '목록이미지1 (필수)', required: true, defaultFallbacks: ['목록이미지1', '대표이미지', '이미지', '상품이미지'] },
+  { key: 'image_list_2', label: '목록이미지2', required: false, defaultFallbacks: ['목록이미지2'] },
+  { key: 'image_list_3', label: '목록이미지3', required: false, defaultFallbacks: ['목록이미지3'] },
+  { key: 'image_list_4', label: '목록이미지4', required: false, defaultFallbacks: ['목록이미지4'] },
+  { key: 'image_list_5', label: '목록이미지5', required: false, defaultFallbacks: ['목록이미지5'] },
+  { key: 'image_detail', label: '상세이미지 (필수)', required: true, defaultFallbacks: ['상세이미지', '상세설명이미지'] },
+  { key: 'wholesale_registered_at', label: '등록일', required: false, defaultFallbacks: ['등록일', '상품등록일'] }
 ];
 
 export default function UploadPage() {
