@@ -36,3 +36,4 @@ build/
 # Project specific
 services/processor/uploads/*
 !services/processor/uploads/.gitkeep
+.antigravitycli/
