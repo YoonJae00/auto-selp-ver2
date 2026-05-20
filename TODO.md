@@ -48,7 +48,12 @@ Note: older files under `docs/superpowers/plans/` are historical implementation 
 - [x] **모달 스크롤 수정**: `min-height: 0` + 명시적 height 설정
 - [x] **Docker 이미지 리빌드**: `docker compose build worker` 워크플로우 확립
 
-## Phase 5: 다음 세션 예정 (Next Session)
+## Phase 5: Continuous Improvement & Knowledge Compounding (Completed)
+- [x] **Install Compound Engineering Skill**: Integrate `ce-compound` and related skills from `EveryInc/compound-engineering-plugin`.
+- [x] **Workflow Integration**: Add "Compound" stage to Superpowers final step (review end).
+- [x] **Solution Documentation**: Start documenting major fixes and architectural decisions in `docs/solutions/`.
+
+## Phase 6: 다음 세션 예정 (Next Session)
 - [ ] **KIPRIS 저작권 로직 정리**: KIPRIS On/Off에 따른 UX 처리 방식 재기획. GitHub #43
   - KIPRIS On: 키워드 단계에 `상표 의심` 인라인 표시
   - KIPRIS Off: `LLM 추측 제외` 인라인 표시
