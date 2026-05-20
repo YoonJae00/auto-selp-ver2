@@ -29,19 +29,19 @@ The GitHub MCP (Model Context Protocol) integration was failing to initialize co
 
 ## What Didn't Work
 - Reading `/home/yoonjae/.gemini/config/mcp_config.json` directly initially failed because it was completely empty (0 bytes), making it invalid JSON.
-- Relying on automated environment variable extraction without custom headers in the plugin definition failed because the remote HTTP MCP server (`https://api.githubcopilot.com/mcp/`) requires a Bearer REDACTED in the `Authorization` header, and defaults to standard OAuth registration when missing.
+- Relying on automated environment variable extraction without custom headers in the plugin definition failed because the remote HTTP MCP server (`https://api.githubcopilot.com/mcp/`) requires an auth token in the `Authorization` header, and defaults to standard OAuth registration when missing.
 
 ## Solution
 1. **Fix `mcp_config.json` Empty File Error**: Populated `/home/yoonjae/.gemini/config/mcp_config.json` with a valid empty JSON object (`{}`) to resolve the JSON parsing error in the CLI discovery:
    ```json
    {}
    ```
-2. **Configure HTTP Authentication for GitHub MCP**: Added the correct authentication details with a `Bearer` token to `/home/yoonjae/.gemini/settings.json` under `mcpServers` using the valid personal access token from `GITHUB_MCP_PAT`:
+2. **Configure HTTP Authentication for GitHub MCP**: Added the correct authentication details to `/home/yoonjae/.gemini/settings.json` under `mcpServers` using an environment variable for auth:
    ```json
    "github": {
      "httpUrl": "https://api.githubcopilot.com/mcp/",
      "headers": {
-       "Authorization": "Bearer REDACTED",
+       "Authorization": "REDACTED",
        "Accept": "application/json, text/event-stream"
      }
    }
@@ -49,8 +49,9 @@ The GitHub MCP (Model Context Protocol) integration was failing to initialize co
 3. **Synchronize Plugin Config**: Updated `/home/yoonjae/.gemini/antigravity-cli/plugins/github/mcp_config.json` to include the identical authentication header.
 
 ## Why This Works
-Populating `/home/yoonjae/.gemini/config/mcp_config.json` with `{}` satisfies the JSON parser's requirement of a valid JSON object. Explicitly defining the `github` MCP server with standard `Authorization` and `Accept` headers in both user `settings.json` and the plugin's `mcp_config.json` tells the MCP client to use the `Bearer` token instead of triggering the default OAuth flow, successfully connecting to the GitHub Copilot remote MCP.
+Populating `/home/yoonjae/.gemini/config/mcp_config.json` with `{}` satisfies the JSON parser's requirement of a valid JSON object. Explicitly defining the `github` MCP server with standard `Authorization` and `Accept` headers in both user `settings.json` and the plugin's `mcp_config.json` tells the MCP client to use the auth token instead of triggering the default OAuth flow, successfully connecting to the GitHub Copilot remote MCP.
 
 ## Prevention
 - Never leave configuration files completely empty (0 bytes); write at least `{}`.
 - When utilizing remote HTTP MCP servers, ensure that the headers configuration explicitly contains the `Authorization` header rather than leaving them empty, which prevents the client from trying unauthorized OAuth flows.
+- Store credentials in environment variables, never hardcode them in documentation.
