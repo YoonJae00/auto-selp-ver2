@@ -66,6 +66,26 @@ def test_parse_option_variants_keeps_single_price_without_options():
     assert result["warnings"] == []
 
 
+def test_parse_option_variants_treats_formatted_price_as_single_price_without_options():
+    result = parse_option_variants(None, "2,640원")
+    assert result["price_wholesale"] == 2640
+    assert result["option_variants"] == []
+    assert result["warnings"] == []
+
+
+def test_parse_option_variants_uses_first_option_price_as_representative_even_when_invalid():
+    result = parse_option_variants("L자형,V자형", "bad,2820")
+    assert result["price_wholesale"] is None
+    assert result["option_variants"] == []
+    assert result["warnings"] == [
+        {
+            "field": "price_wholesale_raw",
+            "message": "One or more option prices could not be parsed.",
+            "raw_value": "bad,2820",
+        }
+    ]
+
+
 def test_parse_option_variants_warns_on_count_mismatch():
     result = parse_option_variants("L자형,V자형", "2640")
     assert result["price_wholesale"] == 2640

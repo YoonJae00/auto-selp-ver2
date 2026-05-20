@@ -102,11 +102,25 @@ def split_csv_text(value: Any) -> list[str]:
 
 def parse_option_variants(option_values_raw: Any, price_wholesale_raw: Any) -> dict[str, Any]:
     option_names = split_csv_text(option_values_raw)
-    price_tokens = split_csv_text(price_wholesale_raw)
+    price_tokens = split_csv_text(price_wholesale_raw) if option_names else []
     parsed_prices = [parse_int_price(token) for token in price_tokens]
-    valid_prices = [price for price in parsed_prices if price is not None]
-    representative_price = valid_prices[0] if valid_prices else None
+    representative_price = parsed_prices[0] if parsed_prices else parse_int_price(price_wholesale_raw)
     warnings: list[dict[str, Any]] = []
+
+    if not option_names:
+        if not is_blank(price_wholesale_raw) and representative_price is None:
+            warnings.append(
+                {
+                    "field": "price_wholesale_raw",
+                    "message": "One or more option prices could not be parsed.",
+                    "raw_value": clean_text(price_wholesale_raw) or "",
+                }
+            )
+        return {
+            "price_wholesale": representative_price,
+            "option_variants": [],
+            "warnings": warnings,
+        }
 
     if option_names and len(option_names) != len(price_tokens):
         warnings.append(
