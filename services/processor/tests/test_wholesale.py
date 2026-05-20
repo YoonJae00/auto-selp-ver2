@@ -1,10 +1,14 @@
 import pytest
 import uuid
+import pandas as pd
 from datetime import datetime
-from sqlalchemy import select, and_
+from fastapi import HTTPException
+from sqlalchemy import select, and_, func
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from database import Base, engine
 from config import settings
+from schemas import ProcessRequest
+import main as processor_main
 
 # Import models
 from models import WholesaleSite, Product, ProductPlatformMapping, ProductImport
@@ -222,3 +226,74 @@ async def test_smart_upsert_and_change_tracking(test_db):
         assert updated_product.price_wholesale_raw == "12000,13000"
         assert updated_product.option_variants[0]["price_wholesale"] == 12000
         assert updated_product.wholesale_registered_at == "2026-05-20"
+
+
+@pytest.mark.anyio
+async def test_process_db_rejects_wholesale_site_owned_by_another_user(test_db, tmp_path, monkeypatch):
+    owner_id = uuid.uuid4()
+    current_user_id = uuid.uuid4()
+    site_id = uuid.uuid4()
+
+    async with test_db() as session:
+        site = WholesaleSite(
+            id=site_id,
+            user_id=owner_id,
+            name="Other User Template",
+            column_mapping={
+                "wholesale_status": "상태",
+                "wholesale_product_id": "제품번호",
+                "product_code": "상품코드",
+                "original_name": "상품명",
+                "price_wholesale_raw": "가격",
+                "origin": "원산지",
+                "image_list_1": "목록이미지1",
+                "image_detail": "상세이미지",
+            },
+        )
+        session.add(site)
+        await session.commit()
+
+    file_id = str(uuid.uuid4())
+    upload_file = tmp_path / f"{file_id}_products.xlsx"
+    upload_file.write_bytes(b"placeholder")
+    monkeypatch.setattr(processor_main, "UPLOAD_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        processor_main.pd,
+        "read_excel",
+        lambda _path: pd.DataFrame(
+            [
+                {
+                    "상태": "정상",
+                    "제품번호": "123",
+                    "상품코드": "P-123",
+                    "상품명": "테스트 상품",
+                    "가격": "1000",
+                    "원산지": "국내",
+                    "목록이미지1": "https://img.example/1.jpg",
+                    "상세이미지": "https://img.example/detail.jpg",
+                }
+            ]
+        ),
+    )
+
+    request = ProcessRequest(
+        file_id=file_id,
+        column_mapping={},
+        wholesale_site_id=site_id,
+    )
+
+    async with test_db() as session:
+        with pytest.raises(HTTPException) as exc_info:
+            await processor_main.start_db_processing(
+                request,
+                current_user={"id": current_user_id, "username": "current", "is_admin": False},
+                db=session,
+            )
+
+        assert exc_info.value.status_code == 404
+        assert exc_info.value.detail == "Wholesale site not found"
+
+        import_count = await session.scalar(
+            select(func.count()).select_from(ProductImport).where(ProductImport.user_id == current_user_id)
+        )
+        assert import_count == 0

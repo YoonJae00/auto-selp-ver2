@@ -248,6 +248,22 @@ async def start_db_processing(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to read excel: {e}")
     
+    col_mapping = dict(request.column_mapping)
+    if request.wholesale_site_id:
+        result = await db.execute(
+            select(WholesaleSite).where(
+                and_(
+                    WholesaleSite.id == request.wholesale_site_id,
+                    WholesaleSite.user_id == current_user["id"],
+                )
+            )
+        )
+        site = result.scalar_one_or_none()
+        if not site:
+            raise HTTPException(status_code=404, detail="Wholesale site not found")
+        if site.column_mapping:
+            col_mapping = {**site.column_mapping, **col_mapping}
+
     # 1. ProductImport 생성
     import_id = uuid.uuid4()
     import_run = ProductImport(
@@ -258,13 +274,6 @@ async def start_db_processing(
         status="pending"
     )
     db.add(import_run)
-    
-    col_mapping = dict(request.column_mapping)
-    if request.wholesale_site_id:
-        result = await db.execute(select(WholesaleSite).where(WholesaleSite.id == request.wholesale_site_id))
-        site = result.scalar_one_or_none()
-        if site and site.column_mapping:
-            col_mapping = {**site.column_mapping, **col_mapping}
 
     missing_required = validate_required_mappings(col_mapping, list(df.columns))
     if missing_required:
