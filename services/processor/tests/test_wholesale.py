@@ -121,8 +121,13 @@ async def test_smart_upsert_and_change_tracking(test_db):
             import_id=import_id,
             original_name="Pre-existing Product",
             product_code="P-CODE-999",
+            wholesale_product_id="OLD-123",
             price_wholesale=10000,
+            option_values_raw="기본형",
+            price_wholesale_raw="10000",
+            option_variants=[{"name": "기본형", "price_wholesale": 10000, "position": 1}],
             wholesale_status="판매중",
+            wholesale_registered_at="2026-05-01",
             status="completed"
         )
         session.add(product)
@@ -162,8 +167,16 @@ async def test_smart_upsert_and_change_tracking(test_db):
         new_status = "품절"
         
         # Update product fields
+        existing_product.wholesale_product_id = "NEW-123"
         existing_product.price_wholesale = new_price
+        existing_product.option_values_raw = "L자형,V자형"
+        existing_product.price_wholesale_raw = "12000,13000"
+        existing_product.option_variants = [
+            {"name": "L자형", "price_wholesale": 12000, "position": 1},
+            {"name": "V자형", "price_wholesale": 13000, "position": 2},
+        ]
         existing_product.wholesale_status = new_status
+        existing_product.wholesale_registered_at = "2026-05-20"
         session.add(existing_product)
         
         # Perform change tracking comparison for platform mappings
@@ -202,3 +215,10 @@ async def test_smart_upsert_and_change_tracking(test_db):
         assert updated_mapping.price_changed is True
         assert updated_mapping.stock_changed is True
         assert updated_mapping.last_changed_at is not None
+
+        product_res = await session.execute(select(Product).where(Product.id == product_id))
+        updated_product = product_res.scalar_one()
+        assert updated_product.wholesale_product_id == "NEW-123"
+        assert updated_product.price_wholesale_raw == "12000,13000"
+        assert updated_product.option_variants[0]["price_wholesale"] == 12000
+        assert updated_product.wholesale_registered_at == "2026-05-20"

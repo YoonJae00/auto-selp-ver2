@@ -32,6 +32,7 @@ from schemas import (
     WholesaleSiteResponse
 )
 from utils.prompt_manager import PromptManager
+from utils.wholesale_upload import parse_wholesale_row, validate_required_mappings
 from config import settings
 
 from fastapi.middleware.cors import CORSMiddleware
@@ -265,76 +266,23 @@ async def start_db_processing(
         if site and site.column_mapping:
             col_mapping = {**site.column_mapping, **col_mapping}
 
-    orig_col = col_mapping.get("original_name")
-    if not orig_col or orig_col not in df.columns:
-        raise HTTPException(status_code=400, detail=f"Column '{orig_col}' not found in excel.")
+    missing_required = validate_required_mappings(col_mapping, list(df.columns))
+    if missing_required:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Required mapped columns missing in excel: {', '.join(missing_required)}",
+        )
         
     for index, row in df.iterrows():
-        original_name = str(row[orig_col])
-        raw_row_data = row.to_dict()
-        for k, v in list(raw_row_data.items()):
-            if pd.isna(v):
-                raw_row_data[k] = ""
-            elif isinstance(v, (datetime, pd.Timestamp)):
-                raw_row_data[k] = v.isoformat()
-                
-        def get_mapped_val(field_name, fallbacks=[]):
-            header = col_mapping.get(field_name)
-            if not header:
-                for f in fallbacks:
-                    if f in df.columns:
-                        header = f
-                        break
-            if header and header in row:
-                val = row[header]
-                if pd.isna(val):
-                    return None
-                return val
-            return None
+        parsed_row = parse_wholesale_row(row, col_mapping)
+        product_data = parsed_row["product_data"]
+        row_warnings = parsed_row["warnings"]
 
-        # Extract wholesale columns
-        product_code_val = get_mapped_val("product_code", ["상품코드", "도매코드", "자체상품코드"])
-        product_code = str(product_code_val).strip() if product_code_val is not None else None
-
-        price_wholesale_val = get_mapped_val("price_wholesale", ["공급가", "도매가", "도매가격"])
-        try:
-            price_wholesale = int(float(price_wholesale_val)) if price_wholesale_val is not None else None
-        except Exception:
-            price_wholesale = None
-
-        price_retail_val = get_mapped_val("price_retail", ["소비자가", "소매가", "소매가격"])
-        try:
-            price_retail = int(float(price_retail_val)) if price_retail_val is not None else None
-        except Exception:
-            price_retail = None
-
-        price_min_selling_val = get_mapped_val("price_min_selling", ["최소판매가", "최저가"])
-        try:
-            price_min_selling = int(float(price_min_selling_val)) if price_min_selling_val is not None else None
-        except Exception:
-            price_min_selling = None
-
-        origin = get_mapped_val("origin", ["원산지", "제조국"])
-        origin = str(origin).strip() if origin is not None else None
-
-        options = get_mapped_val("options", ["옵션", "선택사항"])
-        options = str(options).strip() if options is not None else None
-
-        images_list_val = get_mapped_val("images_list", ["이미지", "상품이미지"])
-        images_list = []
-        if images_list_val is not None:
-            if isinstance(images_list_val, str):
-                images_list = [x.strip() for x in images_list_val.split(",") if x.strip()]
-            elif isinstance(images_list_val, list):
-                images_list = images_list_val
-            else:
-                images_list = [str(images_list_val)]
-
-        image_detail = get_mapped_val("image_detail", ["상세이미지", "상세설명이미지"])
-        image_detail = str(image_detail).strip() if image_detail is not None else None
-
-        wholesale_status = get_mapped_val("wholesale_status", ["품절상태", "품절여부", "상태"])
-        wholesale_status = str(wholesale_status).strip() if wholesale_status is not None else None
+        original_name = product_data["original_name"]
+        product_code = product_data["product_code"]
+        price_wholesale = product_data["price_wholesale"]
+        wholesale_status = product_data["wholesale_status"]
+        product_warnings = {"warnings": row_warnings} if row_warnings else None
 
         # Check for smart upsert if product_code exists
         existing_product = None
@@ -349,16 +297,22 @@ async def start_db_processing(
             existing_product.original_name = original_name
             existing_product.import_id = import_id
             existing_product.wholesale_site_id = request.wholesale_site_id
-            existing_product.price_wholesale = price_wholesale
-            existing_product.price_retail = price_retail
-            existing_product.price_min_selling = price_min_selling
-            existing_product.origin = origin
-            existing_product.options = options
-            existing_product.images_list = images_list
-            existing_product.image_detail = image_detail
-            existing_product.wholesale_status = wholesale_status
+            existing_product.wholesale_product_id = product_data["wholesale_product_id"]
+            existing_product.price_wholesale = product_data["price_wholesale"]
+            existing_product.price_wholesale_raw = product_data["price_wholesale_raw"]
+            existing_product.price_retail = product_data["price_retail"]
+            existing_product.price_min_selling = product_data["price_min_selling"]
+            existing_product.origin = product_data["origin"]
+            existing_product.options = product_data["option_values_raw"]
+            existing_product.option_values_raw = product_data["option_values_raw"]
+            existing_product.option_variants = product_data["option_variants"]
+            existing_product.images_list = product_data["images_list"]
+            existing_product.image_detail = product_data["image_detail"]
+            existing_product.wholesale_status = product_data["wholesale_status"]
+            existing_product.wholesale_registered_at = product_data["wholesale_registered_at"]
             existing_product.status = "pending"
-            existing_product.raw_metadata = raw_row_data
+            existing_product.warnings = product_warnings
+            existing_product.raw_metadata = product_data["raw_metadata"]
             
             mappings_res = await db.execute(
                 select(ProductPlatformMapping).where(ProductPlatformMapping.product_id == existing_product.id)
@@ -387,18 +341,24 @@ async def start_db_processing(
                 user_id=current_user["id"],
                 import_id=import_id,
                 wholesale_site_id=request.wholesale_site_id,
+                wholesale_product_id=product_data["wholesale_product_id"],
                 product_code=product_code,
-                price_wholesale=price_wholesale,
-                price_retail=price_retail,
-                price_min_selling=price_min_selling,
-                origin=origin,
-                options=options,
-                images_list=images_list,
-                image_detail=image_detail,
-                wholesale_status=wholesale_status,
+                price_wholesale=product_data["price_wholesale"],
+                price_wholesale_raw=product_data["price_wholesale_raw"],
+                price_retail=product_data["price_retail"],
+                price_min_selling=product_data["price_min_selling"],
+                origin=product_data["origin"],
+                options=product_data["option_values_raw"],
+                option_values_raw=product_data["option_values_raw"],
+                option_variants=product_data["option_variants"],
+                images_list=product_data["images_list"],
+                image_detail=product_data["image_detail"],
+                wholesale_status=product_data["wholesale_status"],
+                wholesale_registered_at=product_data["wholesale_registered_at"],
                 original_name=original_name,
                 status="pending",
-                raw_metadata=raw_row_data
+                warnings=product_warnings,
+                raw_metadata=product_data["raw_metadata"],
             )
             db.add(product)
 
@@ -605,4 +565,3 @@ async def update_prompt(key: str, prompt_in: PromptUpdate, db: AsyncSession = De
     await pm.clear_cache(key)
     
     return prompt
-
