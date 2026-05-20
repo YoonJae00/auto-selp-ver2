@@ -1,0 +1,230 @@
+import math
+import re
+from datetime import datetime
+from typing import Any
+
+import pandas as pd
+
+
+REQUIRED_WHOLESALE_FIELDS = [
+    "wholesale_status",
+    "wholesale_product_id",
+    "product_code",
+    "original_name",
+    "price_wholesale_raw",
+    "origin",
+    "image_list_1",
+    "image_detail",
+]
+
+IMAGE_FIELD_KEYS = [
+    "image_list_1",
+    "image_list_2",
+    "image_list_3",
+    "image_list_4",
+    "image_list_5",
+]
+
+
+def is_blank(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, float) and math.isnan(value):
+        return True
+    try:
+        if pd.isna(value):
+            return True
+    except (TypeError, ValueError):
+        pass
+    return str(value).strip() == ""
+
+
+def clean_text(value: Any) -> str | None:
+    if is_blank(value):
+        return None
+    if isinstance(value, (datetime, pd.Timestamp)):
+        return value.isoformat()
+    return str(value).strip()
+
+
+def validate_required_mappings(mapping: dict[str, str], columns: list[str]) -> list[str]:
+    missing: list[str] = []
+    for field_name in REQUIRED_WHOLESALE_FIELDS:
+        header = mapping.get(field_name)
+        if not header or header not in columns:
+            missing.append(field_name)
+    return missing
+
+
+def get_mapped_value(
+    row: pd.Series,
+    mapping: dict[str, str],
+    field_name: str,
+    fallbacks: list[str] | None = None,
+) -> Any:
+    header = mapping.get(field_name)
+    if not header and fallbacks:
+        for fallback in fallbacks:
+            if fallback in row.index:
+                header = fallback
+                break
+
+    if header and header in row.index:
+        value = row[header]
+        if is_blank(value):
+            return None
+        return value
+
+    return None
+
+
+def parse_int_price(value: Any) -> int | None:
+    text = clean_text(value)
+    if not text:
+        return None
+
+    normalized = re.sub(r"[^0-9.]", "", text)
+    if not normalized:
+        return None
+
+    try:
+        return int(float(normalized))
+    except ValueError:
+        return None
+
+
+def split_csv_text(value: Any) -> list[str]:
+    text = clean_text(value)
+    if not text:
+        return []
+    return [token.strip() for token in text.split(",") if token.strip()]
+
+
+def parse_option_variants(option_values_raw: Any, price_wholesale_raw: Any) -> dict[str, Any]:
+    option_names = split_csv_text(option_values_raw)
+    price_tokens = split_csv_text(price_wholesale_raw)
+    parsed_prices = [parse_int_price(token) for token in price_tokens]
+    valid_prices = [price for price in parsed_prices if price is not None]
+    representative_price = valid_prices[0] if valid_prices else None
+    warnings: list[dict[str, Any]] = []
+
+    if option_names and len(option_names) != len(price_tokens):
+        warnings.append(
+            {
+                "field": "option_variants",
+                "message": "Option count and price count differ.",
+                "option_count": len(option_names),
+                "price_count": len(price_tokens),
+            }
+        )
+        return {
+            "price_wholesale": representative_price,
+            "option_variants": [],
+            "warnings": warnings,
+        }
+
+    if any(price is None for price in parsed_prices):
+        warnings.append(
+            {
+                "field": "price_wholesale_raw",
+                "message": "One or more option prices could not be parsed.",
+                "raw_value": clean_text(price_wholesale_raw) or "",
+            }
+        )
+        return {
+            "price_wholesale": representative_price,
+            "option_variants": [],
+            "warnings": warnings,
+        }
+
+    option_variants = [
+        {
+            "name": option_name,
+            "price_wholesale": parsed_prices[index],
+            "position": index + 1,
+        }
+        for index, option_name in enumerate(option_names)
+    ]
+
+    return {
+        "price_wholesale": representative_price,
+        "option_variants": option_variants,
+        "warnings": warnings,
+    }
+
+
+def build_images_list(values: dict[str, Any]) -> list[str]:
+    images: list[str] = []
+    for key in IMAGE_FIELD_KEYS:
+        image_value = clean_text(values.get(key))
+        if image_value:
+            images.append(image_value)
+    return images
+
+
+def json_safe_row(row: pd.Series) -> dict[str, Any]:
+    raw_row_data = row.to_dict()
+    for key, value in list(raw_row_data.items()):
+        if is_blank(value):
+            raw_row_data[key] = ""
+        elif isinstance(value, (datetime, pd.Timestamp)):
+            raw_row_data[key] = value.isoformat()
+    return raw_row_data
+
+
+def parse_wholesale_row(row: pd.Series, mapping: dict[str, str]) -> dict[str, Any]:
+    mapped_values = {
+        "wholesale_status": get_mapped_value(row, mapping, "wholesale_status", ["상태", "품절상태", "품절여부", "판매상태"]),
+        "wholesale_product_id": get_mapped_value(row, mapping, "wholesale_product_id", ["제품번호", "제품ID", "상품ID"]),
+        "product_code": get_mapped_value(row, mapping, "product_code", ["상품코드", "도매코드", "자체상품코드", "코드"]),
+        "original_name": get_mapped_value(row, mapping, "original_name", ["상품명", "원본상품명", "제품명"]),
+        "option_values_raw": get_mapped_value(row, mapping, "option_values_raw", ["옵션값", "옵션", "선택사항", "옵션명"]),
+        "price_wholesale_raw": get_mapped_value(row, mapping, "price_wholesale_raw", ["가격", "공급가", "도매가", "공급가격", "도매가격"]),
+        "price_retail": get_mapped_value(row, mapping, "price_retail", ["소비자가", "소매가", "소매가격"]),
+        "price_min_selling": get_mapped_value(row, mapping, "price_min_selling", ["판매준수가", "최소판매가", "최저가"]),
+        "origin": get_mapped_value(row, mapping, "origin", ["원산지", "제조국", "제조국가"]),
+        "image_list_1": get_mapped_value(row, mapping, "image_list_1", ["목록이미지1", "대표이미지", "이미지", "상품이미지"]),
+        "image_list_2": get_mapped_value(row, mapping, "image_list_2", ["목록이미지2"]),
+        "image_list_3": get_mapped_value(row, mapping, "image_list_3", ["목록이미지3"]),
+        "image_list_4": get_mapped_value(row, mapping, "image_list_4", ["목록이미지4"]),
+        "image_list_5": get_mapped_value(row, mapping, "image_list_5", ["목록이미지5"]),
+        "image_detail": get_mapped_value(row, mapping, "image_detail", ["상세이미지", "상세설명이미지"]),
+        "wholesale_registered_at": get_mapped_value(row, mapping, "wholesale_registered_at", ["등록일", "상품등록일"]),
+    }
+    option_result = parse_option_variants(
+        mapped_values["option_values_raw"],
+        mapped_values["price_wholesale_raw"],
+    )
+    warnings = list(option_result["warnings"])
+
+    for required_field in REQUIRED_WHOLESALE_FIELDS:
+        if is_blank(mapped_values.get(required_field)):
+            warnings.append(
+                {
+                    "field": required_field,
+                    "message": "Required value is blank.",
+                }
+            )
+
+    product_data = {
+        "wholesale_status": clean_text(mapped_values["wholesale_status"]),
+        "wholesale_product_id": clean_text(mapped_values["wholesale_product_id"]),
+        "product_code": clean_text(mapped_values["product_code"]),
+        "original_name": clean_text(mapped_values["original_name"]) or "",
+        "option_values_raw": clean_text(mapped_values["option_values_raw"]),
+        "price_wholesale_raw": clean_text(mapped_values["price_wholesale_raw"]),
+        "price_wholesale": option_result["price_wholesale"],
+        "option_variants": option_result["option_variants"],
+        "price_retail": parse_int_price(mapped_values["price_retail"]),
+        "price_min_selling": parse_int_price(mapped_values["price_min_selling"]),
+        "origin": clean_text(mapped_values["origin"]),
+        "images_list": build_images_list(mapped_values),
+        "image_detail": clean_text(mapped_values["image_detail"]),
+        "wholesale_registered_at": clean_text(mapped_values["wholesale_registered_at"]),
+        "raw_metadata": json_safe_row(row),
+    }
+
+    return {
+        "product_data": product_data,
+        "warnings": warnings,
+    }
