@@ -83,6 +83,9 @@ def parse_int_price(value: Any) -> int | None:
     if not text:
         return None
 
+    if re.search(r"\d[^/]*\/[^/]*\d", text):
+        return None
+
     normalized = re.sub(r"[^0-9.]", "", text)
     if not normalized:
         return None
@@ -100,9 +103,36 @@ def split_csv_text(value: Any) -> list[str]:
     return [token.strip() for token in text.split(",") if token.strip()]
 
 
+def split_option_price_text(value: Any) -> list[str]:
+    text = clean_text(value)
+    if not text:
+        return []
+
+    tokens: list[str] = []
+    start = 0
+    for index, character in enumerate(text):
+        if character != ",":
+            continue
+
+        left_digits = re.search(r"(\d+)$", text[start:index].strip())
+        right_digits = re.match(r"\s*(\d{3})(?!\d)", text[index + 1 :])
+        if left_digits and 1 <= len(left_digits.group(1)) <= 3 and right_digits:
+            continue
+
+        token = text[start:index].strip()
+        if token:
+            tokens.append(token)
+        start = index + 1
+
+    last_token = text[start:].strip()
+    if last_token:
+        tokens.append(last_token)
+    return tokens
+
+
 def parse_option_variants(option_values_raw: Any, price_wholesale_raw: Any) -> dict[str, Any]:
     option_names = split_csv_text(option_values_raw)
-    price_tokens = split_csv_text(price_wholesale_raw) if option_names else []
+    price_tokens = split_option_price_text(price_wholesale_raw) if option_names else []
     parsed_prices = [parse_int_price(token) for token in price_tokens]
     representative_price = parsed_prices[0] if parsed_prices else parse_int_price(price_wholesale_raw)
     warnings: list[dict[str, Any]] = []

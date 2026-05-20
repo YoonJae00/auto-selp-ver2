@@ -49,8 +49,22 @@ def test_parse_int_price_handles_numeric_formatting():
     assert parse_int_price(None) is None
 
 
+def test_parse_int_price_rejects_multi_price_separator_strings():
+    assert parse_int_price("2,640원 / 2,820원") is None
+
+
 def test_parse_option_variants_pairs_options_with_prices_and_uses_first_price():
     result = parse_option_variants("L자형,V자형", "2640,2820")
+    assert result["price_wholesale"] == 2640
+    assert result["option_variants"] == [
+        {"name": "L자형", "price_wholesale": 2640, "position": 1},
+        {"name": "V자형", "price_wholesale": 2820, "position": 2},
+    ]
+    assert result["warnings"] == []
+
+
+def test_parse_option_variants_pairs_options_with_formatted_prices():
+    result = parse_option_variants("L자형,V자형", "2,640원,2,820원")
     assert result["price_wholesale"] == 2640
     assert result["option_variants"] == [
         {"name": "L자형", "price_wholesale": 2640, "position": 1},
