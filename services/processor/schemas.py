@@ -49,14 +49,19 @@ class ProductResponse(BaseModel):
     import_id: Optional[UUID] = None
     wholesale_site_id: Optional[UUID] = None
     product_code: Optional[str] = None
+    wholesale_product_id: Optional[str] = None
     price_wholesale: Optional[int] = None
+    option_values_raw: Optional[str] = None
+    price_wholesale_raw: Optional[str] = None
     price_retail: Optional[int] = None
     price_min_selling: Optional[int] = None
     origin: Optional[str] = None
     options: Optional[str] = None
+    option_variants: Optional[List] = None
     images_list: Optional[List] = None
     image_detail: Optional[str] = None
     wholesale_status: Optional[str] = None
+    wholesale_registered_at: Optional[str] = None
     original_name: str
     refined_name: Optional[str] = None
     brand_name: Optional[str] = None
@@ -112,4 +117,3 @@ class WholesaleSiteResponse(WholesaleSiteBase):
     created_at: datetime
     updated_at: datetime
     model_config = ConfigDict(from_attributes=True)
-
