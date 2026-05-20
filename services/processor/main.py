@@ -282,7 +282,11 @@ async def start_db_processing(
         product_code = product_data["product_code"]
         price_wholesale = product_data["price_wholesale"]
         wholesale_status = product_data["wholesale_status"]
-        product_warnings = {"warnings": row_warnings} if row_warnings else None
+        product_warnings = (
+            {"warnings": row_warnings, "supplier_warnings": row_warnings}
+            if row_warnings
+            else None
+        )
 
         # Check for smart upsert if product_code exists
         existing_product = None

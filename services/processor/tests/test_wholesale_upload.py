@@ -3,6 +3,7 @@ import pandas as pd
 from utils.wholesale_upload import (
     REQUIRED_WHOLESALE_FIELDS,
     build_images_list,
+    merge_product_warnings,
     parse_int_price,
     parse_option_variants,
     parse_wholesale_row,
@@ -40,6 +41,32 @@ def test_validate_required_mappings_reports_missing_excel_headers():
     }
     missing = validate_required_mappings(mapping, columns)
     assert missing == ["image_list_1"]
+
+
+def test_validate_required_mappings_accepts_parser_fallback_headers_without_mapping():
+    columns = ["상태", "제품번호", "상품코드", "상품명", "가격", "원산지", "목록이미지1", "상세이미지"]
+
+    missing = validate_required_mappings({}, columns)
+
+    assert missing == []
+
+
+def test_validate_required_mappings_accepts_legacy_mapping_keys():
+    columns = ["품절유무", "제품번호", "도매상품코드", "상품명", "공급가", "원산지", "이미지", "상세이미지"]
+    mapping = {
+        "wholesale_status": "품절유무",
+        "wholesale_product_id": "제품번호",
+        "product_code": "도매상품코드",
+        "original_name": "상품명",
+        "price_wholesale": "공급가",
+        "origin": "원산지",
+        "images_list": "이미지",
+        "image_detail": "상세이미지",
+    }
+
+    missing = validate_required_mappings(mapping, columns)
+
+    assert missing == []
 
 
 def test_parse_int_price_handles_numeric_formatting():
@@ -183,3 +210,62 @@ def test_parse_wholesale_row_normalizes_supplier_schema():
         "position": 2,
     }
     assert parsed["warnings"] == []
+
+
+def test_parse_wholesale_row_uses_legacy_mapping_keys_for_supplier_fields():
+    row = pd.Series(
+        {
+            "상태": "정상",
+            "제품번호": "12345",
+            "상품코드": "ABC-001",
+            "상품명": "테스트 상품",
+            "옵션": "L자형,V자형",
+            "도매가": "2640,2820",
+            "원산지": "국내",
+            "이미지": "https://img.example/1.jpg",
+            "상세이미지": "https://img.example/detail.jpg",
+        }
+    )
+    mapping = {
+        "price_wholesale": "도매가",
+        "options": "옵션",
+        "images_list": "이미지",
+    }
+
+    parsed = parse_wholesale_row(row, mapping)
+
+    assert parsed["product_data"]["option_values_raw"] == "L자형,V자형"
+    assert parsed["product_data"]["price_wholesale_raw"] == "2640,2820"
+    assert parsed["product_data"]["images_list"] == ["https://img.example/1.jpg"]
+    assert parsed["product_data"]["option_variants"] == [
+        {"name": "L자형", "price_wholesale": 2640, "position": 1},
+        {"name": "V자형", "price_wholesale": 2820, "position": 2},
+    ]
+    assert parsed["warnings"] == []
+
+
+def test_merge_product_warnings_preserves_supplier_warnings_and_adds_processing_warnings():
+    supplier_warning = {"field": "price_wholesale_raw", "message": "Required value is blank."}
+    processing_warning = {"keyword": "브랜드", "reason": "trademark"}
+
+    merged = merge_product_warnings(
+        {"warnings": [supplier_warning], "supplier_warnings": [supplier_warning]},
+        [processing_warning],
+    )
+
+    assert merged == {
+        "warnings": [supplier_warning, processing_warning],
+        "supplier_warnings": [supplier_warning],
+        "processing_warnings": [processing_warning],
+    }
+
+
+def test_merge_product_warnings_keeps_supplier_warnings_when_processing_has_none():
+    supplier_warning = {"field": "image_detail", "message": "Required value is blank."}
+
+    merged = merge_product_warnings({"warnings": [supplier_warning]}, [])
+
+    assert merged == {
+        "warnings": [supplier_warning],
+        "supplier_warnings": [supplier_warning],
+    }

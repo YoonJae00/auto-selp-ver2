@@ -7,6 +7,7 @@ from celery_app import celery_app
 from utils.keyword_engine import KeywordEngine
 from utils.category_mapper import CategoryMapper
 from utils.prompt_manager import PromptManager
+from utils.wholesale_upload import merge_product_warnings
 from clients.llm_factory import get_llm_client
 from database import SessionLocal
 
@@ -320,7 +321,7 @@ async def _run_db_pipeline(
                 # ── 결과 DB 저장 ─────────────────────────────────────────
                 product.refined_name = refined_name
                 product.keywords = keywords
-                product.warnings = {"warnings": warnings} if warnings else None
+                product.warnings = merge_product_warnings(product.warnings, warnings)
                 product.processing_time_ms = int((time.time() - row_start) * 1000)
                 product.status = "completed"
 
@@ -431,4 +432,3 @@ async def _run_db_pipeline(
         "total": total_rows,
         "import_id": import_id,
     }
-
