@@ -7,6 +7,7 @@ interface Props {
   onClick?: () => void;
   type?: 'button' | 'submit' | 'reset';
   className?: string;
+  disabled?: boolean;
 }
 
 export default function PillButton({ 
@@ -14,13 +15,15 @@ export default function PillButton({
   variant = 'primary', 
   onClick, 
   type = 'button',
-  className 
+  className,
+  disabled
 }: Props) {
   return (
     <button 
       type={type}
       className={clsx(styles.button, styles[variant], className)}
       onClick={onClick}
+      disabled={disabled}
     >
       {children}
     </button>

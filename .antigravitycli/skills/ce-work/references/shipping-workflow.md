@@ -104,9 +104,25 @@ This file contains the shipping workflow (Phase 3-4). It is loaded when all Phas
 
    If the user prefers to commit without creating a PR, load the `ce-commit` skill instead.
 
-4. **Notify User**
+4. **Document with `/ce-compound` (REQUIRED)**
+
+   To ensure continuous learning and prevent regressions, you MUST run the `/ce-compound` skill (with `mode:headless` when called programmatically) at the very end of the review and implementation cycle. 
+   
+   This step captures:
+   - Solutions to the problems solved
+   - Mistakes made during the execution-review cycle (e.g., rate limit issues, type mismatches, UI glitches)
+   - Crucial lessons learned to prevent future regressions.
+
+   Run:
+   ```bash
+   /ce-compound mode:headless
+   ```
+   Or invoke the `/ce-compound` skill directly. The documented solution will be saved in `docs/solutions/` to compound the team's knowledge.
+
+5. **Notify User**
    - Summarize what was completed
    - Link to PR (if one was created)
+   - Note the newly created or updated solution document in `docs/solutions/`
    - Note any follow-up work needed
    - Suggest next steps if applicable
 
@@ -126,6 +142,7 @@ Before creating PR, verify:
 - [ ] Code review completed (Tier 1 harness-native or Tier 2 `ce-code-review`)
 - [ ] PR description includes summary, testing notes, and evidence when captured
 - [ ] PR description includes Compound Engineered badge with accurate model and harness
+- [ ] Learned lessons documented with `/ce-compound` to prevent future regressions
 
 ## Code Review Tiers
 

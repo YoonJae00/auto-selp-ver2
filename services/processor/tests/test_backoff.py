@@ -1,12 +1,12 @@
 import pytest
 import httpx
 import asyncio
-from unittest.mock import MagicMock, patch
-from services.processor.utils.backoff import retry_with_backoff
+from unittest.mock import MagicMock, patch, AsyncMock
+from utils.backoff import retry_with_backoff
 
 @pytest.mark.asyncio
 async def test_retry_with_backoff_success_after_retry():
-    mock_func = MagicMock()
+    mock_func = AsyncMock()
     # First call returns 429, second call returns success
     mock_func.side_effect = [
         httpx.HTTPStatusError("429 Too Many Requests", request=MagicMock(), response=httpx.Response(429)),

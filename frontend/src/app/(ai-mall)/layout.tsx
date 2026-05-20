@@ -53,6 +53,12 @@ export default function AiMallLayout({
           <Link href="/process" className={pathname === '/process' ? styles.activeNavItem : ''}>
             상품 가공
           </Link>
+          <Link href="/upload" className={pathname === '/upload' ? styles.activeNavItem : ''}>
+            도매처 & 업로드 설정
+          </Link>
+          <Link href="/products" className={pathname === '/products' ? styles.activeNavItem : ''}>
+            상품 관리
+          </Link>
           <Link href="/settings" className={pathname === '/settings' ? styles.activeNavItem : ''}>
             설정
           </Link>

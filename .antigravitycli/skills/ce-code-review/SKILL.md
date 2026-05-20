@@ -859,18 +859,23 @@ Common outcomes:
 - Zero-remaining case (no `gated_auto` / `manual` after `safe_auto`) with at least one `safe_auto` fix → Step 5 runs; the routing question was never asked but the counter is > 0.
 
 - **PR mode (entered via PR number/URL):**
+  - **Push fixes and Document with `/ce-compound` (Recommended)** -- push commits to the existing PR branch, then trigger `/ce-compound` to document solved problems and lessons learned to prevent future regressions.
   - **Push fixes** -- push commits to the existing PR branch
+  - **Document with `/ce-compound` only** -- run `ce-compound` without pushing yet
   - **Exit** -- done for now
 - **Branch mode (feature branch with no PR, and not the resolved review base/default branch):**
+  - **Create a PR and Document with `/ce-compound` (Recommended)** -- push, open a PR, and trigger `/ce-compound` to capture lessons learned.
   - **Create a PR (Recommended)** -- push and open a pull request
-  - **Continue without PR** -- stay on the branch
+  - **Document with `/ce-compound` only** -- run `ce-compound` locally
   - **Exit** -- done for now
 - **On the resolved review base/default branch:**
+  - **Continue and Document with `/ce-compound` (Recommended)** -- run `/ce-compound` to capture lessons before continuing.
   - **Continue** -- proceed with next steps
   - **Exit** -- done for now
 
 If "Create a PR": first publish the branch with `git push --set-upstream origin HEAD`, then use `gh pr create` with a title and summary derived from the branch changes.
 If "Push fixes": push the branch with `git push` to update the existing PR.
+If any option involving "Document with `/ce-compound`" is chosen: invoke `/ce-compound` (using `mode:headless` programmatically if needed) to capture execution-review cycle lessons, resolved issues, and prevent future regressions. Save the results in `docs/solutions/`.
 
 **Autofix, report-only, and headless modes:** stop after the report, artifact emission, and residual-work handoff. Do not commit, push, or create a PR.
 

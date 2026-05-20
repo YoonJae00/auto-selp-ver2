@@ -6,6 +6,11 @@ from utils.keyword_engine import KeywordEngine
 def mock_llm():
     client = MagicMock()
     client.get_synonyms = AsyncMock(return_value=["동의어1", "동의어2"])
+    async def mock_classify(keywords):
+        brand_suspected = [kw for kw in keywords if kw == "동의어1"]
+        generic = [kw for kw in keywords if kw != "동의어1"]
+        return {"brand_suspected": brand_suspected, "generic": generic}
+    client.classify_brand_keywords = AsyncMock(side_effect=mock_classify)
     return client
 
 @pytest.mark.asyncio

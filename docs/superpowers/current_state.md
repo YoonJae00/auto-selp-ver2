@@ -12,22 +12,18 @@ This document is the current implementation snapshot. For active backlog items, 
    - Show an explicit "no trademark issue" state when applicable.
    - Remove legacy `TrademarkModal.tsx` and unused modal CSS after the inline trace UX is complete.
 
-2. GitHub #42: Product DB migration
-   - Move from Excel-only output management to PostgreSQL-backed product records.
-   - Add `products` schema, Celery upsert, list/detail/delete APIs, product list UI, search/filter/edit, and Excel export.
-
-3. GitHub #32: Batch processing optimization
+2. GitHub #32: Batch processing optimization
    - Parallelize LLM calls for larger datasets.
    - Keep rate limits and KIPRIS monthly limits in mind.
 
-4. GitHub #33: User API key management
+3. GitHub #33: User API key management
    - Build UI for user-managed Naver/Coupang credentials.
    - Backend model already documents `encrypted_api_keys`; implementation should verify current API support before adding UI.
 
-5. GitHub #34: Mobile responsive UI
+4. GitHub #34: Mobile responsive UI
    - Audit Dashboard, Process, Settings, and Intelligence Capsule drawer/detail views on tablet and mobile widths.
 
-6. GitHub #35: CI/CD pipeline
+5. GitHub #35: CI/CD pipeline
    - Add GitHub Actions for automated tests and deployment checks.
 
 ## 2. Implemented Backend
@@ -54,6 +50,8 @@ This document is the current implementation snapshot. For active backlog items, 
 - KIPRIS optimization: only LLM `brand_suspected` keywords are checked against KIPRIS when KIPRIS is enabled.
 - KIPRIS disabled mode: LLM-suspected brand keywords are excluded with `llm_suspected` warnings.
 - Celery progress metadata includes `stage`, `current_name`, `completed_rows`, warnings, per-stage timings, refined names, keywords, filtered keywords, and category results.
+- **PostgreSQL Product Management DB (NEW)**: Core/Platform 1:N extensible database schema utilizing JSONB for schema-less marketplace customization. Direct Celery upsert to `products` and `product_platform_mappings` per row.
+- **DB REST APIs (NEW)**: `POST /process-db` (bulk inserts products as pending and starts Celery), `GET /products` (paginated, searchable, status-filtered, import-batch filtered), `POST /products/export` (streams memory-buffered Excel), and `GET /imports` (lists import history).
 
 ## 3. Implemented Frontend
 
@@ -67,6 +65,8 @@ This document is the current implementation snapshot. For active backlog items, 
 - Global `taskStore` persisted in localStorage.
 - Stable global polling through `useTaskPolling`, guarded by auth state and using `useTaskStore.getState()` inside the polling interval.
 - Intelligence Capsule mounted in the AI Mall layout with task list, progress state, accordion/detail trace view, shimmer active stage, and completed row stage timing display.
+- **Product Management Page (NEW)**: A premium Apple-inspired dashboard grid supporting multi-checkbox selection, text search debouncing, processing status filters, upload-batch filters, pagination controls, real-time status badges, and customized Excel exports.
+- **PillButton Upgrade (NEW)**: Added support for `disabled` prop on `PillButton` to control double-form submissions.
 
 ## 4. Data Model Snapshot
 
@@ -88,24 +88,61 @@ This document is the current implementation snapshot. For active backlog items, 
 - `description`: human-readable description
 - `updated_at`: timestamp
 
+### `product_imports` (NEW)
+
+- `id`: UUID primary key
+- `user_id`: foreign key to users
+- `filename`: Excel file name
+- `status`: `pending`, `processing`, `completed`, `failed`
+- `total_count`: total records
+- `processed_count`: processed records
+- `created_at`: timestamp
+- `updated_at`: timestamp
+
+### `products` (NEW)
+
+- `id`: UUID primary key
+- `user_id`: foreign key to users
+- `import_id`: foreign key to product_imports
+- `original_name`: core raw product name
+- `refined_name`: refined product name
+- `keywords`: array of strings
+- `status`: `pending`, `processing`, `completed`, `failed`
+- `warnings`: JSONB list of warnings
+- `raw_metadata`: JSONB key-value metadata
+- `created_at`: timestamp
+- `updated_at`: timestamp
+
+### `product_platform_mappings` (NEW)
+
+- `id`: UUID primary key
+- `product_id`: foreign key to products (Cascade on delete)
+- `platform_name`: `naver`, `coupang`, etc.
+- `category_id`: platform-specific category ID
+- `category_path`: full human-readable category path
+- `sync_status`: `pending`, `syncing`, `synced`, `failed`
+- `sync_error`: error log string
+- `mapped_attributes`: JSONB schema-less custom attributes
+- `created_at`: timestamp
+- `updated_at`: timestamp
+
 ## 5. Known Gaps And Cleanup
 
 - KIPRIS trace UX is only partially inline today: completed keyword stages show filtered keywords, but they do not yet distinguish KIPRIS-confirmed vs LLM-suspected exclusions or show an explicit no-issue state.
 - `frontend/src/app/(ai-mall)/process/TrademarkModal.tsx` remains in the tree as a legacy unused component.
 - `frontend/src/app/(ai-mall)/process/process.module.css` still contains legacy TrademarkModal styles.
-- Product results are still primarily file-based; no `products` table or product management UI exists yet.
 - Historical plan documents contain stale unchecked boxes. Treat them as design/implementation history unless a current TODO or GitHub issue references the work.
 
 ## 6. Tech Stack
 
 - FastAPI
 - SQLAlchemy
-- PostgreSQL
-- Celery
-- Redis
+- PostgreSQL 16
+- Celery 5
+- Redis 7
 - Nginx API gateway
-- Next.js
-- React
+- Next.js 14
+- React 18
 - Zustand
 - Vanilla CSS modules
 - Gemini and OpenAI LLM clients

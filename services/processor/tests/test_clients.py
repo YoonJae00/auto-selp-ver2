@@ -10,7 +10,7 @@ from clients.kipris_client import KiprisClient
 @respx.mock
 async def test_naver_ad_client():
     client = NaverAdClient()
-    respx.get("https://api.naver.com/keywordstool").mock(return_value=Response(200, json={"keywordList": []}))
+    respx.get("https://api.searchad.naver.com/keywordstool").mock(return_value=Response(200, json={"keywordList": []}))
     
     result = await client.get_keyword_stats(["test"])
     assert "keywordList" in result

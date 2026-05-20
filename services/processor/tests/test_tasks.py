@@ -35,16 +35,15 @@ async def test_run_pipeline_propagates_warnings(sample_excel):
         
         # Setup KeywordEngine mock
         mock_keyword_engine = mock_keyword_engine_class.return_value
-        # curate_keywords returns (keywords, warnings)
-        mock_keyword_engine.curate_keywords.side_effect = [
+        mock_keyword_engine.curate_keywords = AsyncMock(side_effect=[
             (["kw1"], [{"keyword": "kw1", "info": {"exists": True}}]),
             (["kw2"], [])
-        ]
+        ])
         
         # Setup CategoryMapper mock
         mock_category_mapper = mock_category_mapper_class.return_value
-        mock_category_mapper.get_naver_category.return_value = {"id": "cat1"}
-        mock_category_mapper.get_coupang_category.return_value = "cat2"
+        mock_category_mapper.get_naver_category = AsyncMock(return_value={"id": "cat1"})
+        mock_category_mapper.get_coupang_category = AsyncMock(return_value="cat2")
         
         # Run pipeline
         result = await _run_pipeline(mock_task, sample_excel, column_mapping, "gemini")
@@ -73,8 +72,7 @@ async def test_run_pipeline_propagates_warnings(sample_excel):
                     assert meta['warnings'][0][0]['keyword'] == "kw1"
                 elif meta['current'] == 2:
                     assert 0 in meta['warnings']
-                    assert 1 in meta['warnings']
-                    assert len(meta['warnings'][1]) == 0
+                    assert 1 not in meta['warnings']
 
         assert warnings_found, "Warnings not found in task metadata"
 

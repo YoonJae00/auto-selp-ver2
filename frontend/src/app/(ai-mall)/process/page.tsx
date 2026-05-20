@@ -103,7 +103,7 @@ export default function ProcessPage() {
     if (!uploadData) return;
     setError(null);
     try {
-      const res = await api.post<{ task_id: string }>('/api/processor/process', {
+      const res = await api.post<{ task_id: string; import_id: string; total: number }>('/api/processor/process-db', {
         file_id: uploadData.file_id,
         column_mapping: columnMapping,
         llm_provider: llmProvider,
@@ -114,6 +114,7 @@ export default function ProcessPage() {
         id: res.task_id,
         filename: uploadData.filename,
         progress: 0,
+        total: res.total,
         status: 'PENDING',
         startTime: Date.now()
       });
