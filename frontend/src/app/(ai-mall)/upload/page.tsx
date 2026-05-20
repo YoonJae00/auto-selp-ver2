@@ -26,11 +26,11 @@ const SYSTEM_FIELDS = [
   { key: 'product_code', label: '상품코드 (필수)', required: true, defaultFallbacks: ['상품코드', '도매코드', '자체상품코드', '코드'] },
   { key: 'original_name', label: '상품명 (필수)', required: true, defaultFallbacks: ['상품명', '원본상품명', '제품명'] },
   { key: 'option_values_raw', label: '옵션값', required: false, defaultFallbacks: ['옵션값', '옵션', '선택사항', '옵션명'] },
-  { key: 'price_wholesale_raw', label: '가격 (필수)', required: true, defaultFallbacks: ['가격', '공급가', '도매가', '공급가격', '도매가격'] },
+  { key: 'price_wholesale_raw', label: '가격 (필수)', required: true, defaultFallbacks: ['공급가', '도매가', '공급가격', '도매가격', '가격'] },
   { key: 'price_retail', label: '소비자가', required: false, defaultFallbacks: ['소비자가', '소매가', '소매가격'] },
   { key: 'price_min_selling', label: '판매준수가', required: false, defaultFallbacks: ['판매준수가', '최소판매가', '최저가'] },
   { key: 'origin', label: '원산지 (필수)', required: true, defaultFallbacks: ['원산지', '제조국', '제조국가'] },
-  { key: 'image_list_1', label: '목록이미지1 (필수)', required: true, defaultFallbacks: ['목록이미지1', '대표이미지', '이미지', '상품이미지'] },
+  { key: 'image_list_1', label: '목록이미지1 (필수)', required: true, defaultFallbacks: ['목록이미지1', '대표이미지', '상품이미지', '이미지'] },
   { key: 'image_list_2', label: '목록이미지2', required: false, defaultFallbacks: ['목록이미지2'] },
   { key: 'image_list_3', label: '목록이미지3', required: false, defaultFallbacks: ['목록이미지3'] },
   { key: 'image_list_4', label: '목록이미지4', required: false, defaultFallbacks: ['목록이미지4'] },
@@ -38,6 +38,23 @@ const SYSTEM_FIELDS = [
   { key: 'image_detail', label: '상세이미지 (필수)', required: true, defaultFallbacks: ['상세이미지', '상세설명이미지'] },
   { key: 'wholesale_registered_at', label: '등록일', required: false, defaultFallbacks: ['등록일', '상품등록일'] }
 ];
+
+const normalizeHeader = (value: string) => value.trim().replace(/\s+/g, '').toLowerCase();
+
+const findBestColumnMatch = (field: (typeof SYSTEM_FIELDS)[number], columns: string[]) => {
+  const normalizedColumns = columns.map(col => ({ original: col, normalized: normalizeHeader(col) }));
+  const normalizedFallbacks = field.defaultFallbacks.map(normalizeHeader);
+
+  for (const fallback of normalizedFallbacks) {
+    const exactMatch = normalizedColumns.find(col => col.normalized === fallback);
+    if (exactMatch) return exactMatch.original;
+  }
+
+  for (const fallback of normalizedFallbacks) {
+    const substringMatch = normalizedColumns.find(col => col.normalized.includes(fallback));
+    if (substringMatch) return substringMatch.original;
+  }
+};
 
 export default function UploadPage() {
   const [wholesaleSites, setWholesaleSites] = useState<WholesaleSite[]>([]);
@@ -165,9 +182,7 @@ export default function UploadPage() {
       SYSTEM_FIELDS.forEach(field => {
         // If not already mapped to an existing column in the excel
         if (!nextMapping[field.key] || !data.columns.includes(nextMapping[field.key])) {
-          const matched = data.columns.find(col => 
-            field.defaultFallbacks.some(fb => col.toLowerCase().includes(fb.toLowerCase()))
-          );
+          const matched = findBestColumnMatch(field, data.columns);
           if (matched) {
             nextMapping[field.key] = matched;
           } else if (field.required) {
