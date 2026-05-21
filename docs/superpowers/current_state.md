@@ -1,6 +1,6 @@
 # Auto-Selp Project Implementation State
 
-Last updated: 2026-05-20
+Last updated: 2026-05-22
 
 This document is the current implementation snapshot. For active backlog items, use `TODO.md` and GitHub open issues as the source of truth. Older files under `docs/superpowers/plans/` are historical planning artifacts; unchecked boxes there are not reliable status indicators.
 
@@ -12,18 +12,23 @@ This document is the current implementation snapshot. For active backlog items, 
    - Show an explicit "no trademark issue" state when applicable.
    - Remove legacy `TrademarkModal.tsx` and unused modal CSS after the inline trace UX is complete.
 
-2. GitHub #32: Batch processing optimization
+2. GitHub #45: PlayAuto export and column mapping
+   - Define the PlayAuto bulk registration Excel schema.
+   - Map processed/stored product data to PlayAuto output fields.
+   - Connect wholesale-site Visual Column Mapper results to PlayAuto field mapping.
+
+3. GitHub #32: Batch processing optimization
    - Parallelize LLM calls for larger datasets.
    - Keep rate limits and KIPRIS monthly limits in mind.
 
-3. GitHub #33: User API key management
+4. GitHub #33: User API key management
    - Build UI for user-managed Naver/Coupang credentials.
    - Backend model already documents `encrypted_api_keys`; implementation should verify current API support before adding UI.
 
-4. GitHub #34: Mobile responsive UI
+5. GitHub #34: Mobile responsive UI
    - Audit Dashboard, Process, Settings, and Intelligence Capsule drawer/detail views on tablet and mobile widths.
 
-5. GitHub #35: CI/CD pipeline
+6. GitHub #35: CI/CD pipeline
    - Add GitHub Actions for automated tests and deployment checks.
 
 ## 2. Implemented Backend
@@ -52,6 +57,7 @@ This document is the current implementation snapshot. For active backlog items, 
 - Celery progress metadata includes `stage`, `current_name`, `completed_rows`, warnings, per-stage timings, refined names, keywords, filtered keywords, and category results.
 - **PostgreSQL Product Management DB (NEW)**: Core/Platform 1:N extensible database schema utilizing JSONB for schema-less marketplace customization. Direct Celery upsert to `products` and `product_platform_mappings` per row.
 - **DB REST APIs (NEW)**: `POST /process-db` (bulk inserts products as pending and starts Celery), `GET /products` (paginated, searchable, status-filtered, import-batch filtered), `POST /products/export` (streams memory-buffered Excel), and `GET /imports` (lists import history).
+- **Wholesale Management & Smart Upsert (NEW, GitHub #46)**: Wholesale-site metadata and JSONB column mappings, supplier upload schema ingestion, formatted option-price parsing, and SMART UPSERT change tracking for price/stock updates.
 
 ## 3. Implemented Frontend
 
@@ -66,6 +72,7 @@ This document is the current implementation snapshot. For active backlog items, 
 - Stable global polling through `useTaskPolling`, guarded by auth state and using `useTaskStore.getState()` inside the polling interval.
 - Intelligence Capsule mounted in the AI Mall layout with task list, progress state, accordion/detail trace view, shimmer active stage, and completed row stage timing display.
 - **Product Management Page (NEW)**: A premium Apple-inspired dashboard grid supporting multi-checkbox selection, text search debouncing, processing status filters, upload-batch filters, pagination controls, real-time status badges, and customized Excel exports.
+- **Wholesale Upload & Visual Column Mapper (NEW, GitHub #46)**: `/upload` supports wholesale-site management, drag-and-drop supplier Excel uploads, supplier-specific field mapping, and product-list filters/badges for wholesale update tracking.
 - **PillButton Upgrade (NEW)**: Added support for `disabled` prop on `PillButton` to control double-form submissions.
 
 ## 4. Data Model Snapshot

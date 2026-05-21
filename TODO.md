@@ -1,9 +1,10 @@
 # Auto-Selp Project TODO
 
-Last updated: 2026-05-20
+Last updated: 2026-05-22
 
 Authoritative task sources:
-- GitHub open issues: #32, #33, #34, #35, #42, #43
+- GitHub open issues: #32, #33, #34, #35, #43, #45
+- GitHub completed issues: #42, #46
 - This file: product/engineering backlog snapshot
 - `docs/superpowers/current_state.md`: implementation state snapshot
 
@@ -54,7 +55,7 @@ Note: older files under `docs/superpowers/plans/` are historical implementation 
 - [x] **Solution Documentation**: Start documenting major fixes and architectural decisions in `docs/solutions/`.
 
 ## Phase 6: 다음 세션 예정 (Next Session)
-- [ ] **플레이오토 내보내기 및 컬럼 매핑 고도화**:
+- [ ] **플레이오토 내보내기 및 컬럼 매핑 고도화**: GitHub #45
   - [ ] '플레이오토' 상품 등록 솔루션 전용 규격 양식(엑셀 일괄 등록용 서식) 정의 및 맵핑 로직 설계
   - [ ] 가공 및 저장 완료된 상품 데이터를 플레이오토 규격 양식의 엑셀 대장 파일로 생성 및 다운로드(내보내기)하는 기능 추가
   - [ ] 도매처별 Visual Column Mapper를 활용한 플레이오토 필드 대응 및 매핑 로직 수정
@@ -70,7 +71,7 @@ Note: older files under `docs/superpowers/plans/` are historical implementation 
   - [x] 가공 결과를 DB에 직접 저장
   - [x] 상품 목록 페이지 구현 (검색/필터/수정)
   - [x] 선택/전체 엑셀 내보내기
-- [x] **도매처 관리 및 스마트 갱신 시스템 (Wholesale Management & Smart Upsert)**:
+- [x] **도매처 관리 및 스마트 갱신 시스템 (Wholesale Management & Smart Upsert)**: GitHub #46
   - [x] `WholesaleSite` 테이블 및 모델 구현 (도매처 메타 및 컬럼 매핑 JSONB)
   - [x] `Product` 및 `ProductPlatformMapping`에 대조/갱신용 상세 컬럼 및 트래킹 컬럼 추가 (`price_changed`, `stock_changed`, `last_synced_price` 등)
   - [x] SMART UPSERT change-tracking 로직 구현 (Excel 데이터와 기존 DB/동기화 값 비교 후 `pending_update` 상태 전이 및 변동 플래그 설정)
