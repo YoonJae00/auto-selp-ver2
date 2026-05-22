@@ -17,4 +17,3 @@ python-multipart
 xlrd
 python-jose[cryptography]
 langgraph
-langgraph-cli[inmem]

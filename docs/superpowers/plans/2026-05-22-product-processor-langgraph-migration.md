@@ -13,7 +13,9 @@
 ## File Structure
 
 - Modify `services/processor/requirements.txt`
-  - Add LangGraph runtime and local Studio CLI dependencies.
+  - Add LangGraph runtime dependency.
+- Create `services/processor/requirements-dev.txt`
+  - Add LangGraph Studio CLI dependency for local development.
 - Create `services/processor/graphs/__init__.py`
   - Makes graph modules importable.
 - Create `services/processor/graphs/product_processor.py`
@@ -32,6 +34,7 @@
 
 **Files:**
 - Modify: `services/processor/requirements.txt`
+- Create: `services/processor/requirements-dev.txt`
 - Create: `services/processor/graphs/__init__.py`
 - Test: `services/processor/tests/test_product_processor_graph.py`
 
@@ -66,12 +69,18 @@ pytest tests/test_product_processor_graph.py::test_product_processor_graph_impor
 
 Expected: FAIL with `ModuleNotFoundError: No module named 'graphs'` or `No module named 'graphs.product_processor'`.
 
-- [ ] **Step 3: Add dependencies and graph package skeleton**
+- [ ] **Step 3: Add runtime/dev dependencies and graph package skeleton**
 
 Append to `services/processor/requirements.txt`:
 
 ```text
 langgraph
+```
+
+Create `services/processor/requirements-dev.txt`:
+
+```text
+-r requirements.txt
 langgraph-cli[inmem]
 ```
 
@@ -147,7 +156,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add services/processor/requirements.txt services/processor/graphs/__init__.py services/processor/graphs/product_processor.py services/processor/tests/test_product_processor_graph.py
+git add services/processor/requirements.txt services/processor/requirements-dev.txt services/processor/graphs/__init__.py services/processor/graphs/product_processor.py services/processor/tests/test_product_processor_graph.py
 git commit -m "chore(processor): add langgraph processor surface"
 ```
 
@@ -975,6 +984,13 @@ Expected: PASS.
 
 - [ ] **Step 5: Verify LangGraph CLI can see the config**
 
+If local CLI dependencies are not already installed, install dev dependencies first:
+
+```bash
+cd services/processor
+pip install -r requirements-dev.txt
+```
+
 Run from repository root:
 
 ```bash
@@ -1027,6 +1043,14 @@ pytest tests/test_product_processor_graph.py tests/test_tasks.py -v
 ```
 
 Expected: install completes and focused tests pass.
+
+If LangGraph CLI checks are needed in this environment, install dev dependencies:
+
+```bash
+cd services/processor
+pip install -r requirements-dev.txt
+python -m langgraph.cli --help
+```
 
 - [ ] **Step 4: Commit regression fixes**
 
