@@ -93,3 +93,86 @@ async def test_run_pipeline_propagates_warnings(sample_excel):
     processed_path = sample_excel.replace(".xlsx", "_processed.xlsx")
     if os.path.exists(processed_path):
         os.remove(processed_path)
+
+
+@pytest.mark.asyncio
+async def test_run_db_pipeline_delegates_products_to_langgraph_and_preserves_progress_shape():
+    import uuid
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, MagicMock, patch
+    from tasks import _run_db_pipeline
+
+    import_id = uuid.uuid4()
+    product_id = uuid.uuid4()
+    import_run = SimpleNamespace(
+        id=import_id,
+        status="pending",
+        success_count=0,
+        failed_count=0,
+    )
+    product = SimpleNamespace(
+        id=product_id,
+        original_name="원본 상품명",
+        status="pending",
+    )
+
+    class FakeResult:
+        def __init__(self, scalar=None, scalars=None):
+            self.scalar = scalar
+            self.scalars_value = scalars or []
+
+        def scalar_one_or_none(self):
+            return self.scalar
+
+        def scalars(self):
+            return self
+
+        def all(self):
+            return self.scalars_value
+
+    mock_db = AsyncMock()
+    mock_db.execute = AsyncMock(side_effect=[
+        FakeResult(scalar=import_run),
+        FakeResult(scalars=[product]),
+    ])
+
+    mock_task = MagicMock()
+
+    async def fake_process_product_with_graph(context):
+        assert context.product is product
+        assert context.import_run is import_run
+        context.completed_rows.append({"name": "원본 상품명", "stages": []})
+        context.all_warnings[0] = [{"keyword": "브랜드"}]
+        context.import_run.success_count += 1
+        return {"refined_name": "정제 상품명"}
+
+    with patch("tasks.SessionLocal") as mock_session_class, \
+         patch("tasks.get_llm_client") as mock_get_llm, \
+         patch("tasks.KeywordEngine") as mock_keyword_engine_class, \
+         patch("tasks.CategoryMapper") as mock_category_mapper_class, \
+         patch("tasks.process_product_with_graph", side_effect=fake_process_product_with_graph) as mock_graph:
+        mock_session_class.return_value.__aenter__.return_value = mock_db
+        mock_get_llm.return_value = object()
+        mock_keyword_engine_class.return_value = object()
+        mock_category_mapper_class.return_value = object()
+
+        result = await _run_db_pipeline(mock_task, str(import_id), {}, "gemini", True)
+
+    assert result["status"] == "Completed"
+    assert result["total"] == 1
+    assert mock_graph.await_count == 1
+    assert import_run.status == "completed"
+
+    progress_meta = mock_task.update_state.call_args.kwargs["meta"]
+    assert set(progress_meta) == {
+        "percent",
+        "current",
+        "total",
+        "stage",
+        "current_name",
+        "completed_rows",
+        "warnings",
+    }
+    assert progress_meta["stage"] == "completed_row"
+    assert progress_meta["percent"] == 100
+    assert progress_meta["completed_rows"][0]["name"] == "원본 상품명"

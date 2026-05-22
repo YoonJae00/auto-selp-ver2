@@ -10,6 +10,7 @@ from utils.prompt_manager import PromptManager
 from utils.wholesale_upload import merge_product_warnings
 from clients.llm_factory import get_llm_client
 from database import SessionLocal
+from graphs.product_processor import ProductProcessingContext, process_product_with_graph
 
 logger = logging.getLogger(__name__)
 
@@ -255,166 +256,52 @@ async def _run_db_pipeline(
         keyword_engine = KeywordEngine(llm_client, kipris_enabled=kipris_enabled)
         category_mapper = CategoryMapper()
 
-        orig_col = column_mapping.get("original_name")
-
         for index, product in enumerate(products):
             original_name = product.original_name
-            row_start = time.time()
-            stage_timings: dict = {}
-
-            def _finish_stage(stage_name: str):
-                if stage_name in stage_timings and 'ms' not in stage_timings[stage_name]:
-                    stage_timings[stage_name]['ms'] = int(
-                        (time.time() - stage_timings[stage_name]['start']) * 1000
-                    )
-
-            def _finish_all():
-                for sn in list(stage_timings):
-                    _finish_stage(sn)
-
-            def _emit(stage_name: str):
-                if stage_timings:
-                    last = list(stage_timings)[-1]
-                    _finish_stage(last)
-                stage_timings[stage_name] = {'start': time.time()}
+            
+            async def emit_stage(stage_name: str, _state: dict):
                 pct = int(index / total_rows * 100)
                 task_instance.update_state(
-                    state='PROGRESS',
+                    state="PROGRESS",
                     meta={
-                        'percent': pct,
-                        'current': index + 1,
-                        'total': total_rows,
-                        'stage': stage_name,
-                        'current_name': original_name,
-                        'completed_rows': completed_rows,
-                        'warnings': all_warnings,
+                        "percent": pct,
+                        "current": index + 1,
+                        "total": total_rows,
+                        "stage": stage_name,
+                        "current_name": original_name,
+                        "completed_rows": completed_rows,
+                        "warnings": all_warnings,
                     },
                 )
 
-            try:
-                # 상품 상태 변경
-                product.status = "processing"
-                await db.commit()
+            context = ProductProcessingContext(
+                db=db,
+                import_run=import_run,
+                product=product,
+                llm_client=llm_client,
+                keyword_engine=keyword_engine,
+                category_mapper=category_mapper,
+                progress_emitter=emit_stage,
+                completed_rows=completed_rows,
+                all_warnings=all_warnings,
+                row_index=index,
+                total_rows=total_rows,
+            )
 
-                # ── Stage 1: 상품명 정제 ─────────────────────────────────
-                _emit('refining')
-                refined_name = await llm_client.refine_product_name(original_name)
-                _finish_stage('refining')
-
-                # ── Stage 2: 키워드 생성 ─────────────────────────────────
-                _emit('keywords')
-                keywords, warnings = await keyword_engine.curate_keywords(refined_name)
-                _finish_stage('keywords')
-                if warnings:
-                    all_warnings[index] = warnings
-                filtered_kw = [
-                    w['keyword'] for w in (warnings or [])
-                    if isinstance(w, dict) and w.get('keyword')
-                ]
-
-                # ── Stage 3: 카테고리 매핑 ──────────────────────────────
-                _emit('categorizing')
-                naver_cat = await category_mapper.get_naver_category(refined_name)
-                coupang_cat = await category_mapper.get_coupang_category(refined_name)
-                _finish_stage('categorizing')
-
-                # ── 결과 DB 저장 ─────────────────────────────────────────
-                product.refined_name = refined_name
-                product.keywords = keywords
-                product.warnings = merge_product_warnings(product.warnings, warnings)
-                product.processing_time_ms = int((time.time() - row_start) * 1000)
-                product.status = "completed"
-
-                # 네이버 매핑 저장
-                naver_mapping_result = await db.execute(
-                    select(ProductPlatformMapping).where(
-                        ProductPlatformMapping.product_id == product.id,
-                        ProductPlatformMapping.platform_name == "naver"
-                    )
-                )
-                naver_mapping = naver_mapping_result.scalar_one_or_none()
-                if not naver_mapping:
-                    naver_mapping = ProductPlatformMapping(
-                        product_id=product.id,
-                        platform_name="naver"
-                    )
-                    db.add(naver_mapping)
-                    naver_mapping.sync_status = "draft"
-                naver_mapping.category_id = str(naver_cat.get('id', ''))
-                naver_mapping.category_path = naver_cat.get('path', '')
-
-                # 쿠팡 매핑 저장
-                coupang_mapping_result = await db.execute(
-                    select(ProductPlatformMapping).where(
-                        ProductPlatformMapping.product_id == product.id,
-                        ProductPlatformMapping.platform_name == "coupang"
-                    )
-                )
-                coupang_mapping = coupang_mapping_result.scalar_one_or_none()
-                if not coupang_mapping:
-                    coupang_mapping = ProductPlatformMapping(
-                        product_id=product.id,
-                        platform_name="coupang"
-                    )
-                    db.add(coupang_mapping)
-                    coupang_mapping.sync_status = "draft"
-                coupang_mapping.category_id = str(coupang_cat)
-                coupang_mapping.category_path = str(coupang_cat)
-
-                import_run.success_count += 1
-                await db.commit()
-
-                # 트레이스 UI 리스트 축적
-                completed_rows.append({
-                    'name': original_name,
-                    'total_ms': product.processing_time_ms,
-                    'stages': [
-                        {
-                            'name': 'refining',
-                            'ms': stage_timings.get('refining', {}).get('ms', 0),
-                            'refined_name': refined_name,
-                        },
-                        {
-                            'name': 'keywords',
-                            'ms': stage_timings.get('keywords', {}).get('ms', 0),
-                            'keywords': keywords,
-                            'filtered': filtered_kw,
-                        },
-                        {
-                            'name': 'categorizing',
-                            'ms': stage_timings.get('categorizing', {}).get('ms', 0),
-                            'naver_category': naver_cat.get('path') or naver_cat.get('id') or '',
-                            'coupang_category': str(coupang_cat),
-                        },
-                    ],
-                })
-
-            except Exception as e:
-                logger.error(f"Error processing product row {index} (ID: {product.id}): {e}")
-                _finish_all()
-                product.status = "failed"
-                import_run.failed_count += 1
-                await db.commit()
-
-                completed_rows.append({
-                    'name': original_name,
-                    'total_ms': int((time.time() - row_start) * 1000),
-                    'stages': [],
-                    'error': str(e),
-                })
+            await process_product_with_graph(context)
 
             # Progress Emit
             progress = int((index + 1) / total_rows * 100)
             task_instance.update_state(
-                state='PROGRESS',
+                state="PROGRESS",
                 meta={
-                    'percent': progress,
-                    'current': index + 1,
-                    'total': total_rows,
-                    'stage': 'completed_row',
-                    'current_name': original_name,
-                    'completed_rows': completed_rows,
-                    'warnings': all_warnings,
+                    "percent": progress,
+                    "current": index + 1,
+                    "total": total_rows,
+                    "stage": "completed_row",
+                    "current_name": original_name,
+                    "completed_rows": completed_rows,
+                    "warnings": all_warnings,
                 },
             )
 
