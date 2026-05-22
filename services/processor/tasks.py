@@ -258,7 +258,7 @@ async def _run_db_pipeline(
 
         for index, product in enumerate(products):
             original_name = product.original_name
-            
+
             async def emit_stage(stage_name: str, _state: dict):
                 pct = int(index / total_rows * 100)
                 task_instance.update_state(
