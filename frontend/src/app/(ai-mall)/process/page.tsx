@@ -41,8 +41,6 @@ interface ProductListResponse {
   items: Product[];
 }
 
-const pageSize = 50;
-
 const formatPrice = (value: number | null) => {
   if (value === null || value === undefined) return '-';
   return `${value.toLocaleString('ko-KR')}원`;
@@ -80,6 +78,7 @@ export default function ProcessPage() {
   const [success, setSuccess] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeSearchQuery, setActiveSearchQuery] = useState('');
+  const [pageSize, setPageSize] = useState(30);
 
   const activeSite = useMemo(
     () => wholesaleSites.find((site) => site.id === activeSiteId) || null,
@@ -145,7 +144,7 @@ export default function ProcessPage() {
     } finally {
       setIsLoadingProducts(false);
     }
-  }, [activeSiteId, page, statusFilter, completedOnly, sortMode, activeSearchQuery]);
+  }, [activeSiteId, page, pageSize, statusFilter, completedOnly, sortMode, activeSearchQuery]);
 
   useEffect(() => {
     fetchProducts();
@@ -161,7 +160,7 @@ export default function ProcessPage() {
   useEffect(() => {
     setSelectedIds(new Set());
     setPage(1);
-  }, [statusFilter, completedOnly, sortMode, activeSearchQuery]);
+  }, [statusFilter, completedOnly, sortMode, activeSearchQuery, pageSize]);
 
   // Memoize a map of completed rows by product name from all active tasks
   const completedRowsMap = useMemo(() => {
@@ -316,14 +315,13 @@ export default function ProcessPage() {
               <p className={styles.sectionDesc}>총 {total.toLocaleString('ko-KR')}개 중 현재 페이지 {products.length}개 표시</p>
             </div>
             <div className={styles.toolbarActions}>
-              <label className={styles.selectAllControl}>
-                <input
-                  type="checkbox"
-                  checked={isAllSelected}
-                  onChange={(event) => togglePage(event.target.checked)}
-                />
-                현재 페이지 전체 선택
-              </label>
+              <PillButton
+                variant="secondary"
+                onClick={() => togglePage(!isAllSelected)}
+                type="button"
+              >
+                {isAllSelected ? '전체 선택 해제' : '현재 페이지 전체 선택'}
+              </PillButton>
               <PillButton
                 variant="primary"
                 onClick={handleStartSelectedProcessing}
@@ -392,6 +390,20 @@ export default function ProcessPage() {
                   <option value="price_asc">낮은 도매가순</option>
                   <option value="price_desc">높은 도매가순</option>
                   <option value="option_count_desc">옵션 많은 순</option>
+                </select>
+              </label>
+
+              <label className={styles.filterGroup}>
+                <span>보기 개수</span>
+                <select
+                  value={pageSize}
+                  onChange={(event) => setPageSize(Number(event.target.value))}
+                >
+                  <option value={10}>10개씩 보기</option>
+                  <option value={30}>30개씩 보기</option>
+                  <option value={50}>50개씩 보기</option>
+                  <option value={100}>100개씩 보기</option>
+                  <option value={200}>200개씩 보기</option>
                 </select>
               </label>
 
