@@ -11,6 +11,7 @@
   --surface-black: #000000;
   
   --sidebar-width: 260px;
+  --sidebar-collapsed-width: 64px;
   
   --font-display: 'Inter', system-ui, -apple-system, sans-serif;
   --font-body: 'Inter', system-ui, -apple-system, sans-serif;

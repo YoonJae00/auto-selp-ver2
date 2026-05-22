@@ -24,6 +24,7 @@ interface Product {
   price_min_selling: number | null;
   origin: string | null;
   option_values_raw: string | null;
+  option_variants?: { name: string; price_wholesale: number | null; position: number }[] | null;
   images_list: string[] | null;
   image_detail: string | null;
   wholesale_status: string | null;
@@ -61,7 +62,7 @@ const processingStatusLabel: Record<Product['status'], string> = {
 
 export default function ProcessPage() {
   const { llmProvider, kiprisEnabled } = useSettingsStore();
-  const { addTask } = useTaskStore();
+  const { tasks, addTask } = useTaskStore();
 
   const [wholesaleSites, setWholesaleSites] = useState<WholesaleSite[]>([]);
   const [activeSiteId, setActiveSiteId] = useState('');
@@ -74,7 +75,7 @@ export default function ProcessPage() {
   const [isStarting, setIsStarting] = useState(false);
   const [statusFilter, setStatusFilter] = useState('');
   const [completedOnly, setCompletedOnly] = useState(false);
-  const [wholesalePriceSort, setWholesalePriceSort] = useState('');
+  const [sortMode, setSortMode] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
@@ -120,9 +121,15 @@ export default function ProcessPage() {
       });
       const effectiveStatus = completedOnly ? 'completed' : statusFilter;
       if (effectiveStatus) params.append('status', effectiveStatus);
-      if (wholesalePriceSort) {
+      if (sortMode === 'price_asc') {
         params.append('sort_by', 'price_wholesale');
-        params.append('sort_order', wholesalePriceSort);
+        params.append('sort_order', 'asc');
+      } else if (sortMode === 'price_desc') {
+        params.append('sort_by', 'price_wholesale');
+        params.append('sort_order', 'desc');
+      } else if (sortMode === 'option_count_desc') {
+        params.append('sort_by', 'option_count');
+        params.append('sort_order', 'desc');
       }
 
       const response = await api.get<ProductListResponse>(`/api/processor/products?${params.toString()}`);
@@ -133,7 +140,7 @@ export default function ProcessPage() {
     } finally {
       setIsLoadingProducts(false);
     }
-  }, [activeSiteId, page, statusFilter, completedOnly, wholesalePriceSort]);
+  }, [activeSiteId, page, statusFilter, completedOnly, sortMode]);
 
   useEffect(() => {
     fetchProducts();
@@ -142,7 +149,66 @@ export default function ProcessPage() {
   useEffect(() => {
     setSelectedIds(new Set());
     setPage(1);
-  }, [activeSiteId, statusFilter, completedOnly, wholesalePriceSort]);
+  }, [activeSiteId, statusFilter, completedOnly, sortMode]);
+
+  // Memoize a map of completed rows by product name from all active tasks
+  const completedRowsMap = useMemo(() => {
+    const map = new Map<string, {
+      refined_name: string | null;
+      keywords: string[] | null;
+      status: 'completed' | 'failed' | 'processing';
+      error?: string;
+    }>();
+
+    tasks.forEach((task) => {
+      // Process finished/active task rows
+      if (task.completedRows) {
+        task.completedRows.forEach((row) => {
+          const refiningStage = row.stages?.find(s => s.name === 'refining') as any;
+          const keywordsStage = row.stages?.find(s => s.name === 'keywords') as any;
+          
+          map.set(row.name, {
+            refined_name: refiningStage?.refined_name || null,
+            keywords: keywordsStage?.keywords || null,
+            status: row.error ? 'failed' : 'completed',
+            error: row.error,
+          });
+        });
+      }
+
+      // If a task is PROGRESS, mark the current item as processing
+      if (task.status === 'PROGRESS' && task.currentName) {
+        if (!map.has(task.currentName)) {
+          map.set(task.currentName, {
+            refined_name: null,
+            keywords: null,
+            status: 'processing',
+          });
+        }
+      }
+    });
+
+    return map;
+  }, [tasks]);
+
+  // Automatically fetch products when a running task completes or fails to sync with DB
+  const [prevActiveTaskIds, setPrevActiveTaskIds] = useState<string[]>([]);
+  useEffect(() => {
+    const activeTasks = tasks.filter(t => t.status === 'PENDING' || t.status === 'PROGRESS');
+    const activeIds = activeTasks.map(t => t.id);
+    
+    // Check if any task that was active has finished (SUCCESS or FAILURE)
+    const justFinished = prevActiveTaskIds.some(id => {
+      const task = tasks.find(t => t.id === id);
+      return task && (task.status === 'SUCCESS' || task.status === 'FAILURE');
+    });
+
+    if (justFinished) {
+      fetchProducts();
+    }
+
+    setPrevActiveTaskIds(activeIds);
+  }, [tasks, fetchProducts, prevActiveTaskIds]);
 
   const toggleProduct = (productId: string, checked: boolean) => {
     setSelectedIds((current) => {
@@ -273,14 +339,15 @@ export default function ProcessPage() {
             </label>
 
             <label className={styles.filterGroup}>
-              <span>도매가 정렬</span>
+              <span>정렬</span>
               <select
-                value={wholesalePriceSort}
-                onChange={(event) => setWholesalePriceSort(event.target.value)}
+                value={sortMode}
+                onChange={(event) => setSortMode(event.target.value)}
               >
                 <option value="">기본순</option>
-                <option value="asc">낮은 도매가순</option>
-                <option value="desc">높은 도매가순</option>
+                <option value="price_asc">낮은 도매가순</option>
+                <option value="price_desc">높은 도매가순</option>
+                <option value="option_count_desc">옵션 많은 순</option>
               </select>
             </label>
 
@@ -305,6 +372,7 @@ export default function ProcessPage() {
                   <th className={styles.checkboxCell}>선택</th>
                   <th className={styles.imageCell}>원본 사진</th>
                   <th>상품명</th>
+                  <th>옵션</th>
                   <th>가공된 상품명</th>
                   <th>키워드</th>
                   <th>도매처 코드</th>
@@ -318,17 +386,21 @@ export default function ProcessPage() {
               <tbody>
                 {isLoadingProducts && (
                   <tr>
-                    <td colSpan={11} className={styles.tableMessage}>상품을 불러오는 중입니다.</td>
+                    <td colSpan={12} className={styles.tableMessage}>상품을 불러오는 중입니다.</td>
                   </tr>
                 )}
                 {!isLoadingProducts && products.length === 0 && (
                   <tr>
-                    <td colSpan={11} className={styles.tableMessage}>이 조건에 맞는 상품이 없습니다.</td>
+                    <td colSpan={12} className={styles.tableMessage}>이 조건에 맞는 상품이 없습니다.</td>
                   </tr>
                 )}
                 {!isLoadingProducts && products.map((product) => {
                   const imageUrl = firstImage(product);
-                  const hasAiResult = product.status === 'completed' && (!!product.refined_name || (product.keywords?.length ?? 0) > 0);
+                  const realTimeUpdate = completedRowsMap.get(product.original_name);
+                  const displayStatus = realTimeUpdate ? realTimeUpdate.status : product.status;
+                  const displayRefinedName = realTimeUpdate && realTimeUpdate.refined_name ? realTimeUpdate.refined_name : product.refined_name;
+                  const displayKeywords = realTimeUpdate && realTimeUpdate.keywords ? realTimeUpdate.keywords : product.keywords;
+                  const hasAiResult = displayStatus === 'completed' && (!!displayRefinedName || (displayKeywords?.length ?? 0) > 0);
                   return (
                     <tr key={product.id} className={selectedIds.has(product.id) ? styles.selectedRow : ''}>
                       <td className={styles.checkboxCell}>
@@ -347,28 +419,58 @@ export default function ProcessPage() {
                       </td>
                       <td className={styles.nameCell}>
                         <strong>{product.original_name}</strong>
-                        {product.option_values_raw && <span>{product.option_values_raw}</span>}
+                        <span>
+                          {product.option_variants && product.option_variants.length > 0
+                            ? `옵션 ${product.option_variants.length}개`
+                            : '단일 상품'}
+                        </span>
+                      </td>
+                      <td>
+                        {product.option_variants && product.option_variants.length > 0 ? (
+                          <details className={styles.optionDetails}>
+                            <summary className={styles.optionSummary}>
+                              <span className={styles.optionCount}>옵션 {product.option_variants.length}개</span>
+                              <span className={styles.optionPreview}>
+                                {product.option_variants[0].name} · {formatPrice(product.option_variants[0].price_wholesale)}
+                              </span>
+                            </summary>
+                            <ul className={styles.optionTree}>
+                              {product.option_variants.map((option, index) => (
+                                <li key={`${product.id}-${option.name}-${index}`} className={styles.optionItem}>
+                                  <span className={styles.optionName}>{option.name}</span>
+                                  <span className={styles.optionPrice}>{formatPrice(option.price_wholesale)}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          </details>
+                        ) : product.option_values_raw ? (
+                          <div className={styles.optionFallback}>{product.option_values_raw}</div>
+                        ) : (
+                          <span className={styles.optionEmpty}>없음</span>
+                        )}
                       </td>
                       <td>
                         {hasAiResult ? (
                           <div className={styles.aiResultCell}>
                             <span className={styles.aiResultLabel}>AI 정제</span>
-                            <div className={styles.aiRefinedName}>{product.refined_name || '-'}</div>
+                            <div className={styles.aiRefinedName}>{displayRefinedName || '-'}</div>
                           </div>
                         ) : (
-                          <span className={styles.aiResultEmpty}>가공 전</span>
+                          <span className={styles.aiResultEmpty}>
+                            {displayStatus === 'processing' ? '가공 중...' : '가공 전'}
+                          </span>
                         )}
                       </td>
                       <td>
-                        {hasAiResult && product.keywords && product.keywords.length > 0 ? (
+                        {hasAiResult && displayKeywords && displayKeywords.length > 0 ? (
                           <div className={styles.keywordCloud}>
-                            {product.keywords.slice(0, 6).map((keyword) => (
+                            {displayKeywords.slice(0, 6).map((keyword) => (
                               <span key={`${product.id}-${keyword}`} className={styles.keywordPill}>
                                 {keyword}
                               </span>
                             ))}
-                            {product.keywords.length > 6 && (
-                              <span className={styles.keywordMore}>+{product.keywords.length - 6}</span>
+                            {displayKeywords.length > 6 && (
+                              <span className={styles.keywordMore}>+{displayKeywords.length - 6}</span>
                             )}
                           </div>
                         ) : (
@@ -383,8 +485,8 @@ export default function ProcessPage() {
                         <span className={styles.statusText}>{product.wholesale_status || '미정'}</span>
                       </td>
                       <td>
-                        <span className={`${styles.statusBadge} ${styles[`status_${product.status}`] || ''}`}>
-                          {processingStatusLabel[product.status]}
+                        <span className={`${styles.statusBadge} ${styles[`status_${displayStatus}`] || ''}`}>
+                          {processingStatusLabel[displayStatus]}
                         </span>
                       </td>
                     </tr>

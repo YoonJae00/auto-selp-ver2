@@ -72,13 +72,15 @@ async def load_product_context(
     runtime: Runtime[ProductProcessingContext],
 ) -> ProductProcessingState:
     product = runtime.context.product
-    return {
+    next_state: ProductProcessingState = {
         **state,
-        "import_id": str(runtime.context.import_run.id),
         "product_id": str(product.id),
         "original_name": product.original_name,
         "stage_timings": {},
     }
+    if runtime.context.import_run:
+        next_state["import_id"] = str(runtime.context.import_run.id)
+    return next_state
 
 
 async def mark_processing(
@@ -206,7 +208,8 @@ async def persist_success(
     coupang_mapping.category_id = state["coupang_category"]
     coupang_mapping.category_path = state["coupang_category"]
 
-    runtime.context.import_run.success_count += 1
+    if runtime.context.import_run:
+        runtime.context.import_run.success_count += 1
     await runtime.context.db.commit()
 
     completed_row = {
@@ -251,8 +254,9 @@ async def persist_failure(
     }
     _finish_all_stages(failed_state)
     context.product.status = "failed"
-    context.import_run.success_count = initial_success_count
-    context.import_run.failed_count = initial_failed_count + 1
+    if context.import_run:
+        context.import_run.success_count = initial_success_count
+        context.import_run.failed_count = initial_failed_count + 1
     await context.db.commit()
     context.completed_rows.append(
         {
@@ -269,14 +273,15 @@ async def persist_failure(
 
 async def process_product_with_graph(context: ProductProcessingContext) -> ProductProcessingState:
     graph = build_product_processing_graph()
-    initial_success_count = context.import_run.success_count
-    initial_failed_count = context.import_run.failed_count
+    initial_success_count = context.import_run.success_count if context.import_run else 0
+    initial_failed_count = context.import_run.failed_count if context.import_run else 0
     initial_state: ProductProcessingState = {
-        "import_id": str(context.import_run.id),
         "product_id": str(context.product.id),
         "original_name": context.product.original_name,
         "stage_timings": {},
     }
+    if context.import_run:
+        initial_state["import_id"] = str(context.import_run.id)
     try:
         return await graph.ainvoke(initial_state, context=context)
     except asyncio.CancelledError:

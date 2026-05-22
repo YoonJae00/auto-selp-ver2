@@ -141,9 +141,12 @@ def parse_int_price(value: Any) -> int | None:
         return None
 
     try:
-        return int(float(normalized))
+        parsed = int(float(normalized))
     except ValueError:
         return None
+    if parsed > 2_147_483_647:
+        return None
+    return parsed
 
 
 def split_csv_text(value: Any) -> list[str]:
@@ -183,6 +186,14 @@ def split_option_price_text(value: Any) -> list[str]:
 def parse_option_variants(option_values_raw: Any, price_wholesale_raw: Any) -> dict[str, Any]:
     option_names = split_csv_text(option_values_raw)
     price_tokens = split_option_price_text(price_wholesale_raw) if option_names else []
+    simple_price_tokens = split_csv_text(price_wholesale_raw) if option_names else []
+    if (
+        option_names
+        and len(price_tokens) != len(option_names)
+        and len(simple_price_tokens) == len(option_names)
+    ):
+        price_tokens = simple_price_tokens
+
     parsed_prices = [parse_int_price(token) for token in price_tokens]
     representative_price = parsed_prices[0] if parsed_prices else parse_int_price(price_wholesale_raw)
     warnings: list[dict[str, Any]] = []

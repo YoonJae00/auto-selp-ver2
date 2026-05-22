@@ -74,6 +74,8 @@ This document is the current implementation snapshot. For active backlog items, 
 - **Product Management Page (NEW)**: A premium Apple-inspired dashboard grid supporting multi-checkbox selection, text search debouncing, processing status filters, upload-batch filters, pagination controls, real-time status badges, and customized Excel exports.
 - **Wholesale Upload & Visual Column Mapper (NEW, GitHub #46)**: `/upload` supports wholesale-site management, drag-and-drop supplier Excel uploads, supplier-specific field mapping, and product-list filters/badges for wholesale update tracking.
 - **PillButton Upgrade (NEW)**: Added support for `disabled` prop on `PillButton` to control double-form submissions.
+- **Real-Time Product List Syncing (NEW)**: Integrated the local product processing grid (`/process`) with the global Zustand `taskStore`. The UI now dynamically overlays progress (`processing`, `completed`, `failed` statuses, AI refined names, and keywords) in real-time as Celery tasks run in the background (Approach 2), with an automatic DB refetch exactly once when the task finishes.
+
 
 ## 4. Data Model Snapshot
 

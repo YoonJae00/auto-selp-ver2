@@ -63,6 +63,22 @@ async def health_check():
 # --- JWT Auth Dependency ---
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/token", auto_error=False)
 
+
+def apply_product_sort(stmt, sort_by: Optional[str], sort_order: str):
+    if sort_by == "price_wholesale":
+        sort_column = Product.price_wholesale
+        if sort_order == "asc":
+            return stmt.order_by(sort_column.asc().nullslast(), Product.created_at.desc())
+        return stmt.order_by(sort_column.desc().nullslast(), Product.created_at.desc())
+    if sort_by == "option_count":
+        option_count = func.coalesce(func.json_array_length(Product.option_variants), 0)
+        if sort_order == "asc":
+            return stmt.order_by(option_count.asc(), Product.created_at.desc())
+        return stmt.order_by(option_count.desc(), Product.created_at.desc())
+
+    return stmt.order_by(Product.created_at.desc())
+
+
 async def get_current_user(
     request: Request,
     token: Optional[str] = Depends(oauth2_scheme),
@@ -375,8 +391,17 @@ async def start_db_processing(
             )
             db.add(product)
 
+    if not request.start_processing:
+        import_run.status = "imported"
+        await db.commit()
+        return {
+            "task_id": None,
+            "import_id": import_id,
+            "total": len(df)
+        }
+
     await db.commit()
-    
+
     # 3. Celery 비동기 태스크 시작
     task = process_db_products_task.delay(
         str(import_id),
@@ -392,6 +417,73 @@ async def start_db_processing(
     }
 
 
+@app.post("/process-products")
+async def start_selected_products_processing(
+    request: DBProcessRequest,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    if not request.product_ids and not request.import_id:
+        raise HTTPException(status_code=400, detail="Select products or provide an import_id.")
+
+    product_ids = [str(pid) for pid in (request.product_ids or [])]
+    total = 0
+    filename = "선택 상품 가공"
+
+    if product_ids:
+        result = await db.execute(
+            select(Product.id).where(
+                and_(
+                    Product.user_id == current_user["id"],
+                    Product.id.in_(request.product_ids),
+                )
+            )
+        )
+        owned_ids = [str(pid) for pid in result.scalars().all()]
+        if len(owned_ids) != len(product_ids):
+            raise HTTPException(status_code=404, detail="Some selected products were not found.")
+        total = len(owned_ids)
+        product_ids = owned_ids
+    elif request.import_id:
+        import_result = await db.execute(
+            select(ProductImport).where(
+                and_(
+                    ProductImport.id == request.import_id,
+                    ProductImport.user_id == current_user["id"],
+                )
+            )
+        )
+        import_run = import_result.scalar_one_or_none()
+        if not import_run:
+            raise HTTPException(status_code=404, detail="Import run not found.")
+        filename = import_run.filename
+        total_result = await db.execute(
+            select(func.count(Product.id)).where(
+                and_(
+                    Product.user_id == current_user["id"],
+                    Product.import_id == request.import_id,
+                    Product.status != "completed",
+                )
+            )
+        )
+        total = total_result.scalar() or 0
+
+    task = process_db_products_task.delay(
+        str(request.import_id) if request.import_id else None,
+        request.column_mapping,
+        request.llm_provider,
+        request.kipris_enabled,
+        product_ids or None,
+    )
+
+    return {
+        "task_id": task.id,
+        "import_id": request.import_id,
+        "filename": filename,
+        "total": total
+    }
+
+
 @app.get("/products", response_model=ProductListResponse)
 async def list_products(
     page: int = 1,
@@ -401,6 +493,8 @@ async def list_products(
     import_id: Optional[uuid.UUID] = None,
     wholesale_site_id: Optional[uuid.UUID] = None,
     needs_sync: Optional[bool] = None,
+    sort_by: Optional[str] = None,
+    sort_order: str = "desc",
     current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
@@ -434,7 +528,7 @@ async def list_products(
     total_result = await db.execute(count_stmt)
     total = total_result.scalar() or 0
     
-    stmt = stmt.order_by(Product.created_at.desc()).offset((page - 1) * size).limit(size)
+    stmt = apply_product_sort(stmt, sort_by, sort_order).offset((page - 1) * size).limit(size)
     result = await db.execute(stmt)
     items = result.scalars().all()
     

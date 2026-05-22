@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { api } from '@/lib/api';
-import { useTaskStore } from '@/store/taskStore';
 import PillButton from '@/components/UI/PillButton/PillButton';
 import styles from './upload.module.css';
 
@@ -71,9 +70,6 @@ export default function UploadPage() {
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
-  
-  // Global Tasks
-  const { addTask } = useTaskStore();
   
   // Feedback
   const [error, setError] = useState<string | null>(null);
@@ -221,8 +217,8 @@ export default function UploadPage() {
     }
   };
 
-  // Trigger processing and Smart Upsert tracking
-  const handleStartSmartProcess = async () => {
+  // Store uploaded supplier products in DB without product processing.
+  const handleSaveProductsToDb = async () => {
     if (!activeSite || !uploadData) return;
     
     // Validate required fields
@@ -235,28 +231,20 @@ export default function UploadPage() {
     setError(null);
     setIsProcessing(true);
     try {
-      const res = await api.post<{ task_id: string; import_id: string; total: number }>('/api/processor/process-db', {
+      const res = await api.post<{ task_id: string | null; import_id: string; total: number }>('/api/processor/process-db', {
         file_id: uploadData.file_id,
         column_mapping: columnMapping,
         wholesale_site_id: activeSite.id,
         llm_provider: 'gemini',
-        kipris_enabled: true
+        kipris_enabled: true,
+        start_processing: false
       });
       
-      addTask({
-        id: res.task_id,
-        filename: uploadData.filename,
-        progress: 0,
-        total: res.total,
-        status: 'PENDING',
-        startTime: Date.now()
-      });
-      
-      setSuccess(`${res.total}개의 상품에 대해 업로드/스마트 갱신이 시작되었습니다. '상품 관리' 탭에서 진척 상황을 확인하세요!`);
+      setSuccess(`${res.total}개의 상품을 DB에 저장했습니다. 상품 가공 화면에서 도매처와 상품을 선택해 가공할 수 있습니다.`);
       // Clear file upload state
       setUploadData(null);
     } catch (err: any) {
-      setError(err.message || '업로드 가공 시작 중 오류가 발생했습니다.');
+      setError(err.message || '상품 DB 저장 중 오류가 발생했습니다.');
     } finally {
       setIsProcessing(false);
     }
@@ -326,7 +314,7 @@ export default function UploadPage() {
         <div className={styles.uploadSection}>
           <div className={styles.sectionHeader}>
             <h2>{activeSite.name} - 상품 엑셀 업로드</h2>
-            <p>드래그 앤 드롭 또는 파일 선택을 통해 도매처에서 받은 엑셀 상품 목록을 가공/갱신합니다.</p>
+            <p>도매처에서 받은 엑셀 상품 목록을 DB에 저장합니다. 실제 상품 가공은 상품 가공 화면에서 선택한 상품만 진행합니다.</p>
           </div>
 
           <div 
@@ -390,11 +378,11 @@ export default function UploadPage() {
                 </PillButton>
                 <PillButton 
                   variant="primary"
-                  onClick={handleStartSmartProcess}
+                  onClick={handleSaveProductsToDb}
                   disabled={isProcessing}
                   type="button"
                 >
-                  {isProcessing ? '가공 분석 처리 중...' : '🚀 가공 및 스마트 업로드 시작'}
+                  {isProcessing ? 'DB 저장 중...' : 'DB에 상품 저장'}
                 </PillButton>
               </div>
             </div>

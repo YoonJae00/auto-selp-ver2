@@ -68,6 +68,7 @@ export default function ProductsPage() {
   const [importFilter, setImportFilter] = useState('');
   const [wholesaleFilter, setWholesaleFilter] = useState('');
   const [needsSyncFilter, setNeedsSyncFilter] = useState(false);
+  const [sortMode, setSortMode] = useState('');
   
   // Selection
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -125,6 +126,10 @@ export default function ProductsPage() {
       if (importFilter) queryParams.append('import_id', importFilter);
       if (wholesaleFilter) queryParams.append('wholesale_site_id', wholesaleFilter);
       if (needsSyncFilter) queryParams.append('needs_sync', 'true');
+      if (sortMode === 'option_count_desc') {
+        queryParams.append('sort_by', 'option_count');
+        queryParams.append('sort_order', 'desc');
+      }
 
       const response = await api.get<ProductListResponse>(`/api/processor/products?${queryParams.toString()}`);
       setProducts(response.items);
@@ -134,7 +139,7 @@ export default function ProductsPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [page, size, searchDebounced, statusFilter, importFilter, wholesaleFilter, needsSyncFilter]);
+  }, [page, size, searchDebounced, statusFilter, importFilter, wholesaleFilter, needsSyncFilter, sortMode]);
 
   useEffect(() => {
     fetchProducts();
@@ -316,6 +321,18 @@ export default function ProductsPage() {
                 {imp.filename} ({imp.total_count}개)
               </option>
             ))}
+          </select>
+        </div>
+
+        <div className={styles.selectGroup}>
+          <span className={styles.selectLabel}>정렬</span>
+          <select
+            value={sortMode}
+            onChange={(e) => { setSortMode(e.target.value); setPage(1); }}
+            className={styles.select}
+          >
+            <option value="">기본순</option>
+            <option value="option_count_desc">옵션 많은 순</option>
           </select>
         </div>
 

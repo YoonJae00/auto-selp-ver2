@@ -199,10 +199,11 @@ async def _run_pipeline(
 @celery_app.task(bind=True)
 def process_db_products_task(
     self,
-    import_id: str,
+    import_id: str | None,
     column_mapping: dict,
     llm_provider: str = "gemini",
     kipris_enabled: bool = True,
+    product_ids: list[str] | None = None,
 ):
     """DB에 등록된 상품 가공 전체 파이프라인 Celery Task"""
     loop = asyncio.get_event_loop()
@@ -210,7 +211,7 @@ def process_db_products_task(
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
     return loop.run_until_complete(
-        _run_db_pipeline(self, import_id, column_mapping, llm_provider, kipris_enabled)
+        _run_db_pipeline(self, import_id, column_mapping, llm_provider, kipris_enabled, product_ids)
     )
 
 
@@ -220,6 +221,7 @@ async def _run_db_pipeline(
     column_mapping: dict,
     llm_provider: str,
     kipris_enabled: bool = True,
+    product_ids: list[str] | None = None,
 ):
     import uuid
     from models import ProductImport, Product, ProductPlatformMapping
@@ -229,25 +231,31 @@ async def _run_db_pipeline(
     completed_rows: list = []
 
     async with SessionLocal() as db:
-        # Import 정보 조회
-        import_uuid = uuid.UUID(import_id)
-        result = await db.execute(select(ProductImport).where(ProductImport.id == import_uuid))
-        import_run = result.scalar_one_or_none()
-        if not import_run:
-            raise ValueError(f"Import run {import_id} not found")
+        import_run = None
+        import_uuid = uuid.UUID(import_id) if import_id else None
+        if import_uuid:
+            result = await db.execute(select(ProductImport).where(ProductImport.id == import_uuid))
+            import_run = result.scalar_one_or_none()
+            if not import_run:
+                raise ValueError(f"Import run {import_id} not found")
 
-        # Import 가공 상태 변경
-        import_run.status = "processing"
-        await db.commit()
+            # Import 가공 상태 변경
+            import_run.status = "processing"
+            await db.commit()
 
         # 미가공 상품 목록 조회
-        prod_result = await db.execute(
-            select(Product).where(Product.import_id == import_uuid, Product.status != "completed")
-        )
+        if product_ids:
+            product_uuids = [uuid.UUID(pid) for pid in product_ids]
+            prod_stmt = select(Product).where(Product.id.in_(product_uuids))
+        else:
+            prod_stmt = select(Product).where(Product.import_id == import_uuid, Product.status != "completed")
+
+        prod_result = await db.execute(prod_stmt)
         products = prod_result.scalars().all()
         total_rows = len(products)
         if total_rows == 0:
-            import_run.status = "completed"
+            if import_run:
+                import_run.status = "completed"
             await db.commit()
             return {"status": "Completed", "total": 0, "import_id": import_id}
 
@@ -306,10 +314,11 @@ async def _run_db_pipeline(
             )
 
         # 배치 전체 가공 상태 변경
-        if import_run.failed_count == total_rows:
-            import_run.status = "failed"
-        else:
-            import_run.status = "completed"
+        if import_run:
+            if import_run.failed_count == total_rows:
+                import_run.status = "failed"
+            else:
+                import_run.status = "completed"
         await db.commit()
 
     return {

@@ -36,6 +36,7 @@ Note: older files under `docs/superpowers/plans/` are historical implementation 
 - [x] **Background Polling**: Implement global `useTaskPolling` hook.
 - [x] **Intelligence Capsule UI (v1)**: Implement Siri-glow animated capsule component.
 - [x] **Process Page Refactoring**: Integrate global store and remove local polling.
+- [x] **Real-time Product List Syncing**: Dynamically map global `taskStore` completed rows and active row status directly to the products list in real-time, with a single DB refetch once completed.
 - [x] **Intelligence Capsule 전면 재설계 (v2)**:
   - 위치: AI Mall layout 좌측 하단 고정 (`left: calc(var(--sidebar-width) + 24px); bottom: 24px`)
   - 작업 중: Apple Watch 스타일 ambient conic-gradient 회전 glow
