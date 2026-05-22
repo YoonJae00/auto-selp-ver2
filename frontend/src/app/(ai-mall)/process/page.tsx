@@ -17,6 +17,17 @@ interface UploadResponse {
   preview: any[];
 }
 
+interface CompletedStage {
+  name: string;
+  refined_name?: string;
+  keywords?: string[];
+}
+
+interface CompletedRowSummary {
+  name: string;
+  stages?: CompletedStage[];
+}
+
 const STEPS = [
   { id: 'UPLOAD', label: '① 파일 업로드' },
   { id: 'MAPPING', label: '② 컬럼 설정' },
@@ -38,6 +49,7 @@ export default function ProcessPage() {
   const { tasks, addTask } = useTaskStore();
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const activeTask = tasks.find(t => t.id === activeTaskId);
+  const completedRows = (activeTask?.completedRows ?? []) as CompletedRowSummary[];
 
   const [error, setError] = useState<string | null>(null);
 
@@ -129,6 +141,14 @@ export default function ProcessPage() {
   const handleDownload = () => {
     if (!activeTaskId) return;
     window.location.href = `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost'}/api/processor/download/${activeTaskId}`;
+  };
+
+  const extractCompletedResult = (row: CompletedRowSummary) => {
+    const refinedStage = row.stages?.find((s) => s.name === 'refining');
+    const keywordStage = row.stages?.find((s) => s.name === 'keywords');
+    const refinedName = refinedStage?.refined_name ?? '';
+    const keywords = keywordStage?.keywords ?? [];
+    return { refinedName, keywords };
   };
 
   return (
@@ -296,6 +316,35 @@ export default function ProcessPage() {
 
             <PillButton variant="primary" onClick={handleDownload}>결과 파일 다운로드</PillButton>
           </div>
+
+          {completedRows.length > 0 && (
+            <div style={{ marginTop: '24px' }}>
+              <h4 className={styles.previewTitle}>가공 완료 상품 결과</h4>
+              <div className={styles.tableWrapper}>
+                <table className={styles.previewTable}>
+                  <thead>
+                    <tr>
+                      <th>원본 상품명</th>
+                      <th>가공된 상품명</th>
+                      <th>키워드</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {completedRows.map((row, i) => {
+                      const { refinedName, keywords } = extractCompletedResult(row);
+                      return (
+                        <tr key={`${row.name}-${i}`}>
+                          <td>{row.name}</td>
+                          <td>{refinedName || '-'}</td>
+                          <td>{keywords.length > 0 ? keywords.join(', ') : '-'}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </section>
       )}
 
