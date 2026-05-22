@@ -1,5 +1,9 @@
+import time
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, TypedDict
+
+from langgraph.graph import END, START, StateGraph
+from langgraph.runtime import Runtime
 
 
 class ProductProcessingState(TypedDict, total=False):
@@ -40,7 +44,39 @@ class ProductProcessingContext:
 
 
 def build_product_processing_graph():
-    raise NotImplementedError("LangGraph implementation is added in Task 2")
+    graph = StateGraph(
+        state_schema=ProductProcessingState,
+        context_schema=ProductProcessingContext,
+    )
+    graph.add_node("load_product_context", load_product_context)
+    graph.add_node("mark_processing", mark_processing)
+    graph.add_edge(START, "load_product_context")
+    graph.add_edge("load_product_context", "mark_processing")
+    graph.add_edge("mark_processing", END)
+    return graph.compile()
+
+
+async def load_product_context(
+    state: ProductProcessingState,
+    runtime: Runtime[ProductProcessingContext],
+) -> ProductProcessingState:
+    product = runtime.context.product
+    return {
+        **state,
+        "import_id": str(runtime.context.import_run.id),
+        "product_id": str(product.id),
+        "original_name": product.original_name,
+        "stage_timings": {},
+    }
+
+
+async def mark_processing(
+    state: ProductProcessingState,
+    runtime: Runtime[ProductProcessingContext],
+) -> ProductProcessingState:
+    runtime.context.product.status = "processing"
+    await runtime.context.db.commit()
+    return state
 
 
 async def process_product_with_graph(context: ProductProcessingContext) -> ProductProcessingState:
