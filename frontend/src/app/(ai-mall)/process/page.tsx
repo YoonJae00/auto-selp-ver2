@@ -316,13 +316,6 @@ export default function ProcessPage() {
             </div>
             <div className={styles.toolbarActions}>
               <PillButton
-                variant="secondary"
-                onClick={() => togglePage(!isAllSelected)}
-                type="button"
-              >
-                {isAllSelected ? '전체 선택 해제' : '현재 페이지 전체 선택'}
-              </PillButton>
-              <PillButton
                 variant="primary"
                 onClick={handleStartSelectedProcessing}
                 disabled={selectedIds.size === 0 || isStarting}
@@ -446,7 +439,15 @@ export default function ProcessPage() {
             <table className={styles.productTable}>
               <thead>
                 <tr>
-                  <th className={styles.checkboxCell}>선택</th>
+                  <th className={styles.checkboxCell}>
+                    <input
+                      type="checkbox"
+                      checked={isAllSelected}
+                      onChange={(event) => togglePage(event.target.checked)}
+                      title="현재 페이지 전체 선택"
+                      aria-label="현재 페이지 전체 선택"
+                    />
+                  </th>
                   <th className={styles.imageCell}>원본 사진</th>
                   <th>상품명</th>
                   <th>옵션</th>

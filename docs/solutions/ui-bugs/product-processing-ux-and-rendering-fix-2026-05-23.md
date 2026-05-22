@@ -1,6 +1,7 @@
 ---
 title: "상품 가공 UX 개선 및 무한 렌더링 루프 버그 수정"
 date: "2026-05-23"
+last_updated: "2026-05-23"
 category: "docs/solutions/ui-bugs"
 module: "product-processing"
 problem_type: "ui_bug"
@@ -35,7 +36,7 @@ tags: ["product-processing", "pagination", "search-filter", "floating-action-bar
 2. **듀얼 액션 및 플로팅 바 UX 구현**:
    - 테이블 상단 툴바에 `선택 상품 가공` 정적 버튼 배치.
    - 1개 이상의 상품 선택 시 화면 하단 중앙에 부드럽게 솟아오르는 글래스모피즘(Floating Glassmorphic) 스타일의 `Floating Action Bar` 배치.
-3. **현재 페이지 전체 선택 PillButton 구현**: 기존의 단순 체크박스 컨트롤 대신, 정교하게 디자인된 `PillButton` (세컨더리 타입)을 도입하여 현재 페이지 전체 상품을 원클릭으로 선택/해제 토글할 수 있도록 편의성을 극대화했습니다.
+3. **테이블 헤더 checkbox 기반 페이지 전체 선택 구현**: 불필요한 툴바 공간 낭비와 UX 인지 혼선을 줄이기 위해 기존 툴바의 '현재 페이지 전체 선택' PillButton을 제거하고, 테이블 `<thead>`의 첫 번째 컬럼(`선택`) 헤더 영역에 native `<input type="checkbox" />`를 배치하여 페이지 내 전체 상품을 원클릭으로 일괄 선택/해제 토글할 수 있도록 표준화된 UX를 구현했습니다.
 4. **동적 표시 개수 (Page Size) 셀렉트 필터 추가**: 기존 50개 고정이었던 대용량 조회를 동적 React State로 전환하여 기본 30개 보기로 설정하고, 상단 필터바 블록에 `10개 / 30개 / 50개 / 100개 / 200개` 보기 개수 드롭다운을 연동했습니다.
 5. **상하단 동기화 페이지네이션**: 필터 바 우측 상단에 컴팩트 페이지 네비게이터를 배치하여 하단 컴포넌트와 상태를 양방향 연동.
 6. **엔터/클리어 연동 검색 바**: API 쿼리 파라미터 `search`와 실시간 매핑되는 Enter 트리거 검색 창 탑재.
