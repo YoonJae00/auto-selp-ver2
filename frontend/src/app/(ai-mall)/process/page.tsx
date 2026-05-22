@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '@/lib/api';
 import { useSettingsStore } from '@/store/settingsStore';
 import { useTaskStore } from '@/store/taskStore';
@@ -192,13 +192,14 @@ export default function ProcessPage() {
   }, [tasks]);
 
   // Automatically fetch products when a running task completes or fails to sync with DB
-  const [prevActiveTaskIds, setPrevActiveTaskIds] = useState<string[]>([]);
+  const prevActiveTaskIdsRef = useRef<string[]>([]);
   useEffect(() => {
     const activeTasks = tasks.filter(t => t.status === 'PENDING' || t.status === 'PROGRESS');
     const activeIds = activeTasks.map(t => t.id);
+    const prevActiveIds = prevActiveTaskIdsRef.current;
     
     // Check if any task that was active has finished (SUCCESS or FAILURE)
-    const justFinished = prevActiveTaskIds.some(id => {
+    const justFinished = prevActiveIds.some(id => {
       const task = tasks.find(t => t.id === id);
       return task && (task.status === 'SUCCESS' || task.status === 'FAILURE');
     });
@@ -207,8 +208,8 @@ export default function ProcessPage() {
       fetchProducts();
     }
 
-    setPrevActiveTaskIds(activeIds);
-  }, [tasks, fetchProducts, prevActiveTaskIds]);
+    prevActiveTaskIdsRef.current = activeIds;
+  }, [tasks, fetchProducts]);
 
   const toggleProduct = (productId: string, checked: boolean) => {
     setSelectedIds((current) => {

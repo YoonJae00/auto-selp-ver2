@@ -49,7 +49,7 @@ Note: older files under `docs/superpowers/plans/` are historical implementation 
 - [x] **상표권 검증 모달 호출 제거**: 트레이스 뷰 중심 UX로 이동. Legacy `TrademarkModal.tsx` 파일과 관련 CSS 정리는 Phase 5 #43에서 함께 처리.
 - [x] **모달 스크롤 수정**: `min-height: 0` + 명시적 height 설정
 - [x] **Docker 이미지 리빌드**: `docker compose build worker` 워크플로우 확립
-- [x] **Sidebar Clickability & Layout Alignment Fix**: Resolved sidebar unclickability and icon misalignment issues on dense pages (such as `/process`) by adding a stacking context (`z-index: 100`) to `.sidebar` and setting `display: none` on `.sidebarCollapsed .navLabel` to center active targets with visible icons.
+- [x] **Sidebar Clickability & Layout Alignment Fix**: Resolved sidebar unclickability and icon misalignment issues on dense pages (such as `/process`) by adding a stacking context (`z-index: 100`) to `.sidebar` and setting `display: none` on `.sidebarCollapsed .navLabel`. Also resolved the ultimate root cause of UI unresponsiveness: fixed a critical React infinite rendering loop in `ProcessPage`'s task synchronization hook by replacing a state-driven previous task tracker with `useRef`.
 
 
 ## Phase 5: Continuous Improvement & Knowledge Compounding (Completed)
