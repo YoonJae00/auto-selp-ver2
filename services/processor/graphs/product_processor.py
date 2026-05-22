@@ -4,7 +4,6 @@ from typing import Any, Awaitable, Callable, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 from langgraph.runtime import Runtime
-from models import ProductPlatformMapping
 from sqlalchemy import select
 from utils.wholesale_upload import merge_product_warnings
 
@@ -94,7 +93,7 @@ def _finish_stage(state: ProductProcessingState, stage_name: str) -> None:
     timings = state.setdefault("stage_timings", {})
     stage = timings.get(stage_name)
     if stage and "ms" not in stage:
-        stage["ms"] = int((time.time() - float(stage["start"])) * 1000)
+        stage["ms"] = int((time.monotonic() - float(stage["start"])) * 1000)
 
 
 def _finish_previous_stage(state: ProductProcessingState) -> None:
@@ -109,7 +108,7 @@ async def _start_stage(
     stage_name: str,
 ) -> None:
     _finish_previous_stage(state)
-    state.setdefault("stage_timings", {})[stage_name] = {"start": time.time()}
+    state.setdefault("stage_timings", {})[stage_name] = {"start": time.monotonic()}
     await runtime.context.progress_emitter(stage_name, state)
 
 
@@ -161,6 +160,8 @@ async def map_categories(
 
 
 async def _get_or_create_mapping(runtime: Runtime[ProductProcessingContext], platform_name: str):
+    from models import ProductPlatformMapping
+
     result = await runtime.context.db.execute(
         select(ProductPlatformMapping).where(
             ProductPlatformMapping.product_id == runtime.context.product.id,

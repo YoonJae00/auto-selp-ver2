@@ -1,20 +1,7 @@
 import pytest
 import uuid
-import os
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
-
-os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
-os.environ.setdefault("NAVER_API_KEY", "test")
-os.environ.setdefault("NAVER_SECRET_KEY", "test")
-os.environ.setdefault("NAVER_CUSTOMER_ID", "test")
-os.environ.setdefault("NAVER_CLIENT_ID", "test")
-os.environ.setdefault("NAVER_CLIENT_SECRET", "test")
-os.environ.setdefault("Coupang_Access_Key", "test")
-os.environ.setdefault("Coupang_Secret_Key", "test")
-os.environ.setdefault("GEMINI_API_KEY", "test")
-os.environ.setdefault("OPENAI_API_KEY", "test")
-os.environ.setdefault("KIPRIS_API_KEY", "test")
 
 
 class FakeScalarResult:
@@ -119,12 +106,20 @@ def test_build_product_processing_graph_compiles():
 
 @pytest.mark.asyncio
 async def test_process_product_with_graph_success_updates_product_and_trace():
-    from graphs.product_processor import process_product_with_graph
+    from graphs import product_processor
 
     progress_events = []
     context = make_context(progress_events)
 
-    result = await process_product_with_graph(context)
+    async def fake_get_or_create_mapping(_runtime, _platform_name):
+        return SimpleNamespace(category_id=None, category_path=None, sync_status="draft")
+
+    original = product_processor._get_or_create_mapping
+    product_processor._get_or_create_mapping = fake_get_or_create_mapping
+    try:
+        result = await product_processor.process_product_with_graph(context)
+    finally:
+        product_processor._get_or_create_mapping = original
 
     assert result["refined_name"] == "정제 상품명"
     assert context.product.status == "completed"
