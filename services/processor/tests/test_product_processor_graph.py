@@ -1,12 +1,8 @@
 import pytest
 import uuid
 import os
-import sys
-import types
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
-from sqlalchemy import String
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
 os.environ.setdefault("NAVER_API_KEY", "test")
@@ -19,24 +15,6 @@ os.environ.setdefault("Coupang_Secret_Key", "test")
 os.environ.setdefault("GEMINI_API_KEY", "test")
 os.environ.setdefault("OPENAI_API_KEY", "test")
 os.environ.setdefault("KIPRIS_API_KEY", "test")
-
-
-class _TestBase(DeclarativeBase):
-    pass
-
-
-class _TestProductPlatformMapping(_TestBase):
-    __tablename__ = "product_platform_mappings"
-    product_id: Mapped[str] = mapped_column(String, primary_key=True)
-    platform_name: Mapped[str] = mapped_column(String, primary_key=True)
-    category_id: Mapped[str | None] = mapped_column(String, nullable=True)
-    category_path: Mapped[str | None] = mapped_column(String, nullable=True)
-    sync_status: Mapped[str | None] = mapped_column(String, nullable=True)
-
-
-_models_module = types.ModuleType("models")
-_models_module.ProductPlatformMapping = _TestProductPlatformMapping
-sys.modules.setdefault("models", _models_module)
 
 
 class FakeScalarResult:
