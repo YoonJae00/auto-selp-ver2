@@ -29,7 +29,9 @@ Note: older files under `docs/superpowers/plans/` are historical implementation 
 - [ ] **Batch Processing Optimizations**: Parallel LLM calls for larger datasets. GitHub #32
 - [ ] **User API Key Management**: UI for users to input their own Naver/Coupang keys. GitHub #33
 - [ ] **Mobile Responsive UI**: Adjust frontend for tablets and phones. GitHub #34
+- [x] **Product Processing Page UX/UI Improvement**: Relocate processing button to table toolbar, implement floating bar, top pagination, and name search.
 - [ ] **CI/CD Pipeline**: Github Actions for automated testing and deployment. GitHub #35
+
 
 ## Phase 4: Intelligence Capsule & Background Processing
 - [x] **Global Task Store**: Create `taskStore` with Zustand persistence.

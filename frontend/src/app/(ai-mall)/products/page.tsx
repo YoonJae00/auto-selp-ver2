@@ -455,7 +455,7 @@ export default function ProductsPage() {
                             <span className={`${styles.marketLabel} ${styles.naver}`}>Naver</span>
                             {naverMapping && (naverMapping.category_path || naverMapping.category_id) ? (
                               <span className={styles.categoryPath} title={naverMapping.category_path || ''}>
-                                {naverMapping.category_path || naverMapping.category_id}
+                                {naverMapping.category_id || naverMapping.category_path}
                               </span>
                             ) : (
                               <span className={styles.categoryEmpty}>미매핑</span>

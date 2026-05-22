@@ -154,6 +154,7 @@ async def test_process_product_with_graph_success_updates_product_and_trace():
     assert context.completed_rows[0]["stages"][0]["name"] == "refining"
     assert context.completed_rows[0]["stages"][1]["name"] == "keywords"
     assert context.completed_rows[0]["stages"][2]["name"] == "categorizing"
+    assert context.completed_rows[0]["stages"][2]["naver_category"] == "50000001"
     assert context.all_warnings[0][0]["keyword"] == "브랜드"
     assert [event[0] for event in progress_events] == ["refining", "keywords", "categorizing"]
 

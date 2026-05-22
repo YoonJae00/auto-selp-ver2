@@ -572,7 +572,7 @@ async def export_products(
         coupang_cat = ""
         for m in p.platform_mappings:
             if m.platform_name == "naver":
-                naver_cat = m.category_path or m.category_id or ""
+                naver_cat = m.category_id or m.category_path or ""
             elif m.platform_name == "coupang":
                 coupang_cat = m.category_id or ""
                 

@@ -1,35 +1,50 @@
-import pandas as pd
+import json
 import logging
-from config import settings
+import re
+from pathlib import Path
 from clients.naver_search_client import NaverSearchClient
 from clients.coupang_client import CoupangClient
 
 logger = logging.getLogger(__name__)
 
+
+NAVER_CATEGORY_PREFIX_RE = re.compile(r"^\s*(?:네이버|naver)\s*:\s*", re.IGNORECASE)
+
+
+def normalize_naver_category_path(category_path: str) -> str:
+    category_path = NAVER_CATEGORY_PREFIX_RE.sub("", str(category_path or ""))
+    return ">".join(part.strip() for part in category_path.split(">") if part.strip())
+
+
 class CategoryMapper:
+    _naver_path_to_id = None
+
     def __init__(self):
         self.naver_search_client = NaverSearchClient()
         self.coupang_client = CoupangClient()
-        self.mapping_file = "assets/naver_category_mapping.xls"
-        self._df = None
+        self.mapping_file = Path(__file__).resolve().parent.parent / "assets" / "naver_category_mapping.json"
 
     def _load_mapping(self):
-        if self._df is None:
+        if CategoryMapper._naver_path_to_id is None:
             try:
-                # Naver mapping file: ['카테고리번호', '대분류', '중분류', '소분류', '세분류']
-                self._df = pd.read_excel(self.mapping_file)
-                # Fill NaN with empty string for path joining
-                temp_df = self._df.fillna("")
-                self._df['category_path'] = temp_df.apply(
-                    lambda x: f"{x['대분류']}>{x['중분류']}>{x['소분류']}>{x['세분류']}".strip(">"), axis=1
-                )
+                with self.mapping_file.open(encoding="utf-8") as f:
+                    raw_mapping = json.load(f)
+                CategoryMapper._naver_path_to_id = {
+                    normalize_naver_category_path(path): str(category_id)
+                    for path, category_id in raw_mapping.items()
+                }
             except Exception as e:
                 logger.error(f"Failed to load Naver category mapping: {e}")
-                self._df = pd.DataFrame()
+                CategoryMapper._naver_path_to_id = {}
+
+    def get_naver_category_code(self, category_path: str) -> str:
+        self._load_mapping()
+        normalized_path = normalize_naver_category_path(category_path)
+        return CategoryMapper._naver_path_to_id.get(normalized_path, "")
 
     async def get_naver_category(self, product_name: str) -> dict:
         """
-        네이버 카테고리 매칭: API 검색 -> 로컬 매핑 -> 부분 일치
+        네이버 카테고리 매칭: API 검색 -> 로컬 JSON 매핑 -> 부분 일치
         """
         try:
             # 1. API 검색
@@ -39,22 +54,31 @@ class CategoryMapper:
             
             item = items[0]
             # Construct path from API response
-            api_path = f"{item['category1']}>{item['category2']}>{item['category3']}>{item['category4']}".strip(">")
+            api_path = normalize_naver_category_path(
+                ">".join(
+                    [
+                        item.get("category1", ""),
+                        item.get("category2", ""),
+                        item.get("category3", ""),
+                        item.get("category4", ""),
+                    ]
+                )
+            )
             
             # 2. 로컬 매핑 (완전 일치)
             self._load_mapping()
-            
-            if 'category_path' in self._df.columns:
-                match = self._df[self._df['category_path'] == api_path]
-                if not match.empty:
-                    return {"path": api_path, "id": str(match.iloc[0]['카테고리번호'])}
+
+            category_id = CategoryMapper._naver_path_to_id.get(api_path, "")
+            if category_id:
+                return {"path": api_path, "id": category_id}
                 
-                # 3. 부분 일치 (세분류 기준)
-                last_cat = item.get('category4') or item.get('category3')
-                if last_cat:
-                    partial_match = self._df[self._df['category_path'].str.contains(last_cat, na=False)]
-                    if not partial_match.empty:
-                        return {"path": partial_match.iloc[0]['category_path'], "id": str(partial_match.iloc[0]['카테고리번호'])}
+            # 3. 부분 일치 (세분류 기준)
+            last_cat = item.get('category4') or item.get('category3')
+            if last_cat:
+                normalized_last_cat = normalize_naver_category_path(last_cat)
+                for path, mapped_id in CategoryMapper._naver_path_to_id.items():
+                    if normalized_last_cat in path:
+                        return {"path": path, "id": mapped_id}
             
             return {"path": api_path, "id": "Manual Check"}
         except Exception as e:

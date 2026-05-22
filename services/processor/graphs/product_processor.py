@@ -230,8 +230,8 @@ async def persist_success(
             {
                 "name": "categorizing",
                 "ms": state.get("stage_timings", {}).get("categorizing", {}).get("ms", 0),
-                "naver_category": state["naver_category"].get("path")
-                or state["naver_category"].get("id")
+                "naver_category": state["naver_category"].get("id")
+                or state["naver_category"].get("path")
                 or "",
                 "coupang_category": state["coupang_category"],
             },

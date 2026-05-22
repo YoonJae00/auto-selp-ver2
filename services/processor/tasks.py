@@ -149,8 +149,7 @@ async def _run_pipeline(
                         {
                             'name': 'categorizing',
                             'ms': stage_timings.get('categorizing', {}).get('ms', 0),
-                            # naver_cat = {path, id}  →  path 가 사람이 읽기 좋음
-                            'naver_category': naver_cat.get('path') or naver_cat.get('id') or '',
+                            'naver_category': naver_cat.get('id') or naver_cat.get('path') or '',
                             'coupang_category': str(coupang_cat),
                         },
                     ],
