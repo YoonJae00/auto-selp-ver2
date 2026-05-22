@@ -47,6 +47,11 @@ class FakeCategoryMapper:
         return "12345"
 
 
+class FailingLLMClient:
+    async def refine_product_name(self, _original_name):
+        raise RuntimeError("llm unavailable")
+
+
 def make_context(progress_events=None):
     from graphs.product_processor import ProductProcessingContext
 
@@ -134,3 +139,21 @@ async def test_process_product_with_graph_success_updates_product_and_trace():
     assert context.completed_rows[0]["stages"][2]["name"] == "categorizing"
     assert context.all_warnings[0][0]["keyword"] == "브랜드"
     assert [event[0] for event in progress_events] == ["refining", "keywords", "categorizing"]
+
+
+@pytest.mark.asyncio
+async def test_process_product_with_graph_failure_marks_product_failed_and_continues_shape():
+    from graphs.product_processor import process_product_with_graph
+
+    context = make_context([])
+    context.llm_client = FailingLLMClient()
+
+    result = await process_product_with_graph(context)
+
+    assert result["error"] == "llm unavailable"
+    assert context.product.status == "failed"
+    assert context.import_run.success_count == 0
+    assert context.import_run.failed_count == 1
+    assert context.completed_rows[0]["name"] == "원본 상품명"
+    assert context.completed_rows[0]["error"] == "llm unavailable"
+    assert context.completed_rows[0]["stages"] == []

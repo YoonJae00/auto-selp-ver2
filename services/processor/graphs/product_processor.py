@@ -102,6 +102,11 @@ def _finish_previous_stage(state: ProductProcessingState) -> None:
         _finish_stage(state, list(timings)[-1])
 
 
+def _finish_all_stages(state: ProductProcessingState) -> None:
+    for stage_name in list(state.get("stage_timings", {})):
+        _finish_stage(state, stage_name)
+
+
 async def _start_stage(
     state: ProductProcessingState,
     runtime: Runtime[ProductProcessingContext],
@@ -232,6 +237,41 @@ async def persist_success(
     return {**state, "processing_time_ms": product.processing_time_ms}
 
 
+async def persist_failure(
+    state: ProductProcessingState,
+    context: ProductProcessingContext,
+    error: Exception,
+) -> ProductProcessingState:
+    failed_state: ProductProcessingState = {
+        **state,
+        "error": str(error),
+    }
+    _finish_all_stages(failed_state)
+    context.product.status = "failed"
+    context.import_run.failed_count += 1
+    await context.db.commit()
+    context.completed_rows.append(
+        {
+            "name": failed_state.get("original_name") or context.product.original_name,
+            "total_ms": int(
+                sum(int(stage.get("ms", 0)) for stage in failed_state.get("stage_timings", {}).values())
+            ),
+            "stages": [],
+            "error": str(error),
+        }
+    )
+    return failed_state
+
+
 async def process_product_with_graph(context: ProductProcessingContext) -> ProductProcessingState:
     graph = build_product_processing_graph()
-    return await graph.ainvoke({}, context=context)
+    initial_state: ProductProcessingState = {
+        "import_id": str(context.import_run.id),
+        "product_id": str(context.product.id),
+        "original_name": context.product.original_name,
+        "stage_timings": {},
+    }
+    try:
+        return await graph.ainvoke(initial_state, context=context)
+    except Exception as error:
+        return await persist_failure(initial_state, context, error)
