@@ -1,5 +1,6 @@
 import pytest
 import uuid
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -13,16 +14,21 @@ class FakeScalarResult:
 
 
 class FakeDB:
-    def __init__(self):
+    def __init__(self, commit_side_effects=None):
         self.commits = 0
         self.added = []
         self.execute = AsyncMock(return_value=FakeScalarResult(None))
+        self.commit_side_effects = list(commit_side_effects or [])
 
     def add(self, value):
         self.added.append(value)
 
     async def commit(self):
         self.commits += 1
+        if self.commit_side_effects:
+            effect = self.commit_side_effects.pop(0)
+            if effect is not None:
+                raise effect
 
 
 class FakeLLMClient:
@@ -52,7 +58,12 @@ class FailingLLMClient:
         raise RuntimeError("llm unavailable")
 
 
-def make_context(progress_events=None):
+class CancelledLLMClient:
+    async def refine_product_name(self, _original_name):
+        raise asyncio.CancelledError()
+
+
+def make_context(progress_events=None, db=None):
     from graphs.product_processor import ProductProcessingContext
 
     product = SimpleNamespace(
@@ -75,7 +86,7 @@ def make_context(progress_events=None):
             progress_events.append((stage_name, dict(state)))
 
     return ProductProcessingContext(
-        db=FakeDB(),
+        db=db or FakeDB(),
         import_run=import_run,
         product=product,
         llm_client=FakeLLMClient(),
@@ -157,3 +168,45 @@ async def test_process_product_with_graph_failure_marks_product_failed_and_conti
     assert context.completed_rows[0]["name"] == "원본 상품명"
     assert context.completed_rows[0]["error"] == "llm unavailable"
     assert context.completed_rows[0]["stages"] == []
+
+
+@pytest.mark.asyncio
+async def test_process_product_with_graph_cancellation_propagates_without_failure_side_effects():
+    from graphs.product_processor import process_product_with_graph
+
+    context = make_context([])
+    context.llm_client = CancelledLLMClient()
+
+    with pytest.raises(asyncio.CancelledError):
+        await process_product_with_graph(context)
+
+    assert context.product.status != "failed"
+    assert context.import_run.success_count == 0
+    assert context.import_run.failed_count == 0
+    assert context.completed_rows == []
+
+
+@pytest.mark.asyncio
+async def test_process_product_with_graph_late_failure_restores_success_and_increments_failed_once():
+    from graphs import product_processor
+
+    db = FakeDB(commit_side_effects=[None, RuntimeError("commit exploded"), None])
+    context = make_context([], db=db)
+    context.import_run.success_count = 5
+    context.import_run.failed_count = 2
+
+    async def fake_get_or_create_mapping(_runtime, _platform_name):
+        return SimpleNamespace(category_id=None, category_path=None, sync_status="draft")
+
+    original = product_processor._get_or_create_mapping
+    product_processor._get_or_create_mapping = fake_get_or_create_mapping
+    try:
+        result = await product_processor.process_product_with_graph(context)
+    finally:
+        product_processor._get_or_create_mapping = original
+
+    assert result["error"] == "commit exploded"
+    assert context.product.status == "failed"
+    assert context.import_run.success_count == 5
+    assert context.import_run.failed_count == 3
+    assert context.completed_rows[0]["error"] == "commit exploded"

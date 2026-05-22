@@ -1,3 +1,4 @@
+import asyncio
 import time
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, TypedDict
@@ -241,6 +242,8 @@ async def persist_failure(
     state: ProductProcessingState,
     context: ProductProcessingContext,
     error: Exception,
+    initial_success_count: int,
+    initial_failed_count: int,
 ) -> ProductProcessingState:
     failed_state: ProductProcessingState = {
         **state,
@@ -248,7 +251,8 @@ async def persist_failure(
     }
     _finish_all_stages(failed_state)
     context.product.status = "failed"
-    context.import_run.failed_count += 1
+    context.import_run.success_count = initial_success_count
+    context.import_run.failed_count = initial_failed_count + 1
     await context.db.commit()
     context.completed_rows.append(
         {
@@ -265,6 +269,8 @@ async def persist_failure(
 
 async def process_product_with_graph(context: ProductProcessingContext) -> ProductProcessingState:
     graph = build_product_processing_graph()
+    initial_success_count = context.import_run.success_count
+    initial_failed_count = context.import_run.failed_count
     initial_state: ProductProcessingState = {
         "import_id": str(context.import_run.id),
         "product_id": str(context.product.id),
@@ -273,5 +279,13 @@ async def process_product_with_graph(context: ProductProcessingContext) -> Produ
     }
     try:
         return await graph.ainvoke(initial_state, context=context)
+    except asyncio.CancelledError:
+        raise
     except Exception as error:
-        return await persist_failure(initial_state, context, error)
+        return await persist_failure(
+            initial_state,
+            context,
+            error,
+            initial_success_count,
+            initial_failed_count,
+        )
