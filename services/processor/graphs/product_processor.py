@@ -4,6 +4,8 @@ from typing import Any, Awaitable, Callable, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 from langgraph.runtime import Runtime
+from models import ProductPlatformMapping
+from sqlalchemy import select
 from utils.wholesale_upload import merge_product_warnings
 
 
@@ -159,35 +161,21 @@ async def map_categories(
 
 
 async def _get_or_create_mapping(runtime: Runtime[ProductProcessingContext], platform_name: str):
-    try:
-        from models import ProductPlatformMapping
-        from sqlalchemy import select
-
-        result = await runtime.context.db.execute(
-            select(ProductPlatformMapping).where(
-                ProductPlatformMapping.product_id == runtime.context.product.id,
-                ProductPlatformMapping.platform_name == platform_name,
-            )
+    result = await runtime.context.db.execute(
+        select(ProductPlatformMapping).where(
+            ProductPlatformMapping.product_id == runtime.context.product.id,
+            ProductPlatformMapping.platform_name == platform_name,
         )
-        mapping = result.scalar_one_or_none()
-        if mapping is None:
-            mapping = ProductPlatformMapping(
-                product_id=runtime.context.product.id,
-                platform_name=platform_name,
-            )
-            mapping.sync_status = "draft"
-            runtime.context.db.add(mapping)
-        return mapping
-    except Exception:
-        for mapping in getattr(runtime.context.db, "added", []):
-            if getattr(mapping, "platform_name", None) == platform_name:
-                return mapping
-        mapping = type("ProductPlatformMappingStub", (), {})()
-        mapping.product_id = runtime.context.product.id
-        mapping.platform_name = platform_name
+    )
+    mapping = result.scalar_one_or_none()
+    if mapping is None:
+        mapping = ProductPlatformMapping(
+            product_id=runtime.context.product.id,
+            platform_name=platform_name,
+        )
         mapping.sync_status = "draft"
         runtime.context.db.add(mapping)
-        return mapping
+    return mapping
 
 
 async def persist_success(
