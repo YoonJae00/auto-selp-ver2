@@ -289,3 +289,6 @@ async def process_product_with_graph(context: ProductProcessingContext) -> Produ
             initial_success_count,
             initial_failed_count,
         )
+
+
+graph = build_product_processing_graph()

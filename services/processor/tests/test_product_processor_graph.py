@@ -120,6 +120,12 @@ def test_build_product_processing_graph_compiles():
     assert hasattr(graph, "ainvoke")
 
 
+def test_product_processor_graph_exports_studio_graph():
+    from graphs.product_processor import graph
+
+    assert hasattr(graph, "ainvoke")
+
+
 @pytest.mark.asyncio
 async def test_process_product_with_graph_success_updates_product_and_trace():
     from graphs import product_processor

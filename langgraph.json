@@ -1,0 +1,7 @@
+{
+  "dependencies": ["./services/processor"],
+  "graphs": {
+    "product_processor": "./services/processor/graphs/product_processor.py:graph"
+  },
+  "env": ".env"
+}
