@@ -75,6 +75,7 @@ This document is the current implementation snapshot. For active backlog items, 
 - **Wholesale Upload & Visual Column Mapper (NEW, GitHub #46)**: `/upload` supports wholesale-site management, drag-and-drop supplier Excel uploads, supplier-specific field mapping, and product-list filters/badges for wholesale update tracking.
 - **PillButton Upgrade (NEW)**: Added support for `disabled` prop on `PillButton` to control double-form submissions.
 - **Real-Time Product List Syncing (NEW)**: Integrated the local product processing grid (`/process`) with the global Zustand `taskStore`. The UI now dynamically overlays progress (`processing`, `completed`, `failed` statuses, AI refined names, and keywords) in real-time as Celery tasks run in the background (Approach 2), with an automatic DB refetch exactly once when the task finishes.
+- **Sidebar Clickability & Layout Alignment Fix (NEW)**: Resolved an issue on dense workspace pages (such as `/process`) where sticky table headers stacked above the sidebar, making navigation items unclickable. Also resolved a flexbox centering misalignment in the collapsed sidebar by applying `display: none` to the invisible `.navLabel` element, aligning the active click targets perfectly with the visible rail icons.
 
 
 ## 4. Data Model Snapshot

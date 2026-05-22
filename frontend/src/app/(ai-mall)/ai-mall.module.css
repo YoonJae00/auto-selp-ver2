@@ -25,6 +25,7 @@
 
 .sidebar {
   position: relative;
+  z-index: 100;
   width: var(--active-sidebar-width);
   background: rgba(255, 255, 255, 0.86);
   border-right: 1px solid var(--hairline);
@@ -208,11 +209,14 @@
 }
 
 .sidebarCollapsed .brandText,
-.sidebarCollapsed .navLabel,
 .sidebarCollapsed .userInfo {
   opacity: 0;
   pointer-events: none;
   transform: translateX(-8px);
+}
+
+.sidebarCollapsed .navLabel {
+  display: none;
 }
 
 .sidebarCollapsed .sidebarBrand {
