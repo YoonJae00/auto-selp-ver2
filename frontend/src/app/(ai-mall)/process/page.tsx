@@ -78,6 +78,8 @@ export default function ProcessPage() {
   const [sortMode, setSortMode] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [activeSearchQuery, setActiveSearchQuery] = useState('');
 
   const activeSite = useMemo(
     () => wholesaleSites.find((site) => site.id === activeSiteId) || null,
@@ -119,6 +121,9 @@ export default function ProcessPage() {
         size: String(pageSize),
         wholesale_site_id: activeSiteId,
       });
+      if (activeSearchQuery.trim()) {
+        params.append('search', activeSearchQuery.trim());
+      }
       const effectiveStatus = completedOnly ? 'completed' : statusFilter;
       if (effectiveStatus) params.append('status', effectiveStatus);
       if (sortMode === 'price_asc') {
@@ -140,7 +145,7 @@ export default function ProcessPage() {
     } finally {
       setIsLoadingProducts(false);
     }
-  }, [activeSiteId, page, statusFilter, completedOnly, sortMode]);
+  }, [activeSiteId, page, statusFilter, completedOnly, sortMode, activeSearchQuery]);
 
   useEffect(() => {
     fetchProducts();
@@ -149,7 +154,14 @@ export default function ProcessPage() {
   useEffect(() => {
     setSelectedIds(new Set());
     setPage(1);
-  }, [activeSiteId, statusFilter, completedOnly, sortMode]);
+    setSearchQuery('');
+    setActiveSearchQuery('');
+  }, [activeSiteId]);
+
+  useEffect(() => {
+    setSelectedIds(new Set());
+    setPage(1);
+  }, [statusFilter, completedOnly, sortMode, activeSearchQuery]);
 
   // Memoize a map of completed rows by product name from all active tasks
   const completedRowsMap = useMemo(() => {
@@ -271,14 +283,6 @@ export default function ProcessPage() {
           <h1 className={styles.title}>상품 가공</h1>
           <p className={styles.subtitle}>도매처를 선택한 뒤 DB에 저장된 상품 중 필요한 것만 골라 가공합니다.</p>
         </div>
-        <PillButton
-          variant="primary"
-          onClick={handleStartSelectedProcessing}
-          disabled={selectedIds.size === 0 || isStarting}
-          type="button"
-        >
-          {isStarting ? '가공 시작 중...' : `선택 상품 가공 (${selectedIds.size})`}
-        </PillButton>
       </div>
 
       {error && <div className={styles.error}>{error}</div>}
@@ -311,59 +315,119 @@ export default function ProcessPage() {
               <h2 className={styles.sectionTitle}>{activeSite.name} 상품 목록</h2>
               <p className={styles.sectionDesc}>총 {total.toLocaleString('ko-KR')}개 중 현재 페이지 {products.length}개 표시</p>
             </div>
-            <label className={styles.selectAllControl}>
-              <input
-                type="checkbox"
-                checked={isAllSelected}
-                onChange={(event) => togglePage(event.target.checked)}
-              />
-              현재 페이지 전체 선택
-            </label>
+            <div className={styles.toolbarActions}>
+              <label className={styles.selectAllControl}>
+                <input
+                  type="checkbox"
+                  checked={isAllSelected}
+                  onChange={(event) => togglePage(event.target.checked)}
+                />
+                현재 페이지 전체 선택
+              </label>
+              <PillButton
+                variant="primary"
+                onClick={handleStartSelectedProcessing}
+                disabled={selectedIds.size === 0 || isStarting}
+                type="button"
+              >
+                {isStarting ? '가공 시작 중...' : `선택 상품 가공 (${selectedIds.size})`}
+              </PillButton>
+            </div>
           </div>
 
           <div className={styles.filterBar} aria-label="상품 필터">
-            <label className={styles.filterGroup}>
-              <span>가공 상태</span>
-              <select
-                value={statusFilter}
-                onChange={(event) => {
-                  setStatusFilter(event.target.value);
-                  setCompletedOnly(event.target.value === 'completed');
-                }}
-              >
-                <option value="">전체 상태</option>
-                <option value="pending">대기</option>
-                <option value="processing">가공 중</option>
-                <option value="completed">완료</option>
-                <option value="failed">실패</option>
-              </select>
-            </label>
+            <div className={styles.filterLeft}>
+              <div className={styles.searchGroup}>
+                <input
+                  type="text"
+                  className={styles.searchInput}
+                  placeholder="상품명으로 검색..."
+                  value={searchQuery}
+                  onChange={(event) => setSearchQuery(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      setActiveSearchQuery(searchQuery);
+                    }
+                  }}
+                />
+                {searchQuery && (
+                  <button
+                    type="button"
+                    className={styles.clearSearchButton}
+                    onClick={() => {
+                      setSearchQuery('');
+                      setActiveSearchQuery('');
+                    }}
+                    title="검색어 지우기"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
 
-            <label className={styles.filterGroup}>
-              <span>정렬</span>
-              <select
-                value={sortMode}
-                onChange={(event) => setSortMode(event.target.value)}
-              >
-                <option value="">기본순</option>
-                <option value="price_asc">낮은 도매가순</option>
-                <option value="price_desc">높은 도매가순</option>
-                <option value="option_count_desc">옵션 많은 순</option>
-              </select>
-            </label>
+              <label className={styles.filterGroup}>
+                <span>가공 상태</span>
+                <select
+                  value={statusFilter}
+                  onChange={(event) => {
+                    setStatusFilter(event.target.value);
+                    setCompletedOnly(event.target.value === 'completed');
+                  }}
+                >
+                  <option value="">전체 상태</option>
+                  <option value="pending">대기</option>
+                  <option value="processing">가공 중</option>
+                  <option value="completed">완료</option>
+                  <option value="failed">실패</option>
+                </select>
+              </label>
 
-            <label className={`${styles.filterToggle} ${completedOnly ? styles.activeFilterToggle : ''}`}>
-              <input
-                type="checkbox"
-                checked={completedOnly}
-                onChange={(event) => {
-                  const checked = event.target.checked;
-                  setCompletedOnly(checked);
-                  setStatusFilter(checked ? 'completed' : '');
-                }}
-              />
-              가공 완료만 보기
-            </label>
+              <label className={styles.filterGroup}>
+                <span>정렬</span>
+                <select
+                  value={sortMode}
+                  onChange={(event) => setSortMode(event.target.value)}
+                >
+                  <option value="">기본순</option>
+                  <option value="price_asc">낮은 도매가순</option>
+                  <option value="price_desc">높은 도매가순</option>
+                  <option value="option_count_desc">옵션 많은 순</option>
+                </select>
+              </label>
+
+              <label className={`${styles.filterToggle} ${completedOnly ? styles.activeFilterToggle : ''}`}>
+                <input
+                  type="checkbox"
+                  checked={completedOnly}
+                  onChange={(event) => {
+                    const checked = event.target.checked;
+                    setCompletedOnly(checked);
+                    setStatusFilter(checked ? 'completed' : '');
+                  }}
+                />
+                가공 완료만 보기
+              </label>
+            </div>
+
+            <div className={styles.filterRight}>
+              <div className={styles.topPagination}>
+                <button
+                  type="button"
+                  onClick={() => setPage((value) => Math.max(1, value - 1))}
+                  disabled={page <= 1 || isLoadingProducts}
+                >
+                  이전
+                </button>
+                <span>{page} / {totalPages}</span>
+                <button
+                  type="button"
+                  onClick={() => setPage((value) => Math.min(totalPages, value + 1))}
+                  disabled={page >= totalPages || isLoadingProducts}
+                >
+                  다음
+                </button>
+              </div>
+            </div>
           </div>
 
           <div className={styles.sheetFrame}>
@@ -507,6 +571,34 @@ export default function ProcessPage() {
             </button>
           </div>
         </section>
+      )}
+
+      {/* Floating Action Bar */}
+      {selectedIds.size > 0 && (
+        <div className={styles.floatingActionBar}>
+          <div className={styles.floatingContent}>
+            <span className={styles.floatingText}>
+              ✨ 현재 <strong>{selectedIds.size}</strong>개의 상품이 선택되었습니다.
+            </span>
+            <div className={styles.floatingButtons}>
+              <PillButton
+                variant="primary"
+                onClick={handleStartSelectedProcessing}
+                disabled={isStarting}
+                type="button"
+              >
+                {isStarting ? '가공 시작 중...' : '선택 상품 가공'}
+              </PillButton>
+              <button
+                type="button"
+                className={styles.floatingCancelButton}
+                onClick={() => setSelectedIds(new Set())}
+              >
+                선택 취소
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
