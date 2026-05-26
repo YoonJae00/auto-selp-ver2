@@ -27,6 +27,16 @@ def test_market_listing_draft_required_columns_exist():
     assert "recipe_versions" in column_names
 
 
+def test_market_listing_draft_required_json_output_columns_not_nullable():
+    generated_payload_col = MarketListingDraft.__table__.columns["generated_payload"]
+    validation_result_col = MarketListingDraft.__table__.columns["validation_result"]
+    recipe_versions_col = MarketListingDraft.__table__.columns["recipe_versions"]
+
+    assert generated_payload_col.nullable is False
+    assert validation_result_col.nullable is False
+    assert recipe_versions_col.nullable is False
+
+
 def test_market_listing_draft_numeric_column_types():
     sale_price_col = MarketListingDraft.__table__.columns["sale_price"]
     cost_price_col = MarketListingDraft.__table__.columns["cost_price"]
@@ -45,6 +55,42 @@ def test_market_listing_draft_json_required_fields_not_nullable():
 
     assert validation_result_col.nullable is False
     assert recipe_versions_col.nullable is False
+
+
+def test_market_listing_draft_has_no_unconditional_active_uniqueness_constraint():
+    constraints = [
+        c
+        for c in MarketListingDraft.__table__.constraints
+        if isinstance(c, UniqueConstraint)
+    ]
+    active_constraints = [
+        c
+        for c in constraints
+        if tuple(col.name for col in c.columns)
+        == ("source_product_id", "market_account_id", "draft_kind")
+    ]
+    assert active_constraints == []
+
+
+def test_market_listing_draft_has_partial_unique_index_for_active_statuses():
+    indexes = list(MarketListingDraft.__table__.indexes)
+    target_indexes = [
+        idx
+        for idx in indexes
+        if tuple(col.name for col in idx.columns)
+        == ("source_product_id", "market_account_id", "draft_kind")
+        and idx.unique
+    ]
+    assert target_indexes, "missing partial unique active-draft index"
+
+    index = target_indexes[0]
+    where_clause = str(index.dialect_options["postgresql"]["where"])
+    assert "generated" in where_clause
+    assert "needs_review" in where_clause
+    assert "ready" in where_clause
+    assert "submitting" in where_clause
+    assert "failed" in where_clause
+    assert "submitted" not in where_clause
 
 
 def test_market_account_has_no_user_market_unique_constraint():

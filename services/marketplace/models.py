@@ -10,7 +10,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
-    UniqueConstraint,
+    text,
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -120,11 +120,15 @@ class MarketDraftGenerationJob(Base):
 class MarketListingDraft(Base):
     __tablename__ = "market_listing_drafts"
     __table_args__ = (
-        UniqueConstraint(
+        Index(
+            "uq_market_listing_drafts_active",
             "source_product_id",
             "market_account_id",
             "draft_kind",
-            name="uq_market_listing_drafts_active",
+            unique=True,
+            postgresql_where=text(
+                "status IN ('generated', 'needs_review', 'ready', 'submitting', 'failed')"
+            ),
         ),
         Index("ix_market_listing_drafts_market_account_id", "market_account_id"),
     )
