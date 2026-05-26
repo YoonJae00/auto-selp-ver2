@@ -15,6 +15,24 @@ def test_marketplace_models_use_distinct_owned_tables():
     assert MarketListingDraft.__tablename__ == "market_listing_drafts"
 
 
+def test_market_account_and_job_user_id_are_non_nullable():
+    account_user_id_col = MarketAccount.__table__.columns["user_id"]
+    job_user_id_col = MarketDraftGenerationJob.__table__.columns["user_id"]
+
+    assert account_user_id_col.nullable is False
+    assert job_user_id_col.nullable is False
+
+
+def test_market_account_related_foreign_keys_use_cascade_delete():
+    settings_fk = next(iter(MarketAccountSettings.__table__.columns["market_account_id"].foreign_keys))
+    draft_fk = next(iter(MarketListingDraft.__table__.columns["market_account_id"].foreign_keys))
+
+    assert settings_fk.target_fullname == "market_accounts.id"
+    assert settings_fk.ondelete == "CASCADE"
+    assert draft_fk.target_fullname == "market_accounts.id"
+    assert draft_fk.ondelete == "CASCADE"
+
+
 def test_market_listing_draft_required_columns_exist():
     column_names = set(MarketListingDraft.__table__.columns.keys())
 
