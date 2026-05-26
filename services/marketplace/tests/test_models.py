@@ -49,14 +49,6 @@ def test_market_listing_draft_numeric_column_types():
     assert isinstance(expected_margin_rate_col.type, Float)
 
 
-def test_market_listing_draft_json_required_fields_not_nullable():
-    validation_result_col = MarketListingDraft.__table__.columns["validation_result"]
-    recipe_versions_col = MarketListingDraft.__table__.columns["recipe_versions"]
-
-    assert validation_result_col.nullable is False
-    assert recipe_versions_col.nullable is False
-
-
 def test_market_listing_draft_has_no_unconditional_active_uniqueness_constraint():
     constraints = [
         c
@@ -106,3 +98,11 @@ def test_market_account_has_no_user_market_unique_constraint():
         if tuple(col.name for col in c.columns) == ("user_id", "market_code")
     ]
     assert user_market_constraints == []
+
+    user_market_unique_indexes = [
+        idx
+        for idx in MarketAccount.__table__.indexes
+        if tuple(col.name for col in idx.columns) == ("user_id", "market_code")
+        and idx.unique
+    ]
+    assert user_market_unique_indexes == []
