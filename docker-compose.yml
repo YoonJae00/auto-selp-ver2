@@ -22,6 +22,7 @@ services:
     depends_on:
       - auth
       - processor
+      - marketplace
 
   auth:
     build: ./services/auth
@@ -51,6 +52,24 @@ services:
       - redis
     volumes:
       - uploads_data:/app/uploads
+    restart: always
+
+  marketplace:
+    build: ./services/marketplace
+    env_file: .env
+    ports:
+      - "8003:8003"
+    depends_on:
+      - db
+      - redis
+
+  marketplace-worker:
+    build: ./services/marketplace
+    command: celery -A tasks.celery_app worker --loglevel=info
+    env_file: .env
+    depends_on:
+      - db
+      - redis
     restart: always
 
   kipris-mcp:
