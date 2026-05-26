@@ -1,7 +1,17 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import JSON, DateTime, Float, ForeignKey, Index, String, Text, UniqueConstraint
+from sqlalchemy import (
+    JSON,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
@@ -136,16 +146,16 @@ class MarketListingDraft(Base):
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="generated")
     display_title: Mapped[str | None] = mapped_column(String(500), nullable=True)
     category_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    sale_price: Mapped[float | None] = mapped_column(nullable=True)
-    cost_price: Mapped[float | None] = mapped_column(nullable=True)
-    expected_profit: Mapped[float | None] = mapped_column(nullable=True)
+    sale_price: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cost_price: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    expected_profit: Mapped[int | None] = mapped_column(Integer, nullable=True)
     expected_margin_rate: Mapped[float | None] = mapped_column(Float, nullable=True)
     primary_image_url: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     source_snapshot: Mapped[dict] = mapped_column(JSON, nullable=False)
     generated_payload: Mapped[dict] = mapped_column(JSON, nullable=False)
     override_patch: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    validation_result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    recipe_versions: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    validation_result: Mapped[dict] = mapped_column(JSON, nullable=False)
+    recipe_versions: Mapped[dict] = mapped_column(JSON, nullable=False)
     adapter_version: Mapped[str] = mapped_column(String(100), nullable=False)
     remote_product_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(

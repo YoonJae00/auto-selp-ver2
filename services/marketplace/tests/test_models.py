@@ -1,4 +1,4 @@
-from sqlalchemy import UniqueConstraint
+from sqlalchemy import Float, Integer, UniqueConstraint
 
 from models import (
     MarketAccount,
@@ -25,6 +25,26 @@ def test_market_listing_draft_required_columns_exist():
     assert "generated_payload" in column_names
     assert "override_patch" in column_names
     assert "recipe_versions" in column_names
+
+
+def test_market_listing_draft_numeric_column_types():
+    sale_price_col = MarketListingDraft.__table__.columns["sale_price"]
+    cost_price_col = MarketListingDraft.__table__.columns["cost_price"]
+    expected_profit_col = MarketListingDraft.__table__.columns["expected_profit"]
+    expected_margin_rate_col = MarketListingDraft.__table__.columns["expected_margin_rate"]
+
+    assert isinstance(sale_price_col.type, Integer)
+    assert isinstance(cost_price_col.type, Integer)
+    assert isinstance(expected_profit_col.type, Integer)
+    assert isinstance(expected_margin_rate_col.type, Float)
+
+
+def test_market_listing_draft_json_required_fields_not_nullable():
+    validation_result_col = MarketListingDraft.__table__.columns["validation_result"]
+    recipe_versions_col = MarketListingDraft.__table__.columns["recipe_versions"]
+
+    assert validation_result_col.nullable is False
+    assert recipe_versions_col.nullable is False
 
 
 def test_market_account_has_no_user_market_unique_constraint():
