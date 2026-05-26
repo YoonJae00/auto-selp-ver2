@@ -5,11 +5,9 @@ from pydantic import BaseModel, ConfigDict
 
 
 class MarketAccountCreate(BaseModel):
-    user_id: uuid.UUID
     market_code: str
     display_name: str
     credentials: dict[str, str]
-    is_primary: bool = True
 
 
 class MarketAccountResponse(BaseModel):
@@ -26,6 +24,7 @@ class MarketAccountResponse(BaseModel):
 
 
 class MarketAccountSettingsUpdate(BaseModel):
+    settings_schema_version: str = "v1"
     connection_config: dict | None = None
     fulfillment_config: dict | None = None
     claim_config: dict | None = None

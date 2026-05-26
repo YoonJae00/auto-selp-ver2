@@ -1,3 +1,5 @@
+from sqlalchemy import Float, Integer, UniqueConstraint
+
 from models import (
     MarketAccount,
     MarketAccountSettings,
@@ -14,17 +16,59 @@ def test_marketplace_models_use_distinct_owned_tables():
 
 
 def test_market_listing_draft_required_columns_exist():
-    columns = set(MarketListingDraft.__table__.columns.keys())
+    column_names = set(MarketListingDraft.__table__.columns.keys())
 
     assert {
         "id",
         "source_product_id",
         "source_user_id",
+        "source_product_version",
         "market_account_id",
         "market_code",
         "status",
+        "cost_price",
+        "sale_price",
+        "expected_profit",
+        "expected_margin_rate",
         "generated_payload",
+        "override_patch",
         "validation_result",
+        "recipe_versions",
         "created_at",
         "updated_at",
-    }.issubset(columns)
+    }.issubset(column_names)
+
+
+def test_market_listing_draft_numeric_column_types():
+    sale_price_col = MarketListingDraft.__table__.columns["sale_price"]
+    cost_price_col = MarketListingDraft.__table__.columns["cost_price"]
+    expected_profit_col = MarketListingDraft.__table__.columns["expected_profit"]
+    expected_margin_rate_col = MarketListingDraft.__table__.columns["expected_margin_rate"]
+
+    assert isinstance(sale_price_col.type, Integer)
+    assert isinstance(cost_price_col.type, Integer)
+    assert isinstance(expected_profit_col.type, Integer)
+    assert isinstance(expected_margin_rate_col.type, Float)
+
+
+def test_market_listing_draft_json_required_fields_not_nullable():
+    validation_result_col = MarketListingDraft.__table__.columns["validation_result"]
+    recipe_versions_col = MarketListingDraft.__table__.columns["recipe_versions"]
+
+    assert validation_result_col.nullable is False
+    assert recipe_versions_col.nullable is False
+
+
+def test_market_account_has_no_user_market_unique_constraint():
+    constraints = [
+        c
+        for c in MarketAccount.__table__.constraints
+        if isinstance(c, UniqueConstraint)
+    ]
+
+    user_market_constraints = [
+        c
+        for c in constraints
+        if tuple(col.name for col in c.columns) == ("user_id", "market_code")
+    ]
+    assert user_market_constraints == []
