@@ -23,6 +23,8 @@ Product-specific inputs such as origin, representative/additional images, and de
 
 Account-level values such as shipping, returns, standard disclosure defaults, and default certification policy are not repeatedly entered per product. They are owned by marketplace-specific account configuration and composed into the listing draft or effective submission payload by each marketplace adapter.
 
+Pricing is also marketplace-account-specific. A seller configures a margin policy per marketplace using cost, shipping charge/cost, marketplace commission, advertising expense, and other expense components. Draft generation uses that policy to calculate the proposed selling price and exposes both cost and calculated profit figures for review before registration.
+
 ## Current Context
 
 The current repository has two operational services behind a gateway:
@@ -276,6 +278,7 @@ Smart Store configuration can include:
 - certification default policy
 - Naver Shopping registration setting
 - title recipe and tag-generation recipe versions
+- pricing and target-margin policy, including commission, ad cost, and other expense rules
 - later: attribute and catalog matching defaults
 ```
 
@@ -288,6 +291,7 @@ Coupang configuration can include:
 - notice and certification defaults and override policy
 - Coupang title recipe version
 - items/SKU and attribute-generation rules
+- pricing and target-margin policy, including Coupang-specific commission and expense rules
 ```
 
 Only the page shell and lifecycle are common. Field definitions, validation, and account-setting panels are adapter-specific.
@@ -309,6 +313,9 @@ market_listing_drafts
 - display_title               # list/search summary
 - category_id                 # list filter summary
 - sale_price                  # list/sort summary
+- cost_price                  # source cost shown in review and margin calculation
+- expected_profit             # calculated summary for review
+- expected_margin_rate        # calculated summary for review
 - primary_image_url           # thumbnail summary
 - source_snapshot JSONB
 - generated_payload JSONB
@@ -340,6 +347,66 @@ generated_payload
 ```
 
 Summary columns must be refreshed whenever generated output or relevant overrides change so the registration inbox can filter and sort without interpreting every JSON document in the browser.
+
+## Pricing And Margin Policy
+
+Do not derive a marketplace selling price directly from `price_wholesale`, `price_retail`, or `price_min_selling` without an account pricing policy. The draft must show the source cost and a policy-calculated proposed sale price.
+
+Each marketplace account stores its own pricing policy under `generation_rules.pricingPolicy` or an equivalent versioned configuration:
+
+```json
+{
+  "pricingPolicy": {
+    "version": "smartstore-pricing:v1",
+    "costSource": "price_wholesale",
+    "shippingCost": { "type": "fixed", "amount": 3000 },
+    "marketplaceFee": { "type": "percent_of_sale_price", "rate": 5.0 },
+    "advertisingCost": { "type": "percent_of_sale_price", "rate": 3.0 },
+    "otherCost": { "type": "fixed", "amount": 500 },
+    "targetMargin": { "type": "percent_of_sale_price", "rate": 25.0 },
+    "rounding": { "unit": 100, "mode": "ceil" }
+  }
+}
+```
+
+The initial calculator supports fixed-amount and sale-price-percentage expense components. Its governing relationship is:
+
+```text
+expected_profit = sale_price - cost_price - shipping_cost
+                  - marketplace_fee - advertising_cost - other_cost
+
+expected_margin_rate = expected_profit / sale_price * 100
+```
+
+For a target margin rate and percentage-based expenses, solve for a proposed selling price, then apply the configured rounding rule:
+
+```text
+sale_price =
+  (cost_price + fixed_shipping_cost + fixed_other_cost)
+  / (1 - marketplace_fee_rate - advertising_cost_rate - other_percent_rate - target_margin_rate)
+```
+
+If a policy is missing, a cost value is unavailable, or configured percentage rates make the formula invalid, the draft is created as `needs_review` with a blocking pricing validation error and no inferred sale price.
+
+Pricing results persisted with a draft include:
+
+```json
+{
+  "pricing": {
+    "policyVersion": "smartstore-pricing:v1",
+    "costPrice": 8000,
+    "proposedSalePrice": 17200,
+    "shippingCost": 3000,
+    "marketplaceFee": 860,
+    "advertisingCost": 516,
+    "otherCost": 500,
+    "expectedProfit": 4324,
+    "expectedMarginRate": 25.14
+  }
+}
+```
+
+The later registration UI exposes a marketplace-specific margin calculator and bulk policy application. When the seller selects 100 drafts for a marketplace, the same account policy can recalculate their proposed sale prices consistently; a seller may override an individual product's sale price while still seeing the recalculated expected profit and margin.
 
 ## Extensible Generation Rules
 
@@ -495,7 +562,8 @@ Draft editing supports shared product-specific areas:
 
 ```text
 - marketplace-visible product title
-- sale price
+- source cost, calculated sale price, expected profit, and expected margin rate
+- individual sale-price override with recalculated margin preview
 - marketplace category
 - origin
 - representative/additional images
@@ -508,6 +576,7 @@ It also exposes channel-specific editing sections:
 ```text
 Smart Store:
 - title recipe output/regeneration
+- Smart Store pricing policy/margin calculation result
 - later tags, attributes, brand/manufacturer/model, and catalog matching
 
 Coupang:
@@ -515,9 +584,12 @@ Coupang:
 - attributes
 - contents blocks
 - Coupang-specific display title output
+- Coupang pricing policy/margin calculation result
 ```
 
 Do not expose shipping, returns, or standard account defaults as repetitive product edit fields. The draft screen may show which configured template is being applied and surface missing configuration errors, but editing those settings routes to the marketplace account tab.
+
+The account settings tab for each marketplace contains its own margin-calculator configuration: target margin, fee rules, advertising cost, shipping cost contribution, other costs, and rounding policy. Bulk recalculation of marketplace drafts is driven by that marketplace's saved pricing policy, not by a shared global margin value.
 
 ## Submission Workflow
 
@@ -666,6 +738,7 @@ Rules:
 - Title recipe output and recipe version are persisted.
 - Product-specific extension values can be added in generated payload without table changes.
 - Smart Store account configuration composes only into Smart Store drafts.
+- Smart Store pricing policy calculates cost/sale/profit summaries and blocks drafts when configuration is insufficient.
 
 ### Coupang Adapter Tests
 
@@ -673,6 +746,7 @@ Rules:
 - Images and detail content become Coupang item-native structures.
 - Title recipe output and recipe version are persisted.
 - Coupang account configuration composes only into Coupang drafts.
+- Coupang pricing policy calculates its own cost/sale/profit summaries independently from Smart Store settings.
 
 ### Frontend Tests
 
@@ -680,6 +754,7 @@ Rules:
 - Draft detail shows shared editable values plus marketplace-specific sections.
 - Account configuration page renders independent Smart Store and Coupang tabs/panels.
 - Validation messages, overrides, individual submission, and bulk submission states are surfaced correctly.
+- Marketplace-specific margin settings, bulk recalculation, and per-product profit preview display the calculation components.
 
 ## First Release Scope
 
@@ -692,6 +767,7 @@ Included:
 - processing-completed draft generation request
 - marketplace account/settings data model
 - Smart Store and Coupang adapter boundaries
+- marketplace-specific pricing policy and margin-calculation results in draft generation
 - draft storage, regeneration, validation, and override model
 - unified registration inbox
 - marketplace-specific settings tabs
