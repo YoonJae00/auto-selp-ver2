@@ -131,16 +131,7 @@ class MarketplaceAdapter(ABC):
         listing_defaults = account_settings.get("listing_defaults")
         if not isinstance(listing_defaults, Mapping):
             return {}
-
-        market_defaults = listing_defaults.get(self.market_code)
-        if market_defaults is not None:
-            if isinstance(market_defaults, Mapping):
-                return dict(market_defaults)
-            return {}
-
-        if self._values_are_all_mappings(listing_defaults):
-            return {}
-        return dict(listing_defaults)
+        return deepcopy(dict(listing_defaults))
 
     def _resolve_pricing_policy(
         self,
@@ -157,16 +148,10 @@ class MarketplaceAdapter(ABC):
         if not isinstance(pricing_policy, Mapping):
             return None, True
 
-        market_policy = pricing_policy.get(self.market_code)
-        if market_policy is not None:
-            if isinstance(market_policy, Mapping):
-                return dict(market_policy), False
-            return None, True
-
         if self._has_unscoped_pricing_keys(pricing_policy):
-            return dict(pricing_policy), False
+            return deepcopy(dict(pricing_policy)), False
 
-        if self._has_mapping_values(pricing_policy):
+        if self._values_are_all_mappings(pricing_policy):
             return None, False
 
         if pricing_policy:
@@ -177,10 +162,6 @@ class MarketplaceAdapter(ABC):
     def _values_are_all_mappings(values_map: Mapping[str, Any]) -> bool:
         values = list(values_map.values())
         return bool(values) and all(isinstance(value, Mapping) for value in values)
-
-    @staticmethod
-    def _has_mapping_values(values_map: Mapping[str, Any]) -> bool:
-        return any(isinstance(value, Mapping) for value in values_map.values())
 
     @staticmethod
     def _has_unscoped_pricing_keys(pricing_policy: Mapping[str, Any]) -> bool:
