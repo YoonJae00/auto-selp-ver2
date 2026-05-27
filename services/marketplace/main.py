@@ -8,8 +8,8 @@ from database import Base, engine
 
 app = FastAPI(title="Auto-Selp Marketplace Listing")
 
-DB_STARTUP_MAX_ATTEMPTS = 3
-DB_STARTUP_RETRY_DELAY_SECONDS = 0.1
+DB_STARTUP_MAX_ATTEMPTS = 5
+DB_STARTUP_RETRY_DELAY_SECONDS = 2.0
 DB_STARTUP_TRANSIENT_ERRORS = (
     ConnectionError,
     OSError,

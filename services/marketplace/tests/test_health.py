@@ -1,5 +1,6 @@
 import pytest
 from httpx import ASGITransport, AsyncClient
+from pathlib import Path
 
 import main
 from main import app
@@ -141,3 +142,23 @@ async def test_create_tables_raises_after_retry_attempts_exhausted(monkeypatch):
 
     assert fake_engine.begin_calls == 3
     assert sleep_calls == [0.001, 0.001]
+
+
+def test_compose_marketplace_uses_db_health_gating_and_restart_policy():
+    compose_path = Path(__file__).resolve().parents[3] / "docker-compose.yml"
+    compose_text = compose_path.read_text(encoding="utf-8")
+
+    db_block = compose_text.split("\n  db:\n", 1)[1].split("\n  redis:\n", 1)[0]
+    marketplace_block = compose_text.split("\n  marketplace:\n", 1)[1].split(
+        "\n  marketplace-worker:\n", 1
+    )[0]
+
+    assert "healthcheck:" in db_block
+    assert "pg_isready" in db_block
+
+    assert "depends_on:" in marketplace_block
+    assert "db:" in marketplace_block
+    assert "condition: service_healthy" in marketplace_block
+    assert "redis:" in marketplace_block
+    assert "condition: service_started" in marketplace_block
+    assert "restart:" in marketplace_block
