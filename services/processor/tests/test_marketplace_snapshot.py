@@ -169,6 +169,30 @@ def test_marketplace_snapshot_success(monkeypatch):
     assert len(stmt._with_options) == 1
 
 
+def test_marketplace_snapshot_keywords_null_returns_empty_list(monkeypatch):
+    product_id = uuid.uuid4()
+    user_id = uuid.uuid4()
+    product = build_product(product_id, user_id)
+    product.keywords = None
+    fake_db = FakeDB(product=product)
+    client = make_client(fake_db, monkeypatch)
+
+    try:
+        response = client.get(
+            f"/internal/products/{product_id}/marketplace-snapshot",
+            params={"user_id": str(user_id)},
+            headers={"X-Internal-Service-Token": "internal-test-token"},
+        )
+    finally:
+        processor_main.app.dependency_overrides.clear()
+        client.close()
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["keywords"] == []
+    assert isinstance(body["keywords"], list)
+
+
 def test_marketplace_snapshot_missing_or_invalid_token_returns_401(monkeypatch):
     product_id = uuid.uuid4()
     user_id = uuid.uuid4()

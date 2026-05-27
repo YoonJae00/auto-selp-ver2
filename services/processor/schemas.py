@@ -1,4 +1,4 @@
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from datetime import datetime
 from typing import Optional, Dict, List, Any
 from uuid import UUID
@@ -146,7 +146,7 @@ class MarketplaceSnapshotResponse(BaseModel):
     original_name: str
     refined_name: Optional[str] = None
     brand_name: Optional[str] = None
-    keywords: Optional[List[str]] = None
+    keywords: List[str] = Field(default_factory=list)
     origin: Optional[str] = None
     price: MarketplaceSnapshotPrice
     images: MarketplaceSnapshotImages

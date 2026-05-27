@@ -582,7 +582,7 @@ async def get_marketplace_snapshot(
         "original_name": product.original_name,
         "refined_name": product.refined_name,
         "brand_name": product.brand_name,
-        "keywords": product.keywords,
+        "keywords": product.keywords or [],
         "origin": product.origin,
         "price": {
             "wholesale": product.price_wholesale,
