@@ -1,4 +1,9 @@
 from adapters.coupang import CoupangAdapter
 from adapters.smartstore import SmartstoreAdapter
 
-__all__ = ["SmartstoreAdapter", "CoupangAdapter"]
+ADAPTERS = {
+    "smartstore": SmartstoreAdapter(),
+    "coupang": CoupangAdapter(),
+}
+
+__all__ = ["SmartstoreAdapter", "CoupangAdapter", "ADAPTERS"]
