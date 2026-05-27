@@ -115,3 +115,33 @@ def test_invalid_pricing_policy_blocks_draft_generation(cost_price, policy, mess
 def test_incomplete_or_malformed_policy_does_not_infer_a_sale_price(policy, message):
     with pytest.raises(PricingPolicyError, match=message):
         calculate_proposed_price(cost_price=8000, policy=policy)
+
+
+def test_rounding_of_component_fees_cannot_undercut_target_margin():
+    result = calculate_proposed_price(
+        cost_price=6699,
+        policy=_policy(
+            shippingCost={"type": "fixed", "amount": 0},
+            marketplaceFee={"type": "percent_of_sale_price", "rate": 5.005},
+            advertisingCost={"type": "percent_of_sale_price", "rate": 3.005},
+            otherCost={"type": "fixed", "amount": 0},
+            targetMargin={"type": "percent_of_sale_price", "rate": 25},
+        ),
+    )
+
+    assert result["proposedSalePrice"] == 10100
+    assert result["expectedMarginRate"] >= 25.0
+
+
+def test_calculated_price_must_fit_persisted_integer_summary_columns():
+    with pytest.raises(PricingPolicyError, match="persistable range"):
+        calculate_proposed_price(
+            cost_price=8000,
+            policy=_policy(
+                shippingCost={"type": "fixed", "amount": 0},
+                marketplaceFee={"type": "percent_of_sale_price", "rate": 49.999999},
+                advertisingCost={"type": "percent_of_sale_price", "rate": 0},
+                otherCost={"type": "fixed", "amount": 0},
+                targetMargin={"type": "percent_of_sale_price", "rate": 50},
+            ),
+        )

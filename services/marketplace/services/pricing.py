@@ -9,6 +9,7 @@ class PricingPolicyError(ValueError):
 ZERO = Decimal("0")
 ONE = Decimal("1")
 ONE_HUNDRED = Decimal("100")
+INTEGER_MAX = 2_147_483_647
 
 
 def _decimal(value, field_name: str) -> Decimal:
@@ -64,6 +65,43 @@ def _won(value: Decimal) -> int:
     return int(value.quantize(ONE, rounding=ROUND_HALF_UP))
 
 
+def _calculate_amounts(
+    sale_price: int,
+    *,
+    cost: Decimal,
+    shipping_cost: Decimal,
+    marketplace_rate: Decimal,
+    advertising_rate: Decimal,
+    other_fixed: Decimal,
+    other_rate: Decimal,
+) -> tuple[int, int, int, int, Decimal]:
+    sale = Decimal(sale_price)
+    marketplace_fee = _won(sale * marketplace_rate)
+    advertising_cost = _won(sale * advertising_rate)
+    other_cost = _won(other_fixed + (sale * other_rate))
+    expected_profit = (
+        sale_price
+        - int(cost)
+        - int(shipping_cost)
+        - marketplace_fee
+        - advertising_cost
+        - other_cost
+    )
+    expected_margin_rate = (Decimal(expected_profit) / sale) * ONE_HUNDRED
+    return (
+        marketplace_fee,
+        advertising_cost,
+        other_cost,
+        expected_profit,
+        expected_margin_rate,
+    )
+
+
+def _require_persistable_amounts(*amounts: int) -> None:
+    if any(amount < -INTEGER_MAX - 1 or amount > INTEGER_MAX for amount in amounts):
+        raise PricingPolicyError("calculated amount exceeds persistable range")
+
+
 def calculate_proposed_price(cost_price: int | None, policy: dict | None) -> dict:
     if policy is None:
         raise PricingPolicyError("pricing policy is required")
@@ -103,20 +141,53 @@ def calculate_proposed_price(cost_price: int | None, policy: dict | None) -> dic
 
     raw_price = (cost + shipping_cost + other_fixed) / (ONE - rate_total)
     sale_price = int((raw_price / unit).to_integral_value(rounding=ROUND_CEILING) * unit)
-    sale = Decimal(sale_price)
-    marketplace_fee = _won(sale * marketplace_rate)
-    advertising_cost = _won(sale * advertising_rate)
-    other_cost = _won(other_fixed + (sale * other_rate))
-    expected_profit = (
-        sale_price
-        - int(cost)
-        - int(shipping_cost)
-        - marketplace_fee
-        - advertising_cost
-        - other_cost
+    _require_persistable_amounts(sale_price)
+
+    (
+        marketplace_fee,
+        advertising_cost,
+        other_cost,
+        expected_profit,
+        expected_margin_rate,
+    ) = _calculate_amounts(
+        sale_price,
+        cost=cost,
+        shipping_cost=shipping_cost,
+        marketplace_rate=marketplace_rate,
+        advertising_rate=advertising_rate,
+        other_fixed=other_fixed,
+        other_rate=other_rate,
     )
-    expected_margin_rate = float(
-        ((Decimal(expected_profit) / sale) * ONE_HUNDRED).quantize(
+
+    while expected_margin_rate < (target_rate * ONE_HUNDRED):
+        sale_price += int(unit)
+        _require_persistable_amounts(sale_price)
+        (
+            marketplace_fee,
+            advertising_cost,
+            other_cost,
+            expected_profit,
+            expected_margin_rate,
+        ) = _calculate_amounts(
+            sale_price,
+            cost=cost,
+            shipping_cost=shipping_cost,
+            marketplace_rate=marketplace_rate,
+            advertising_rate=advertising_rate,
+            other_fixed=other_fixed,
+            other_rate=other_rate,
+        )
+
+    _require_persistable_amounts(
+        int(cost),
+        int(shipping_cost),
+        marketplace_fee,
+        advertising_cost,
+        other_cost,
+        expected_profit,
+    )
+    displayed_margin_rate = float(
+        expected_margin_rate.quantize(
             Decimal("0.01"), rounding=ROUND_HALF_UP
         )
     )
@@ -130,5 +201,5 @@ def calculate_proposed_price(cost_price: int | None, policy: dict | None) -> dic
         "advertisingCost": advertising_cost,
         "otherCost": other_cost,
         "expectedProfit": expected_profit,
-        "expectedMarginRate": expected_margin_rate,
+        "expectedMarginRate": displayed_margin_rate,
     }
