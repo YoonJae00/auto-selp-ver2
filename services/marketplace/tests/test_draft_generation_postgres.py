@@ -1,7 +1,9 @@
+import asyncio
 import os
 import uuid
 
 import pytest
+import pytest_asyncio
 from sqlalchemy import delete, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -59,7 +61,7 @@ class StubAdapter:
         )
 
 
-@pytest.fixture(scope="module")
+@pytest_asyncio.fixture(scope="module")
 async def pg_sessionmaker():
     schema_name = f"marketplace_it_{uuid.uuid4().hex}"
     admin_engine = create_async_engine(MARKETPLACE_TEST_DATABASE_URL)
@@ -88,7 +90,7 @@ async def pg_sessionmaker():
         await admin_engine.dispose()
 
 
-@pytest.fixture(autouse=True)
+@pytest_asyncio.fixture(autouse=True)
 async def cleanup_tables(pg_sessionmaker):
     async with pg_sessionmaker() as session:
         await session.execute(delete(MarketListingDraft))
@@ -142,62 +144,102 @@ def _snapshot(version):
 
 
 @pytest.mark.asyncio
-async def test_pg_generation_with_older_snapshot_does_not_overwrite_newer_mutable_draft(pg_sessionmaker):
+async def test_pg_generation_interleaved_older_update_does_not_overwrite_newer_committed_update(
+    pg_sessionmaker,
+):
     user_id = uuid.uuid4()
     source_product_id = uuid.uuid4()
     account = _account(user_id)
-    job = _job(user_id, source_product_id)
-    existing_draft_id = uuid.uuid4()
+    older_job = _job(user_id, source_product_id)
+    newer_job = _job(user_id, source_product_id)
+    draft_id = uuid.uuid4()
 
     async with pg_sessionmaker() as session:
         session.add(account)
-        session.add(job)
+        session.add(older_job)
+        session.add(newer_job)
         session.add(
             MarketListingDraft(
-                id=existing_draft_id,
+                id=draft_id,
                 source_product_id=source_product_id,
-                source_product_version="2026-05-28T10:00:00+00:00",
+                source_product_version="2026-05-28T08:00:00+00:00",
                 market_account_id=account.id,
                 market_code="smartstore",
                 draft_kind="create",
                 status="needs_review",
-                display_title="newer-title",
-                source_snapshot={"version": "2026-05-28T10:00:00+00:00"},
-                generated_payload={"market_code": "smartstore", "version": "newer"},
+                display_title="baseline-title",
+                source_snapshot={"version": "2026-05-28T08:00:00+00:00"},
+                generated_payload={"market_code": "smartstore", "version": "baseline"},
                 validation_result={"status": "valid"},
-                recipe_versions={"title": "newer-title:v1"},
-                adapter_version="smartstore-adapter:newer",
+                recipe_versions={"title": "baseline-title:v1"},
+                adapter_version="smartstore-adapter:baseline",
             )
         )
         await session.commit()
 
-    async with pg_sessionmaker() as session:
-        run_job = await session.get(MarketDraftGenerationJob, job.id)
-        adapter = StubAdapter("smartstore")
-        processor_client = StubProcessorClient(_snapshot("2026-05-28T09:00:00+00:00"))
+    update_entered = asyncio.Event()
+    allow_older_update = asyncio.Event()
+    older_update_intercepted = {"done": False}
+
+    async with pg_sessionmaker() as older_session, pg_sessionmaker() as newer_session:
+        older_job_run = await older_session.get(MarketDraftGenerationJob, older_job.id)
+        newer_job_run = await newer_session.get(MarketDraftGenerationJob, newer_job.id)
+
+        real_older_execute = older_session.execute
+
+        async def interleaved_older_execute(stmt, *args, **kwargs):
+            if (
+                not older_update_intercepted["done"]
+                and getattr(stmt, "__visit_name__", None) == "update"
+                and getattr(getattr(stmt, "table", None), "name", None)
+                == MarketListingDraft.__tablename__
+            ):
+                older_update_intercepted["done"] = True
+                update_entered.set()
+                await allow_older_update.wait()
+            return await real_older_execute(stmt, *args, **kwargs)
+
+        older_session.execute = interleaved_older_execute
+
+        older_task = asyncio.create_task(
+            generate_drafts_for_job(
+                older_job_run,
+                older_session,
+                StubProcessorClient(_snapshot("2026-05-28T09:00:00+00:00")),
+                {"smartstore": StubAdapter("smartstore")},
+            )
+        )
+        await update_entered.wait()
+
         await generate_drafts_for_job(
-            run_job,
-            session,
-            processor_client,
-            {"smartstore": adapter},
+            newer_job_run,
+            newer_session,
+            StubProcessorClient(_snapshot("2026-05-28T10:00:00+00:00")),
+            {"smartstore": StubAdapter("smartstore")},
         )
 
+        allow_older_update.set()
+        await older_task
+
     async with pg_sessionmaker() as session:
-        persisted = await session.get(MarketListingDraft, existing_draft_id)
-        job_after = await session.get(MarketDraftGenerationJob, job.id)
+        persisted = await session.get(MarketListingDraft, draft_id)
+        older_job_after = await session.get(MarketDraftGenerationJob, older_job.id)
+        newer_job_after = await session.get(MarketDraftGenerationJob, newer_job.id)
         all_drafts = (await session.execute(select(MarketListingDraft))).scalars().all()
 
     assert len(all_drafts) == 1
     assert persisted is not None
     assert persisted.source_product_version == "2026-05-28T10:00:00+00:00"
-    assert persisted.display_title == "newer-title"
-    assert persisted.generated_payload == {"market_code": "smartstore", "version": "newer"}
-    assert persisted.adapter_version == "smartstore-adapter:newer"
+    assert persisted.generated_payload == {"market_code": "smartstore", "version": "2026-05-28T10:00:00+00:00"}
     assert persisted.status == "needs_review"
-    assert job_after is not None
-    assert job_after.status == "completed"
-    assert job_after.generated_source_version == "2026-05-28T09:00:00+00:00"
-    assert job_after.error is None
+    assert older_job_after is not None
+    assert older_job_after.status == "completed"
+    assert older_job_after.generated_source_version == "2026-05-28T09:00:00+00:00"
+    assert older_job_after.error is None
+    assert newer_job_after is not None
+    assert newer_job_after.status == "completed"
+    assert newer_job_after.generated_source_version == "2026-05-28T10:00:00+00:00"
+    assert newer_job_after.error is None
 
 
 @pytest.mark.asyncio
