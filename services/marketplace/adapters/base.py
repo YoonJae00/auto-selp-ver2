@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
+from copy import deepcopy
 from typing import Any
 
 from schemas import DraftResult
@@ -77,19 +78,14 @@ class MarketplaceAdapter(ABC):
         return category or None
 
     def _extract_primary_image(self, source_snapshot: Mapping[str, Any]) -> str | None:
-        images = source_snapshot.get("images")
-        if not isinstance(images, Mapping):
-            return None
-        image_list = images.get("list")
-        if not isinstance(image_list, list):
-            return None
-        for image in image_list:
-            image_url = self._clean_str(image)
-            if image_url:
-                return image_url
-        return None
+        normalized_urls = self._extract_normalized_image_urls(source_snapshot)
+        return normalized_urls[0] if normalized_urls else None
 
     def _extract_optional_images(self, source_snapshot: Mapping[str, Any]) -> list[str]:
+        normalized_urls = self._extract_normalized_image_urls(source_snapshot)
+        return normalized_urls[1:]
+
+    def _extract_normalized_image_urls(self, source_snapshot: Mapping[str, Any]) -> list[str]:
         images = source_snapshot.get("images")
         if not isinstance(images, Mapping):
             return []
@@ -97,7 +93,7 @@ class MarketplaceAdapter(ABC):
         if not isinstance(image_list, list):
             return []
         urls: list[str] = []
-        for image in image_list[1:]:
+        for image in image_list:
             image_url = self._clean_str(image)
             if image_url:
                 urls.append(image_url)
@@ -118,7 +114,7 @@ class MarketplaceAdapter(ABC):
         options = source_snapshot.get("options")
         if not isinstance(options, list):
             return []
-        return [option for option in options if isinstance(option, Mapping)]
+        return [deepcopy(dict(option)) for option in options if isinstance(option, Mapping)]
 
     def _extract_cost_price(self, source_snapshot: Mapping[str, Any]) -> int | None:
         price = source_snapshot.get("price")
@@ -137,10 +133,12 @@ class MarketplaceAdapter(ABC):
             return {}
 
         market_defaults = listing_defaults.get(self.market_code)
-        if isinstance(market_defaults, Mapping):
-            return dict(market_defaults)
+        if market_defaults is not None:
+            if isinstance(market_defaults, Mapping):
+                return dict(market_defaults)
+            return {}
 
-        if any(key in listing_defaults for key in ("smartstore", "coupang")):
+        if self._values_are_all_mappings(listing_defaults):
             return {}
         return dict(listing_defaults)
 
@@ -165,9 +163,29 @@ class MarketplaceAdapter(ABC):
                 return dict(market_policy), False
             return None, True
 
-        if any(key in pricing_policy for key in ("smartstore", "coupang")):
+        if self._has_unscoped_pricing_keys(pricing_policy):
+            return dict(pricing_policy), False
+
+        if self._has_mapping_values(pricing_policy):
             return None, False
-        return dict(pricing_policy), False
+
+        if pricing_policy:
+            return None, True
+        return None, False
+
+    @staticmethod
+    def _values_are_all_mappings(values_map: Mapping[str, Any]) -> bool:
+        values = list(values_map.values())
+        return bool(values) and all(isinstance(value, Mapping) for value in values)
+
+    @staticmethod
+    def _has_mapping_values(values_map: Mapping[str, Any]) -> bool:
+        return any(isinstance(value, Mapping) for value in values_map.values())
+
+    @staticmethod
+    def _has_unscoped_pricing_keys(pricing_policy: Mapping[str, Any]) -> bool:
+        computational_keys = {"shippingCost", "marketplaceFee", "targetMargin", "rounding"}
+        return any(key in pricing_policy for key in computational_keys)
 
     @staticmethod
     def _clean_str(value: Any) -> str:
