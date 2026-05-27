@@ -49,3 +49,95 @@ async def test_create_tables_runs_metadata_create_all_once(monkeypatch):
     called_fn = fake_engine.conn.calls[0]
     assert called_fn.__self__ is main.Base.metadata
     assert called_fn.__name__ == "create_all"
+
+
+@pytest.mark.asyncio
+async def test_create_tables_retries_transient_failure_then_succeeds(monkeypatch):
+    class FakeConn:
+        def __init__(self):
+            self.calls = []
+
+        async def run_sync(self, fn):
+            self.calls.append(fn)
+
+    class FakeBegin:
+        def __init__(self, engine):
+            self.engine = engine
+
+        async def __aenter__(self):
+            self.engine.begin_calls += 1
+            if self.engine.begin_calls <= self.engine.failures_before_success:
+                raise ConnectionError("database is starting")
+            return self.engine.conn
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeEngine:
+        def __init__(self, failures_before_success):
+            self.failures_before_success = failures_before_success
+            self.begin_calls = 0
+            self.conn = FakeConn()
+
+        def begin(self):
+            return FakeBegin(self)
+
+    sleep_calls = []
+
+    async def fake_sleep(delay):
+        sleep_calls.append(delay)
+
+    fake_engine = FakeEngine(failures_before_success=1)
+    monkeypatch.setattr(main, "engine", fake_engine)
+    monkeypatch.setattr(main, "DB_STARTUP_MAX_ATTEMPTS", 3, raising=False)
+    monkeypatch.setattr(main, "DB_STARTUP_RETRY_DELAY_SECONDS", 0.001, raising=False)
+    monkeypatch.setattr(main.asyncio, "sleep", fake_sleep)
+
+    await main.create_tables()
+
+    assert fake_engine.begin_calls == 2
+    assert len(fake_engine.conn.calls) == 1
+    assert sleep_calls == [0.001]
+
+
+@pytest.mark.asyncio
+async def test_create_tables_raises_after_retry_attempts_exhausted(monkeypatch):
+    class FakeConn:
+        async def run_sync(self, fn):
+            raise AssertionError("run_sync must not be called when connection fails")
+
+    class FakeBegin:
+        def __init__(self, engine):
+            self.engine = engine
+
+        async def __aenter__(self):
+            self.engine.begin_calls += 1
+            raise ConnectionError("database unavailable")
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeEngine:
+        def __init__(self):
+            self.begin_calls = 0
+            self.conn = FakeConn()
+
+        def begin(self):
+            return FakeBegin(self)
+
+    sleep_calls = []
+
+    async def fake_sleep(delay):
+        sleep_calls.append(delay)
+
+    fake_engine = FakeEngine()
+    monkeypatch.setattr(main, "engine", fake_engine)
+    monkeypatch.setattr(main, "DB_STARTUP_MAX_ATTEMPTS", 3, raising=False)
+    monkeypatch.setattr(main, "DB_STARTUP_RETRY_DELAY_SECONDS", 0.001, raising=False)
+    monkeypatch.setattr(main.asyncio, "sleep", fake_sleep)
+
+    with pytest.raises(ConnectionError, match="database unavailable"):
+        await main.create_tables()
+
+    assert fake_engine.begin_calls == 3
+    assert sleep_calls == [0.001, 0.001]

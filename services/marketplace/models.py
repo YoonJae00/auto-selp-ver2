@@ -51,7 +51,8 @@ class MarketAccount(Base):
         uselist=False,
     )
     drafts: Mapped[list["MarketListingDraft"]] = relationship(
-        back_populates="market_account"
+        back_populates="market_account",
+        passive_deletes=True,
     )
 
 
