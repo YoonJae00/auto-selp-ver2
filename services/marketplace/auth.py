@@ -45,4 +45,4 @@ async def require_internal_service_token(
     x_internal_service_token: str | None = Header(default=None, alias="X-Internal-Service-Token"),
 ):
     if x_internal_service_token != settings.INTERNAL_SERVICE_TOKEN:
-        raise HTTPException(status_code=403, detail="Invalid internal service token")
+        raise HTTPException(status_code=401, detail="Invalid internal service token")
