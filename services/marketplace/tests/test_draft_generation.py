@@ -615,6 +615,86 @@ async def test_generation_retry_after_rollback_uses_scalar_targets_not_expired_o
 
 
 @pytest.mark.asyncio
+async def test_generation_contention_retry_restores_job_audit_fields_after_rollback_clobber():
+    user_id = uuid.uuid4()
+    source_product_id = uuid.uuid4()
+    account = _account(user_id, "smartstore", "connected")
+    job = _job(user_id, source_product_id)
+    winner_draft = MarketListingDraft(
+        id=uuid.uuid4(),
+        source_product_id=source_product_id,
+        source_product_version="winner-v1",
+        market_account_id=account.id,
+        market_code="smartstore",
+        draft_kind="create",
+        status="generated",
+        source_snapshot={"version": "winner-v1"},
+        generated_payload={"winner": True},
+        validation_result={"status": "valid"},
+        recipe_versions={"title": "winner:v1"},
+        adapter_version="winner-adapter:v1",
+    )
+
+    def _clobber_job_and_inject_winner(db):
+        job.generated_source_version = None
+        job.error = {"type": "PreviousError", "message": "rollback restored old error"}
+        if winner_draft not in db.drafts:
+            db.drafts.append(winner_draft)
+
+    db = FakeDB(
+        accounts=[account],
+        drafts=[],
+        commit_errors=[
+            IntegrityError(
+                "INSERT INTO market_listing_drafts ...",
+                {"market_account_id": str(account.id)},
+                Exception("duplicate key value violates unique constraint"),
+            )
+        ],
+        on_rollback=_clobber_job_and_inject_winner,
+    )
+    adapters = {"smartstore": FakeAdapter("smartstore")}
+    processor_client = FakeProcessorClient([_snapshot("v2")])
+
+    await generate_drafts_for_job(job, db, processor_client, adapters)
+
+    assert job.status == "completed"
+    assert job.generated_source_version == "v2"
+    assert job.error is None
+    assert db.commit_calls == 2
+    assert db.rollback_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_generation_failure_after_snapshot_keeps_captured_version_when_rollback_clobbers_job():
+    user_id = uuid.uuid4()
+    source_product_id = uuid.uuid4()
+    job = _job(user_id, source_product_id)
+    account = _account(user_id, "smartstore", "connected")
+
+    class BrokenAdapter(FakeAdapter):
+        def generate_draft(self, snapshot, settings_payload):
+            raise RuntimeError("adapter blew up")
+
+    def _clobber_job_on_rollback(_db):
+        job.generated_source_version = None
+        job.error = {"type": "PreviousError", "message": "rollback restored old error"}
+
+    db = FakeDB(accounts=[account], drafts=[], on_rollback=_clobber_job_on_rollback)
+    processor_client = FakeProcessorClient([_snapshot("v9")])
+    adapters = {"smartstore": BrokenAdapter("smartstore")}
+
+    with pytest.raises(RuntimeError, match="adapter blew up"):
+        await generate_drafts_for_job(job, db, processor_client, adapters)
+
+    assert job.status == "failed"
+    assert job.generated_source_version == "v9"
+    assert job.error == {"type": "RuntimeError", "message": "adapter blew up"}
+    assert db.rollback_calls == 1
+    assert db.commit_calls == 1
+
+
+@pytest.mark.asyncio
 async def test_processor_client_uses_expected_headers_path_and_query(monkeypatch):
     captured = {}
     payload = {"version": "v1"}
