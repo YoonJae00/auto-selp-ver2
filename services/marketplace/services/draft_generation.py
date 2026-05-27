@@ -110,10 +110,26 @@ async def _merge_if_available(db, entity):
         return entity
 
 
+def _apply_job_state(
+    job,
+    *,
+    status: str,
+    generated_source_version: str | None,
+    error: dict[str, str] | None,
+) -> None:
+    job.status = status
+    if generated_source_version is not None:
+        job.generated_source_version = generated_source_version
+    job.error = error
+    if status == "completed":
+        job.completed_at = datetime.now(timezone.utc)
+
+
 async def _apply_generation_and_commit(
     job,
     db,
     snapshot: dict[str, Any],
+    generated_source_version: str,
     source_product_id,
     draft_targets: list[DraftTarget],
 ) -> None:
@@ -141,12 +157,17 @@ async def _apply_generation_and_commit(
         _apply_adapter_result(draft, snapshot, target.result)
         db.add(draft)
 
-    job.status = "completed"
-    job.completed_at = datetime.now(timezone.utc)
+    _apply_job_state(
+        job,
+        status="completed",
+        generated_source_version=generated_source_version,
+        error=None,
+    )
     await db.commit()
 
 
 async def generate_drafts_for_job(job, db, processor_client, adapters=ADAPTERS):
+    generated_source_version: str | None = None
     try:
         source_product_id = job.source_product_id
         user_id = job.user_id
@@ -157,7 +178,8 @@ async def generate_drafts_for_job(job, db, processor_client, adapters=ADAPTERS):
             str(source_product_id),
             str(user_id),
         )
-        job.generated_source_version = snapshot["version"]
+        generated_source_version = snapshot["version"]
+        job.generated_source_version = generated_source_version
 
         accounts = await _load_connected_accounts(db, user_id)
         draft_targets: list[DraftTarget] = []
@@ -181,6 +203,7 @@ async def generate_drafts_for_job(job, db, processor_client, adapters=ADAPTERS):
                 job,
                 db,
                 snapshot,
+                generated_source_version,
                 source_product_id,
                 draft_targets,
             )
@@ -191,14 +214,19 @@ async def generate_drafts_for_job(job, db, processor_client, adapters=ADAPTERS):
                 job,
                 db,
                 snapshot,
+                generated_source_version,
                 source_product_id,
                 draft_targets,
             )
     except Exception as exc:
         await _rollback_if_available(db)
         job = await _merge_if_available(db, job)
-        job.status = "failed"
-        job.error = {"type": exc.__class__.__name__, "message": str(exc)}
+        _apply_job_state(
+            job,
+            status="failed",
+            generated_source_version=generated_source_version,
+            error={"type": exc.__class__.__name__, "message": str(exc)},
+        )
         try:
             await db.commit()
         except Exception as commit_exc:
