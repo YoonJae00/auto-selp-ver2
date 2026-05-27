@@ -23,13 +23,18 @@ class MarketplaceAdapter(ABC):
     title_recipe_version: str
 
     @abstractmethod
+    def generate_draft(
+        self, source_snapshot: Mapping[str, Any], account_settings: Mapping[str, Any] | None
+    ) -> DraftResult:
+        raise NotImplementedError
+
     def build_draft(
         self,
         *,
         source_snapshot: Mapping[str, Any],
         account_settings: Mapping[str, Any] | None,
     ) -> DraftResult:
-        raise NotImplementedError
+        return self.generate_draft(source_snapshot, account_settings)
 
     def _compose_title(self, source_snapshot: Mapping[str, Any]) -> str:
         brand_name = self._clean_str(source_snapshot.get("brand_name"))

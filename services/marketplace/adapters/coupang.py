@@ -14,11 +14,8 @@ class CoupangAdapter(MarketplaceAdapter):
     adapter_version = "coupang-adapter:v1"
     title_recipe_version = "coupang-title:v1"
 
-    def build_draft(
-        self,
-        *,
-        source_snapshot: Mapping[str, Any],
-        account_settings: Mapping[str, Any] | None,
+    def generate_draft(
+        self, source_snapshot: Mapping[str, Any], account_settings: Mapping[str, Any] | None
     ) -> DraftResult:
         title = self._compose_title(source_snapshot)
         category_id = self._extract_category_id(source_snapshot)
@@ -82,8 +79,8 @@ class CoupangAdapter(MarketplaceAdapter):
                 ),
                 "contents": [
                     {
-                        "contentType": "HTML",
-                        "contentDetails": [{"content": detail_content}],
+                        "contentsType": "HTML",
+                        "contentDetails": [{"detailType": "TEXT", "content": detail_content}],
                     }
                 ],
                 "origin": origin,
@@ -127,12 +124,12 @@ class CoupangAdapter(MarketplaceAdapter):
                 }
             )
         if pricing_error_code:
-            errors = [
+            errors.append(
                 {
                     "code": pricing_error_code,
                     "message": "Coupang pricing policy is missing or invalid.",
                 }
-            ]
+            )
 
         return DraftResult(
             display_title=title or None,
