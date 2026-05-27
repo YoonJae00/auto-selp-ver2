@@ -240,3 +240,79 @@ def test_pricing_errors_append_to_existing_blocking_errors_for_both_adapters():
         "COUPANG_MISSING_PRIMARY_IMAGE",
         "COUPANG_MISSING_SALE_PRICE",
     ]
+
+
+def test_image_urls_are_normalized_once_with_blank_leading_slots():
+    snapshot = _source_snapshot()
+    snapshot["images"]["list"] = [
+        " ",
+        "\n",
+        " https://img.example/normalized-1.jpg ",
+        "",
+        "\t",
+        "https://img.example/normalized-2.jpg",
+    ]
+
+    smartstore_result = SmartstoreAdapter().generate_draft(snapshot, _settings())
+    coupang_result = CoupangAdapter().generate_draft(snapshot, _settings())
+
+    smartstore_images = smartstore_result.generated_payload["originProduct"]["images"]
+    assert smartstore_images["representativeImage"]["url"] == "https://img.example/normalized-1.jpg"
+    assert smartstore_images["optionalImages"] == [{"url": "https://img.example/normalized-2.jpg"}]
+
+    coupang_images = coupang_result.generated_payload["items"][0]["images"]
+    assert [image["vendorPath"] for image in coupang_images] == [
+        "https://img.example/normalized-1.jpg",
+        "https://img.example/normalized-2.jpg",
+    ]
+
+
+def test_generated_payload_keeps_detached_nested_option_data_from_source_snapshot():
+    snapshot = _source_snapshot()
+
+    result = SmartstoreAdapter().generate_draft(snapshot, _settings())
+    payload_options = result.generated_payload["originProduct"]["detailAttribute"]["optionInfo"][
+        "optionCombinations"
+    ]
+
+    snapshot["options"][0]["name"] = "MUTATED"
+    snapshot["options"][0]["position"] = 999
+
+    assert payload_options[0] == {"name": "L자형", "price_wholesale": 8000, "position": 1}
+
+
+def test_coupang_generated_items_do_not_share_mutable_image_and_content_collections():
+    result = CoupangAdapter().generate_draft(_source_snapshot(), _settings())
+    first_item = result.generated_payload["items"][0]
+    second_item = result.generated_payload["items"][1]
+
+    first_item["images"][0]["vendorPath"] = "https://img.example/mutated.jpg"
+    first_item["contents"][0]["contentDetails"][0]["content"] = "mutated-content"
+
+    assert second_item["images"][0]["vendorPath"] == "https://img.example/1.jpg"
+    assert second_item["contents"][0]["contentDetails"][0]["content"] == "<img src='detail.jpg'>"
+
+
+def test_future_market_only_namespaced_settings_are_isolated_per_adapter():
+    settings = {
+        "listing_defaults": {"future-market": {"sellerProductItemCodePrefix": "FUTURE"}},
+        "generation_rules": {
+            "pricingPolicy": {
+                "future-market": _coupang_pricing_policy(),
+            }
+        },
+    }
+
+    smartstore_result = SmartstoreAdapter().generate_draft(_source_snapshot(), settings)
+    coupang_result = CoupangAdapter().generate_draft(_source_snapshot(), settings)
+
+    assert smartstore_result.generated_payload["smartstoreChannelProduct"] == {}
+    assert coupang_result.generated_payload["coupangProduct"] == {}
+    assert _error_codes(smartstore_result) == [
+        "SMARTSTORE_MISSING_PRICING_POLICY",
+        "SMARTSTORE_MISSING_SALE_PRICE",
+    ]
+    assert _error_codes(coupang_result) == [
+        "COUPANG_MISSING_PRICING_POLICY",
+        "COUPANG_MISSING_SALE_PRICE",
+    ]

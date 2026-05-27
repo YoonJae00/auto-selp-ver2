@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from copy import deepcopy
 from typing import Any
 
 from services.pricing import PricingPolicyError, calculate_proposed_price
@@ -46,9 +47,9 @@ class CoupangAdapter(MarketplaceAdapter):
         expected_profit = pricing_output["expectedProfit"] if pricing_output else None
         expected_margin_rate = pricing_output["expectedMarginRate"] if pricing_output else None
 
-        image_payload = []
+        image_payload_template = []
         if primary_image_url:
-            image_payload.append(
+            image_payload_template.append(
                 {
                     "imageType": "REPRESENTATION",
                     "vendorPath": primary_image_url,
@@ -56,13 +57,19 @@ class CoupangAdapter(MarketplaceAdapter):
                 }
             )
         for index, optional_image_url in enumerate(optional_images, start=1):
-            image_payload.append(
+            image_payload_template.append(
                 {
                     "imageType": "DETAIL",
                     "vendorPath": optional_image_url,
                     "imageOrder": index,
                 }
             )
+        content_payload_template = [
+            {
+                "contentsType": "HTML",
+                "contentDetails": [{"detailType": "TEXT", "content": detail_content}],
+            }
+        ]
 
         option_items = options or [{"name": title}]
         items = []
@@ -73,16 +80,11 @@ class CoupangAdapter(MarketplaceAdapter):
             item = {
                 "itemName": item_name,
                 "salePrice": sale_price,
-                "images": image_payload,
+                "images": deepcopy(image_payload_template),
                 "attributes": (
                     [{"attributeTypeName": "옵션", "attributeValueName": item_name}] if options else []
                 ),
-                "contents": [
-                    {
-                        "contentsType": "HTML",
-                        "contentDetails": [{"detailType": "TEXT", "content": detail_content}],
-                    }
-                ],
+                "contents": deepcopy(content_payload_template),
                 "origin": origin,
             }
             items.append(item)
