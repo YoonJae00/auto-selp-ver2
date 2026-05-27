@@ -11,13 +11,13 @@ from sqlalchemy.orm import selectinload
 from adapters import ADAPTERS
 from models import MarketAccount, MarketAccountSettings, MarketListingDraft
 
-ACTIVE_DRAFT_STATUSES = (
+MUTABLE_DRAFT_STATUSES = (
     "generated",
     "needs_review",
     "ready",
-    "submitting",
     "failed",
 )
+SUBMITTING_DRAFT_STATUS = "submitting"
 
 
 @dataclass(frozen=True)
@@ -59,16 +59,34 @@ async def _load_connected_accounts(db, user_id):
     return result.scalars().all()
 
 
-async def _load_active_create_draft(db, source_product_id, market_account_id):
+async def _load_create_draft_by_statuses(db, source_product_id, market_account_id, statuses):
     result = await db.execute(
         select(MarketListingDraft).where(
             MarketListingDraft.source_product_id == source_product_id,
             MarketListingDraft.market_account_id == market_account_id,
             MarketListingDraft.draft_kind == "create",
-            MarketListingDraft.status.in_(ACTIVE_DRAFT_STATUSES),
+            MarketListingDraft.status.in_(statuses),
         )
     )
     return result.scalar_one_or_none()
+
+
+async def _load_submitting_create_draft(db, source_product_id, market_account_id):
+    return await _load_create_draft_by_statuses(
+        db,
+        source_product_id,
+        market_account_id,
+        (SUBMITTING_DRAFT_STATUS,),
+    )
+
+
+async def _load_mutable_create_draft(db, source_product_id, market_account_id):
+    return await _load_create_draft_by_statuses(
+        db,
+        source_product_id,
+        market_account_id,
+        MUTABLE_DRAFT_STATUSES,
+    )
 
 
 def _apply_adapter_result(draft: MarketListingDraft, snapshot: dict[str, Any], result) -> None:
@@ -134,11 +152,26 @@ async def _apply_generation_and_commit(
     draft_targets: list[DraftTarget],
 ) -> None:
     for target in draft_targets:
-        draft = await _load_active_create_draft(
+        submitting_draft = await _load_submitting_create_draft(
             db,
             source_product_id,
             target.market_account_id,
         )
+        if submitting_draft is not None:
+            continue
+
+        draft = await _load_mutable_create_draft(
+            db,
+            source_product_id,
+            target.market_account_id,
+        )
+        if (
+            draft is not None
+            and draft.source_product_version is not None
+            and snapshot["version"] <= draft.source_product_version
+        ):
+            continue
+
         if draft is None:
             draft = MarketListingDraft(
                 source_product_id=source_product_id,
@@ -184,6 +217,14 @@ async def generate_drafts_for_job(job, db, processor_client, adapters=ADAPTERS):
         accounts = await _load_connected_accounts(db, user_id)
         draft_targets: list[DraftTarget] = []
         for account in accounts:
+            submitting_draft = await _load_submitting_create_draft(
+                db,
+                source_product_id,
+                account.id,
+            )
+            if submitting_draft is not None:
+                continue
+
             adapter = adapters.get(account.market_code)
             if adapter is None:
                 continue
