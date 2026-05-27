@@ -260,4 +260,4 @@ async def test_require_internal_service_token_rejects_invalid_token():
     with pytest.raises(HTTPException) as exc_info:
         await require_internal_service_token("invalid-token")
 
-    assert exc_info.value.status_code == 403
+    assert exc_info.value.status_code == 401
