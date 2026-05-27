@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
 from adapters import ADAPTERS
@@ -79,6 +80,43 @@ def _apply_adapter_result(draft: MarketListingDraft, snapshot: dict[str, Any], r
     draft.status = "needs_review"
 
 
+async def _rollback_if_available(db) -> None:
+    rollback = getattr(db, "rollback", None)
+    if rollback is None:
+        return
+    try:
+        await rollback()
+    except Exception:
+        # Keep original failures intact when rollback itself is unavailable/broken.
+        return
+
+
+async def _apply_generation_and_commit(job, db, snapshot: dict[str, Any], account_results) -> None:
+    for account, result in account_results:
+        draft = await _load_active_create_draft(db, job.source_product_id, account.id)
+        if draft is None:
+            draft = MarketListingDraft(
+                source_product_id=job.source_product_id,
+                source_product_version=snapshot["version"],
+                market_account_id=account.id,
+                market_code=account.market_code,
+                draft_kind="create",
+                status="generated",
+                source_snapshot=snapshot,
+                generated_payload={},
+                validation_result={"status": "valid"},
+                recipe_versions={},
+                adapter_version=result.adapter_version,
+            )
+
+        _apply_adapter_result(draft, snapshot, result)
+        db.add(draft)
+
+    job.status = "completed"
+    job.completed_at = datetime.now(timezone.utc)
+    await db.commit()
+
+
 async def generate_drafts_for_job(job, db, processor_client, adapters=ADAPTERS):
     try:
         job.status = "processing"
@@ -91,6 +129,7 @@ async def generate_drafts_for_job(job, db, processor_client, adapters=ADAPTERS):
         job.generated_source_version = snapshot["version"]
 
         accounts = await _load_connected_accounts(db, job.user_id)
+        account_results = []
         for account in accounts:
             adapter = adapters.get(account.market_code)
             if adapter is None:
@@ -98,31 +137,19 @@ async def generate_drafts_for_job(job, db, processor_client, adapters=ADAPTERS):
 
             settings_payload = _serialize_settings(account.settings)
             result = adapter.generate_draft(snapshot, settings_payload)
+            account_results.append((account, result))
 
-            draft = await _load_active_create_draft(db, job.source_product_id, account.id)
-            if draft is None:
-                draft = MarketListingDraft(
-                    source_product_id=job.source_product_id,
-                    source_product_version=snapshot["version"],
-                    market_account_id=account.id,
-                    market_code=account.market_code,
-                    draft_kind="create",
-                    status="generated",
-                    source_snapshot=snapshot,
-                    generated_payload={},
-                    validation_result={"status": "valid"},
-                    recipe_versions={},
-                    adapter_version=result.adapter_version,
-                )
-
-            _apply_adapter_result(draft, snapshot, result)
-            db.add(draft)
-
-        job.status = "completed"
-        job.completed_at = datetime.now(timezone.utc)
-        await db.commit()
+        try:
+            await _apply_generation_and_commit(job, db, snapshot, account_results)
+        except IntegrityError:
+            await _rollback_if_available(db)
+            await _apply_generation_and_commit(job, db, snapshot, account_results)
     except Exception as exc:
+        await _rollback_if_available(db)
         job.status = "failed"
         job.error = {"type": exc.__class__.__name__, "message": str(exc)}
-        await db.commit()
+        try:
+            await db.commit()
+        except Exception as commit_exc:
+            raise exc from commit_exc
         raise
