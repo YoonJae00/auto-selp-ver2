@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
@@ -17,6 +18,13 @@ ACTIVE_DRAFT_STATUSES = (
     "submitting",
     "failed",
 )
+
+
+@dataclass(frozen=True)
+class DraftTarget:
+    market_account_id: Any
+    market_code: str
+    result: Any
 
 
 def _serialize_settings(account_settings: MarketAccountSettings | None) -> dict[str, Any]:
@@ -91,25 +99,46 @@ async def _rollback_if_available(db) -> None:
         return
 
 
-async def _apply_generation_and_commit(job, db, snapshot: dict[str, Any], account_results) -> None:
-    for account, result in account_results:
-        draft = await _load_active_create_draft(db, job.source_product_id, account.id)
+async def _merge_if_available(db, entity):
+    merge = getattr(db, "merge", None)
+    if merge is None:
+        return entity
+    try:
+        return await merge(entity)
+    except Exception:
+        # Keep flow working for fake DBs or sessions where merge is unavailable.
+        return entity
+
+
+async def _apply_generation_and_commit(
+    job,
+    db,
+    snapshot: dict[str, Any],
+    source_product_id,
+    draft_targets: list[DraftTarget],
+) -> None:
+    for target in draft_targets:
+        draft = await _load_active_create_draft(
+            db,
+            source_product_id,
+            target.market_account_id,
+        )
         if draft is None:
             draft = MarketListingDraft(
-                source_product_id=job.source_product_id,
+                source_product_id=source_product_id,
                 source_product_version=snapshot["version"],
-                market_account_id=account.id,
-                market_code=account.market_code,
+                market_account_id=target.market_account_id,
+                market_code=target.market_code,
                 draft_kind="create",
                 status="generated",
                 source_snapshot=snapshot,
                 generated_payload={},
                 validation_result={"status": "valid"},
                 recipe_versions={},
-                adapter_version=result.adapter_version,
+                adapter_version=target.result.adapter_version,
             )
 
-        _apply_adapter_result(draft, snapshot, result)
+        _apply_adapter_result(draft, snapshot, target.result)
         db.add(draft)
 
     job.status = "completed"
@@ -119,17 +148,19 @@ async def _apply_generation_and_commit(job, db, snapshot: dict[str, Any], accoun
 
 async def generate_drafts_for_job(job, db, processor_client, adapters=ADAPTERS):
     try:
+        source_product_id = job.source_product_id
+        user_id = job.user_id
         job.status = "processing"
         job.error = None
 
         snapshot = await processor_client.get_marketplace_snapshot(
-            str(job.source_product_id),
-            str(job.user_id),
+            str(source_product_id),
+            str(user_id),
         )
         job.generated_source_version = snapshot["version"]
 
-        accounts = await _load_connected_accounts(db, job.user_id)
-        account_results = []
+        accounts = await _load_connected_accounts(db, user_id)
+        draft_targets: list[DraftTarget] = []
         for account in accounts:
             adapter = adapters.get(account.market_code)
             if adapter is None:
@@ -137,15 +168,35 @@ async def generate_drafts_for_job(job, db, processor_client, adapters=ADAPTERS):
 
             settings_payload = _serialize_settings(account.settings)
             result = adapter.generate_draft(snapshot, settings_payload)
-            account_results.append((account, result))
+            draft_targets.append(
+                DraftTarget(
+                    market_account_id=account.id,
+                    market_code=account.market_code,
+                    result=result,
+                )
+            )
 
         try:
-            await _apply_generation_and_commit(job, db, snapshot, account_results)
+            await _apply_generation_and_commit(
+                job,
+                db,
+                snapshot,
+                source_product_id,
+                draft_targets,
+            )
         except IntegrityError:
             await _rollback_if_available(db)
-            await _apply_generation_and_commit(job, db, snapshot, account_results)
+            job = await _merge_if_available(db, job)
+            await _apply_generation_and_commit(
+                job,
+                db,
+                snapshot,
+                source_product_id,
+                draft_targets,
+            )
     except Exception as exc:
         await _rollback_if_available(db)
+        job = await _merge_if_available(db, job)
         job.status = "failed"
         job.error = {"type": exc.__class__.__name__, "message": str(exc)}
         try:
