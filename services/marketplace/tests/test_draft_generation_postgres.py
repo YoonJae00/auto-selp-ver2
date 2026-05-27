@@ -19,6 +19,7 @@ from services.draft_generation import generate_drafts_for_job
 
 MARKETPLACE_TEST_DATABASE_URL = os.getenv("MARKETPLACE_TEST_DATABASE_URL")
 ACTIVE_STATUSES = {"generated", "needs_review", "ready", "submitting", "failed"}
+INTERLEAVING_TIMEOUT_SECONDS = 10
 
 pytestmark = pytest.mark.skipif(
     not MARKETPLACE_TEST_DATABASE_URL,
@@ -198,17 +199,32 @@ async def test_pg_generation_interleaved_older_update_does_not_overwrite_newer_c
                 {"smartstore": StubAdapter("smartstore")},
             )
         )
-        await update_entered.wait()
+        try:
+            await asyncio.wait_for(
+                update_entered.wait(),
+                timeout=INTERLEAVING_TIMEOUT_SECONDS,
+            )
 
-        await generate_drafts_for_job(
-            newer_job_run,
-            newer_session,
-            StubProcessorClient(_snapshot("2026-05-28T10:00:00+00:00")),
-            {"smartstore": StubAdapter("smartstore")},
-        )
+            await asyncio.wait_for(
+                generate_drafts_for_job(
+                    newer_job_run,
+                    newer_session,
+                    StubProcessorClient(_snapshot("2026-05-28T10:00:00+00:00")),
+                    {"smartstore": StubAdapter("smartstore")},
+                ),
+                timeout=INTERLEAVING_TIMEOUT_SECONDS,
+            )
 
-        allow_older_update.set()
-        await older_task
+            allow_older_update.set()
+            await asyncio.wait_for(
+                older_task,
+                timeout=INTERLEAVING_TIMEOUT_SECONDS,
+            )
+        finally:
+            allow_older_update.set()
+            if not older_task.done():
+                older_task.cancel()
+            await asyncio.gather(older_task, return_exceptions=True)
 
     async with pg_sessionmaker() as session:
         persisted = await session.get(MarketListingDraft, draft_id)
