@@ -53,7 +53,16 @@ class _FakeExecuteResult:
 
 
 class FakeDB:
-    def __init__(self, accounts, drafts, *, commit_errors=None, on_rollback=None):
+    def __init__(
+        self,
+        accounts,
+        drafts,
+        *,
+        commit_errors=None,
+        on_rollback=None,
+        on_draft_selected=None,
+        on_before_atomic_update=None,
+    ):
         self.accounts = accounts
         self.drafts = drafts
         self.added = []
@@ -63,9 +72,68 @@ class FakeDB:
         self.events = []
         self._commit_errors = list(commit_errors or [])
         self._on_rollback = on_rollback
+        self._on_draft_selected = on_draft_selected
+        self._on_before_atomic_update = on_before_atomic_update
         self._pending_new_drafts = []
+        self.atomic_update_attempts = 0
 
     async def execute(self, stmt):
+        if getattr(stmt, "__visit_name__", None) == "update":
+            table_name = getattr(getattr(stmt, "table", None), "name", None)
+            if table_name != MarketListingDraft.__tablename__:
+                raise AssertionError(f"Unexpected update target: {table_name}")
+            self.atomic_update_attempts += 1
+            if self._on_before_atomic_update is not None:
+                self._on_before_atomic_update(self, stmt)
+            compiled = stmt.compile()
+            params = compiled.params
+            source_product_id = next(
+                (v for k, v in params.items() if k.startswith("source_product_id_")),
+                None,
+            )
+            market_account_id = next(
+                (v for k, v in params.items() if k.startswith("market_account_id_")),
+                None,
+            )
+            draft_kind = next((v for k, v in params.items() if k.startswith("draft_kind_")), None)
+            guarded_statuses = set()
+            for key, value in params.items():
+                if not key.startswith("status_"):
+                    continue
+                if isinstance(value, (list, tuple, set)):
+                    guarded_statuses.update(value)
+                else:
+                    guarded_statuses.add(value)
+            incoming_version = next(
+                (v for k, v in params.items() if k.startswith("source_product_version_")),
+                None,
+            )
+            update_column_names = {
+                column.name for column in MarketListingDraft.__table__.columns
+            }
+            update_values = {
+                key: value
+                for key, value in params.items()
+                if key in update_column_names
+            }
+
+            matched_draft = None
+            for draft in self.drafts:
+                if (
+                    draft.source_product_id == source_product_id
+                    and draft.market_account_id == market_account_id
+                    and draft.draft_kind == draft_kind
+                    and draft.status in guarded_statuses
+                    and draft.source_product_version < incoming_version
+                ):
+                    matched_draft = draft
+                    break
+            if matched_draft is None:
+                return _FakeExecuteResult(None)
+            for field_name, field_value in update_values.items():
+                setattr(matched_draft, field_name, field_value)
+            return _FakeExecuteResult(matched_draft.id)
+
         model = stmt.column_descriptions[0]["entity"]
         compiled = stmt.compile()
 
@@ -112,6 +180,13 @@ class FakeDB:
                     and draft.draft_kind == draft_kind
                     and draft.status in statuses
                 ):
+                    if self._on_draft_selected is not None:
+                        self._on_draft_selected(
+                            self,
+                            draft=draft,
+                            statuses=statuses,
+                            params=params,
+                        )
                     return _FakeExecuteResult(draft)
             return _FakeExecuteResult(None)
 
@@ -483,6 +558,86 @@ async def test_generation_skips_submitting_draft_without_mutating_or_creating_ne
 
 
 @pytest.mark.asyncio
+async def test_generation_does_not_revert_draft_that_transitions_to_submitting_after_read():
+    user_id = uuid.uuid4()
+    source_product_id = uuid.uuid4()
+    account = _account(user_id, "smartstore", "connected")
+    draft = MarketListingDraft(
+        id=uuid.uuid4(),
+        source_product_id=source_product_id,
+        source_product_version="2026-05-28T08:00:00+00:00",
+        market_account_id=account.id,
+        market_code="smartstore",
+        draft_kind="create",
+        status="ready",
+        source_snapshot={"version": "2026-05-28T08:00:00+00:00"},
+        generated_payload={"market_code": "smartstore", "version": "ready"},
+        validation_result={"status": "valid"},
+        recipe_versions={"title": "ready:v1"},
+        adapter_version="smartstore-adapter:ready",
+    )
+
+    def _transition_to_submitting_before_update(_db, _stmt):
+        draft.status = "submitting"
+
+    db = FakeDB(
+        accounts=[account],
+        drafts=[draft],
+        on_before_atomic_update=_transition_to_submitting_before_update,
+    )
+    adapters = {"smartstore": FakeAdapter("smartstore")}
+    processor_client = FakeProcessorClient([_snapshot("2026-05-28T09:00:00+00:00")])
+    job = _job(user_id, source_product_id)
+
+    await generate_drafts_for_job(job, db, processor_client, adapters)
+
+    assert len(db.drafts) == 1
+    assert draft.status == "submitting"
+    assert draft.source_product_version == "2026-05-28T08:00:00+00:00"
+    assert draft.generated_payload == {"market_code": "smartstore", "version": "ready"}
+    assert db.atomic_update_attempts == 1
+    assert job.status == "completed"
+    assert job.error is None
+
+
+@pytest.mark.asyncio
+async def test_generation_does_not_overwrite_newer_mutable_draft_with_older_snapshot_after_read():
+    user_id = uuid.uuid4()
+    source_product_id = uuid.uuid4()
+    account = _account(user_id, "smartstore", "connected")
+    draft = MarketListingDraft(
+        id=uuid.uuid4(),
+        source_product_id=source_product_id,
+        source_product_version="2026-05-28T10:00:00+00:00",
+        market_account_id=account.id,
+        market_code="smartstore",
+        draft_kind="create",
+        status="needs_review",
+        display_title="newer-title",
+        source_snapshot={"version": "2026-05-28T10:00:00+00:00"},
+        generated_payload={"market_code": "smartstore", "version": "newer"},
+        validation_result={"status": "valid"},
+        recipe_versions={"title": "newer:v1"},
+        adapter_version="smartstore-adapter:newer",
+    )
+    db = FakeDB(accounts=[account], drafts=[draft])
+    adapters = {"smartstore": FakeAdapter("smartstore")}
+    processor_client = FakeProcessorClient([_snapshot("2026-05-28T09:00:00+00:00")])
+    job = _job(user_id, source_product_id)
+
+    await generate_drafts_for_job(job, db, processor_client, adapters)
+
+    assert len(db.drafts) == 1
+    assert draft.source_product_version == "2026-05-28T10:00:00+00:00"
+    assert draft.display_title == "newer-title"
+    assert draft.generated_payload == {"market_code": "smartstore", "version": "newer"}
+    assert draft.status == "needs_review"
+    assert db.atomic_update_attempts == 1
+    assert job.status == "completed"
+    assert job.error is None
+
+
+@pytest.mark.asyncio
 async def test_generation_persists_pricing_summary_fields():
     user_id = uuid.uuid4()
     source_product_id = uuid.uuid4()
@@ -540,7 +695,7 @@ async def test_generation_sends_account_scoped_settings_to_matching_adapter():
 
 
 @pytest.mark.asyncio
-async def test_generation_uses_split_status_filters_for_submitting_and_mutable_drafts():
+async def test_generation_uses_submitting_read_filter_and_atomic_mutable_update_guard():
     user_id = uuid.uuid4()
     source_product_id = uuid.uuid4()
     account = _account(user_id, "smartstore", "connected")
@@ -565,7 +720,8 @@ async def test_generation_uses_split_status_filters_for_submitting_and_mutable_d
         draft_kind = next(v for k, v in params.items() if k.startswith("draft_kind"))
         assert draft_kind == "create"
     assert {"submitting"} in observed_status_sets
-    assert MUTABLE_STATUSES in observed_status_sets
+    assert ACTIVE_STATUSES in observed_status_sets
+    assert db.atomic_update_attempts == 1
 
 
 @pytest.mark.asyncio

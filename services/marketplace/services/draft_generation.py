@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
@@ -18,6 +18,7 @@ MUTABLE_DRAFT_STATUSES = (
     "failed",
 )
 SUBMITTING_DRAFT_STATUS = "submitting"
+ACTIVE_DRAFT_STATUSES = (*MUTABLE_DRAFT_STATUSES, SUBMITTING_DRAFT_STATUS)
 
 
 @dataclass(frozen=True)
@@ -89,21 +90,61 @@ async def _load_mutable_create_draft(db, source_product_id, market_account_id):
     )
 
 
+async def _load_active_create_draft(db, source_product_id, market_account_id):
+    return await _load_create_draft_by_statuses(
+        db,
+        source_product_id,
+        market_account_id,
+        ACTIVE_DRAFT_STATUSES,
+    )
+
+
+def _adapter_result_update_values(snapshot: dict[str, Any], result) -> dict[str, Any]:
+    return {
+        "source_product_version": snapshot["version"],
+        "source_snapshot": snapshot,
+        "display_title": result.display_title,
+        "category_id": result.category_id,
+        "sale_price": result.sale_price,
+        "cost_price": result.cost_price,
+        "expected_profit": result.expected_profit,
+        "expected_margin_rate": result.expected_margin_rate,
+        "primary_image_url": result.primary_image_url,
+        "generated_payload": result.generated_payload,
+        "validation_result": result.validation_result,
+        "adapter_version": result.adapter_version,
+        "recipe_versions": result.recipe_versions,
+        "status": "needs_review",
+    }
+
+
+async def _try_update_mutable_create_draft_atomically(
+    db,
+    source_product_id,
+    market_account_id,
+    snapshot: dict[str, Any],
+    result,
+) -> bool:
+    stmt = (
+        update(MarketListingDraft)
+        .where(
+            MarketListingDraft.source_product_id == source_product_id,
+            MarketListingDraft.market_account_id == market_account_id,
+            MarketListingDraft.draft_kind == "create",
+            MarketListingDraft.status.in_(MUTABLE_DRAFT_STATUSES),
+            MarketListingDraft.source_product_version < snapshot["version"],
+        )
+        .values(_adapter_result_update_values(snapshot, result))
+        .returning(MarketListingDraft.id)
+    )
+    update_result = await db.execute(stmt)
+    return update_result.scalar_one_or_none() is not None
+
+
 def _apply_adapter_result(draft: MarketListingDraft, snapshot: dict[str, Any], result) -> None:
-    draft.source_product_version = snapshot["version"]
-    draft.source_snapshot = snapshot
-    draft.display_title = result.display_title
-    draft.category_id = result.category_id
-    draft.sale_price = result.sale_price
-    draft.cost_price = result.cost_price
-    draft.expected_profit = result.expected_profit
-    draft.expected_margin_rate = result.expected_margin_rate
-    draft.primary_image_url = result.primary_image_url
-    draft.generated_payload = result.generated_payload
-    draft.validation_result = result.validation_result
-    draft.adapter_version = result.adapter_version
-    draft.recipe_versions = result.recipe_versions
-    draft.status = "needs_review"
+    update_values = _adapter_result_update_values(snapshot, result)
+    for field_name, value in update_values.items():
+        setattr(draft, field_name, value)
 
 
 async def _rollback_if_available(db) -> None:
@@ -152,40 +193,37 @@ async def _apply_generation_and_commit(
     draft_targets: list[DraftTarget],
 ) -> None:
     for target in draft_targets:
-        submitting_draft = await _load_submitting_create_draft(
+        updated_existing = await _try_update_mutable_create_draft_atomically(
+            db,
+            source_product_id,
+            target.market_account_id,
+            snapshot,
+            target.result,
+        )
+        if updated_existing:
+            continue
+
+        existing_active_draft = await _load_active_create_draft(
             db,
             source_product_id,
             target.market_account_id,
         )
-        if submitting_draft is not None:
+        if existing_active_draft is not None:
             continue
 
-        draft = await _load_mutable_create_draft(
-            db,
-            source_product_id,
-            target.market_account_id,
+        draft = MarketListingDraft(
+            source_product_id=source_product_id,
+            source_product_version=snapshot["version"],
+            market_account_id=target.market_account_id,
+            market_code=target.market_code,
+            draft_kind="create",
+            status="generated",
+            source_snapshot=snapshot,
+            generated_payload={},
+            validation_result={"status": "valid"},
+            recipe_versions={},
+            adapter_version=target.result.adapter_version,
         )
-        if (
-            draft is not None
-            and draft.source_product_version is not None
-            and snapshot["version"] <= draft.source_product_version
-        ):
-            continue
-
-        if draft is None:
-            draft = MarketListingDraft(
-                source_product_id=source_product_id,
-                source_product_version=snapshot["version"],
-                market_account_id=target.market_account_id,
-                market_code=target.market_code,
-                draft_kind="create",
-                status="generated",
-                source_snapshot=snapshot,
-                generated_payload={},
-                validation_result={"status": "valid"},
-                recipe_versions={},
-                adapter_version=target.result.adapter_version,
-            )
 
         _apply_adapter_result(draft, snapshot, target.result)
         db.add(draft)
