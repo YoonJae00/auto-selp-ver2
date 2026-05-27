@@ -136,3 +136,9 @@ def test_market_account_has_no_user_market_unique_constraint():
         and idx.unique
     ]
     assert user_market_unique_indexes == []
+
+
+def test_market_account_drafts_relationship_uses_passive_deletes():
+    drafts_relationship = MarketAccount.__mapper__.relationships["drafts"]
+
+    assert drafts_relationship.passive_deletes is True
