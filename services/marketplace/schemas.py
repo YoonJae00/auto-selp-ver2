@@ -1,7 +1,8 @@
 import uuid
 from datetime import datetime
+from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class MarketAccountCreate(BaseModel):
@@ -44,3 +45,17 @@ class MarketAccountSettingsResponse(BaseModel):
     generation_rules: dict | None
     created_at: datetime
     updated_at: datetime
+
+
+class DraftResult(BaseModel):
+    display_title: str | None = None
+    category_id: str | None = None
+    sale_price: int | None = None
+    cost_price: int | None = None
+    expected_profit: int | None = None
+    expected_margin_rate: float | None = None
+    primary_image_url: str | None = None
+    generated_payload: dict[str, Any] = Field(default_factory=dict)
+    validation_result: dict[str, Any] = Field(default_factory=dict)
+    adapter_version: str
+    recipe_versions: dict[str, str] = Field(default_factory=dict)
