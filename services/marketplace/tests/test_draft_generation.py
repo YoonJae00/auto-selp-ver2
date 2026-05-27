@@ -180,6 +180,60 @@ class FakeAdapter:
         )
 
 
+class ExpiringAccount:
+    def __init__(self, *, user_id, market_code):
+        self.user_id = user_id
+        self.connection_status = "connected"
+        self.settings = SimpleNamespace(
+            settings_schema_version="v1",
+            connection_config={"connection": market_code},
+            fulfillment_config={"fulfillment": market_code},
+            claim_config={"claim": market_code},
+            listing_defaults={"sellerCode": market_code},
+            generation_rules={"pricingPolicy": {"version": f"{market_code}:v1"}},
+        )
+        self._id = uuid.uuid4()
+        self._market_code = market_code
+        self._expired = False
+
+    def expire(self):
+        self._expired = True
+
+    @property
+    def id(self):
+        if self._expired:
+            raise AssertionError("account.id accessed after rollback expiration")
+        return self._id
+
+    @property
+    def market_code(self):
+        if self._expired:
+            raise AssertionError("account.market_code accessed after rollback expiration")
+        return self._market_code
+
+
+class ExpiringJob:
+    def __init__(self, *, user_id, source_product_id):
+        self.user_id = user_id
+        self._source_product_id = source_product_id
+        self.requested_source_version = "requested-v1"
+        self.generated_source_version = None
+        self.reason = "manual"
+        self.status = "queued"
+        self.error = {"type": "PreviousError", "message": "old"}
+        self.completed_at = None
+        self._expired = False
+
+    def expire(self):
+        self._expired = True
+
+    @property
+    def source_product_id(self):
+        if self._expired:
+            raise AssertionError("job.source_product_id accessed after rollback expiration")
+        return self._source_product_id
+
+
 def _snapshot(version):
     return {
         "product_id": str(uuid.uuid4()),
@@ -503,6 +557,61 @@ async def test_generation_recovers_on_active_draft_integrity_contention_and_comp
     assert db.commit_calls == 2
     assert db.rollback_calls == 1
     assert db.events == ["commit", "rollback", "commit"]
+
+
+@pytest.mark.asyncio
+async def test_generation_retry_after_rollback_uses_scalar_targets_not_expired_objects():
+    # `aiosqlite` is not available in this repo, so this regression test uses
+    # expiring fakes to simulate AsyncSession rollback expiration semantics.
+    user_id = uuid.uuid4()
+    source_product_id = uuid.uuid4()
+    account = ExpiringAccount(user_id=user_id, market_code="smartstore")
+    job = ExpiringJob(user_id=user_id, source_product_id=source_product_id)
+    winner_draft = MarketListingDraft(
+        id=uuid.uuid4(),
+        source_product_id=source_product_id,
+        source_product_version="winner-v1",
+        market_account_id=account.id,
+        market_code="smartstore",
+        draft_kind="create",
+        status="generated",
+        source_snapshot={"version": "winner-v1"},
+        generated_payload={"winner": True},
+        validation_result={"status": "valid"},
+        recipe_versions={"title": "winner:v1"},
+        adapter_version="winner-adapter:v1",
+    )
+
+    def _expire_and_inject_winner(db):
+        account.expire()
+        job.expire()
+        if winner_draft not in db.drafts:
+            db.drafts.append(winner_draft)
+
+    db = FakeDB(
+        accounts=[account],
+        drafts=[],
+        commit_errors=[
+            IntegrityError(
+                "INSERT INTO market_listing_drafts ...",
+                {"market_account_id": str(account.id)},
+                Exception("duplicate key value violates unique constraint"),
+            )
+        ],
+        on_rollback=_expire_and_inject_winner,
+    )
+    adapters = {"smartstore": FakeAdapter("smartstore")}
+    processor_client = FakeProcessorClient([_snapshot("v2")])
+
+    await generate_drafts_for_job(job, db, processor_client, adapters)
+
+    active_drafts = [d for d in db.drafts if d.status in ACTIVE_STATUSES]
+    assert len(active_drafts) == 1
+    assert active_drafts[0].id == winner_draft.id
+    assert active_drafts[0].source_product_version == "v2"
+    assert job.status == "completed"
+    assert db.commit_calls == 2
+    assert db.rollback_calls == 1
 
 
 @pytest.mark.asyncio
