@@ -14,7 +14,6 @@ class MarketAccountResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
-    user_id: uuid.UUID
     market_code: str
     display_name: str
     connection_status: str
