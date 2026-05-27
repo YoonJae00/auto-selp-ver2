@@ -4,6 +4,7 @@ from urllib.parse import parse_qs
 
 import httpx
 import pytest
+from sqlalchemy.exc import IntegrityError
 
 from adapters import ADAPTERS
 from clients.processor_client import ProcessorClient
@@ -51,12 +52,17 @@ class _FakeExecuteResult:
 
 
 class FakeDB:
-    def __init__(self, accounts, drafts):
+    def __init__(self, accounts, drafts, *, commit_errors=None, on_rollback=None):
         self.accounts = accounts
         self.drafts = drafts
         self.added = []
         self.commit_calls = 0
+        self.rollback_calls = 0
         self.draft_lookup_compiles = []
+        self.events = []
+        self._commit_errors = list(commit_errors or [])
+        self._on_rollback = on_rollback
+        self._pending_new_drafts = []
 
     async def execute(self, stmt):
         model = stmt.column_descriptions[0]["entity"]
@@ -116,9 +122,24 @@ class FakeDB:
         self.added.append(obj)
         if isinstance(obj, MarketListingDraft) and obj not in self.drafts:
             self.drafts.append(obj)
+            self._pending_new_drafts.append(obj)
 
     async def commit(self):
         self.commit_calls += 1
+        self.events.append("commit")
+        if self._commit_errors:
+            raise self._commit_errors.pop(0)
+        self._pending_new_drafts.clear()
+
+    async def rollback(self):
+        self.rollback_calls += 1
+        self.events.append("rollback")
+        for draft in list(self._pending_new_drafts):
+            if draft in self.drafts:
+                self.drafts.remove(draft)
+        self._pending_new_drafts.clear()
+        if self._on_rollback is not None:
+            self._on_rollback(self)
 
 
 class FakeProcessorClient:
@@ -423,6 +444,65 @@ async def test_generation_failure_marks_job_failed_and_commits_then_reraises():
     assert job.status == "failed"
     assert job.error == {"type": "RuntimeError", "message": "snapshot failed"}
     assert db.commit_calls == 1
+    assert db.rollback_calls == 1
+    assert db.events == ["rollback", "commit"]
+
+
+@pytest.mark.asyncio
+async def test_generation_recovers_on_active_draft_integrity_contention_and_completes():
+    user_id = uuid.uuid4()
+    source_product_id = uuid.uuid4()
+    account = _account(user_id, "smartstore", "connected")
+    winner_draft = MarketListingDraft(
+        id=uuid.uuid4(),
+        source_product_id=source_product_id,
+        source_product_version="winner-v1",
+        market_account_id=account.id,
+        market_code="smartstore",
+        draft_kind="create",
+        status="generated",
+        display_title="winner-title",
+        source_snapshot={"version": "winner-v1"},
+        generated_payload={"winner": True},
+        override_patch={"originProduct": {"name": "수동 우승자"}},
+        validation_result={"status": "valid"},
+        recipe_versions={"title": "winner:v1"},
+        adapter_version="winner-adapter:v1",
+    )
+
+    def _inject_winner(db):
+        if winner_draft not in db.drafts:
+            db.drafts.append(winner_draft)
+
+    db = FakeDB(
+        accounts=[account],
+        drafts=[],
+        commit_errors=[
+            IntegrityError(
+                "INSERT INTO market_listing_drafts ...",
+                {"market_account_id": str(account.id)},
+                Exception("duplicate key value violates unique constraint"),
+            )
+        ],
+        on_rollback=_inject_winner,
+    )
+    adapters = {"smartstore": FakeAdapter("smartstore")}
+    processor_client = FakeProcessorClient([_snapshot("v2")])
+    job = _job(user_id, source_product_id)
+
+    await generate_drafts_for_job(job, db, processor_client, adapters)
+
+    active_drafts = [d for d in db.drafts if d.status in ACTIVE_STATUSES]
+    assert len(active_drafts) == 1
+    assert active_drafts[0].id == winner_draft.id
+    assert active_drafts[0].source_product_version == "v2"
+    assert active_drafts[0].status == "needs_review"
+    assert active_drafts[0].override_patch == {"originProduct": {"name": "수동 우승자"}}
+    assert job.status == "completed"
+    assert job.error is None
+    assert db.commit_calls == 2
+    assert db.rollback_calls == 1
+    assert db.events == ["commit", "rollback", "commit"]
 
 
 @pytest.mark.asyncio
