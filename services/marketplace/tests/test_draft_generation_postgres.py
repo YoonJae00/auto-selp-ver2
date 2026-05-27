@@ -4,7 +4,7 @@ import uuid
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import delete, select, text
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from models import (
@@ -61,7 +61,7 @@ class StubAdapter:
         )
 
 
-@pytest_asyncio.fixture(scope="module")
+@pytest_asyncio.fixture
 async def pg_sessionmaker():
     schema_name = f"marketplace_it_{uuid.uuid4().hex}"
     admin_engine = create_async_engine(MARKETPLACE_TEST_DATABASE_URL)
@@ -88,17 +88,6 @@ async def pg_sessionmaker():
         async with admin_engine.begin() as conn:
             await conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema_name}" CASCADE'))
         await admin_engine.dispose()
-
-
-@pytest_asyncio.fixture(autouse=True)
-async def cleanup_tables(pg_sessionmaker):
-    async with pg_sessionmaker() as session:
-        await session.execute(delete(MarketListingDraft))
-        await session.execute(delete(MarketDraftGenerationJob))
-        await session.execute(delete(MarketAccountSettings))
-        await session.execute(delete(MarketAccount))
-        await session.commit()
-    yield
 
 
 def _account(user_id, market_code="smartstore"):
