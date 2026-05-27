@@ -81,3 +81,37 @@ def test_supports_sale_price_percentage_other_cost():
 def test_invalid_pricing_policy_blocks_draft_generation(cost_price, policy, message):
     with pytest.raises(PricingPolicyError, match=message):
         calculate_proposed_price(cost_price=cost_price, policy=policy)
+
+
+@pytest.mark.parametrize(
+    ("policy", "message"),
+    [
+        (
+            {key: value for key, value in _policy().items() if key != "marketplaceFee"},
+            "marketplaceFee is required",
+        ),
+        (
+            {key: value for key, value in _policy().items() if key != "rounding"},
+            "rounding is required",
+        ),
+        (
+            _policy(marketplaceFee={"type": "percent_of_sale_price"}),
+            "marketplaceFee rate is required",
+        ),
+        (
+            _policy(shippingCost={"type": "fixed"}),
+            "shippingCost amount is required",
+        ),
+        (
+            _policy(marketplaceFee=[]),
+            "marketplaceFee must be an object",
+        ),
+        (
+            _policy(rounding={"mode": "ceil"}),
+            "rounding unit is required",
+        ),
+    ],
+)
+def test_incomplete_or_malformed_policy_does_not_infer_a_sale_price(policy, message):
+    with pytest.raises(PricingPolicyError, match=message):
+        calculate_proposed_price(cost_price=8000, policy=policy)

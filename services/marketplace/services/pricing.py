@@ -1,4 +1,5 @@
 from decimal import Decimal, InvalidOperation, ROUND_CEILING, ROUND_HALF_UP
+from collections.abc import Mapping
 
 
 class PricingPolicyError(ValueError):
@@ -20,35 +21,38 @@ def _decimal(value, field_name: str) -> Decimal:
     return amount
 
 
-def _fixed_amount(component: dict | None, field_name: str) -> Decimal:
-    if component is None:
-        return ZERO
+def _component(policy: Mapping, field_name: str) -> Mapping:
+    if field_name not in policy:
+        raise PricingPolicyError(f"{field_name} is required")
+    component = policy[field_name]
+    if not isinstance(component, Mapping):
+        raise PricingPolicyError(f"{field_name} must be an object")
+    return component
+
+
+def _fixed_amount(component: Mapping, field_name: str) -> Decimal:
     if component.get("type") != "fixed":
         raise PricingPolicyError(f"{field_name} must be a fixed amount")
-    amount = _decimal(component.get("amount", 0), field_name)
+    if "amount" not in component:
+        raise PricingPolicyError(f"{field_name} amount is required")
+    amount = _decimal(component["amount"], field_name)
     if amount < ZERO or amount != amount.to_integral_value():
         raise PricingPolicyError(f"{field_name} must be a non-negative whole-won amount")
     return amount
 
 
-def _percent_rate(
-    component: dict | None, field_name: str, *, required: bool = False
-) -> Decimal:
-    if component is None:
-        if required:
-            raise PricingPolicyError(f"{field_name} is required")
-        return ZERO
+def _percent_rate(component: Mapping, field_name: str) -> Decimal:
     if component.get("type") != "percent_of_sale_price":
         raise PricingPolicyError(f"{field_name} must be percent_of_sale_price")
-    rate = _decimal(component.get("rate", 0), field_name)
+    if "rate" not in component:
+        raise PricingPolicyError(f"{field_name} rate is required")
+    rate = _decimal(component["rate"], field_name)
     if rate < ZERO:
         raise PricingPolicyError(f"{field_name} rate must be non-negative")
     return rate / ONE_HUNDRED
 
 
-def _other_cost_components(component: dict | None) -> tuple[Decimal, Decimal]:
-    if component is None:
-        return ZERO, ZERO
+def _other_cost_components(component: Mapping) -> tuple[Decimal, Decimal]:
     if component.get("type") == "fixed":
         return _fixed_amount(component, "otherCost"), ZERO
     if component.get("type") == "percent_of_sale_price":
@@ -63,6 +67,8 @@ def _won(value: Decimal) -> int:
 def calculate_proposed_price(cost_price: int | None, policy: dict | None) -> dict:
     if policy is None:
         raise PricingPolicyError("pricing policy is required")
+    if not isinstance(policy, Mapping):
+        raise PricingPolicyError("pricing policy must be an object")
     if cost_price is None:
         raise PricingPolicyError("cost price is required")
 
@@ -70,22 +76,28 @@ def calculate_proposed_price(cost_price: int | None, policy: dict | None) -> dic
     if cost <= ZERO or cost != cost.to_integral_value():
         raise PricingPolicyError("cost price must be positive whole won")
 
-    shipping_cost = _fixed_amount(policy.get("shippingCost"), "shippingCost")
-    marketplace_rate = _percent_rate(policy.get("marketplaceFee"), "marketplaceFee")
-    advertising_rate = _percent_rate(policy.get("advertisingCost"), "advertisingCost")
-    other_fixed, other_rate = _other_cost_components(policy.get("otherCost"))
-    target_rate = _percent_rate(
-        policy.get("targetMargin"), "targetMargin", required=True
+    shipping_cost = _fixed_amount(_component(policy, "shippingCost"), "shippingCost")
+    marketplace_rate = _percent_rate(
+        _component(policy, "marketplaceFee"), "marketplaceFee"
     )
+    advertising_rate = _percent_rate(
+        _component(policy, "advertisingCost"), "advertisingCost"
+    )
+    other_fixed, other_rate = _other_cost_components(_component(policy, "otherCost"))
+    target_rate = _percent_rate(_component(policy, "targetMargin"), "targetMargin")
 
     rate_total = marketplace_rate + advertising_rate + other_rate + target_rate
     if rate_total >= ONE:
         raise PricingPolicyError("percentage rates must total less than 100")
 
-    rounding = policy.get("rounding") or {"unit": 1, "mode": "ceil"}
-    if rounding.get("mode", "ceil") != "ceil":
+    rounding = _component(policy, "rounding")
+    if "mode" not in rounding:
+        raise PricingPolicyError("rounding mode is required")
+    if rounding["mode"] != "ceil":
         raise PricingPolicyError("rounding mode must be ceil")
-    unit = _decimal(rounding.get("unit", 1), "rounding unit")
+    if "unit" not in rounding:
+        raise PricingPolicyError("rounding unit is required")
+    unit = _decimal(rounding["unit"], "rounding unit")
     if unit <= ZERO or unit != unit.to_integral_value():
         raise PricingPolicyError("rounding unit must be a positive whole-won amount")
 
