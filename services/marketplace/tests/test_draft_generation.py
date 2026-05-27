@@ -19,6 +19,7 @@ from services.draft_generation import generate_drafts_for_job
 
 
 ACTIVE_STATUSES = {"generated", "needs_review", "ready", "submitting", "failed"}
+MUTABLE_STATUSES = {"generated", "needs_review", "ready", "failed"}
 
 
 class _FakeScalarResult:
@@ -402,6 +403,86 @@ async def test_generation_preserves_existing_override_patch():
 
 
 @pytest.mark.asyncio
+async def test_generation_with_older_snapshot_does_not_overwrite_newer_mutable_draft():
+    user_id = uuid.uuid4()
+    source_product_id = uuid.uuid4()
+    account = _account(user_id, "smartstore", "connected")
+    existing_draft = MarketListingDraft(
+        id=uuid.uuid4(),
+        source_product_id=source_product_id,
+        source_product_version="2026-05-28T10:00:00+00:00",
+        market_account_id=account.id,
+        market_code="smartstore",
+        draft_kind="create",
+        status="needs_review",
+        display_title="newer-title",
+        source_snapshot={"version": "2026-05-28T10:00:00+00:00"},
+        generated_payload={"market_code": "smartstore", "version": "newer"},
+        validation_result={"status": "valid"},
+        recipe_versions={"title": "newer-title:v1"},
+        adapter_version="smartstore-adapter:newer",
+    )
+    db = FakeDB(accounts=[account], drafts=[existing_draft])
+    adapters = {"smartstore": FakeAdapter("smartstore")}
+    processor_client = FakeProcessorClient([_snapshot("2026-05-28T09:00:00+00:00")])
+    job = _job(user_id, source_product_id)
+
+    await generate_drafts_for_job(job, db, processor_client, adapters)
+
+    assert len(db.drafts) == 1
+    assert existing_draft.source_product_version == "2026-05-28T10:00:00+00:00"
+    assert existing_draft.display_title == "newer-title"
+    assert existing_draft.generated_payload == {"market_code": "smartstore", "version": "newer"}
+    assert existing_draft.adapter_version == "smartstore-adapter:newer"
+    assert existing_draft.status == "needs_review"
+    assert job.status == "completed"
+    assert job.generated_source_version == "2026-05-28T09:00:00+00:00"
+    assert job.error is None
+
+
+@pytest.mark.asyncio
+async def test_generation_skips_submitting_draft_without_mutating_or_creating_new_active():
+    user_id = uuid.uuid4()
+    source_product_id = uuid.uuid4()
+    account = _account(user_id, "smartstore", "connected")
+    submitting_draft = MarketListingDraft(
+        id=uuid.uuid4(),
+        source_product_id=source_product_id,
+        source_product_version="2026-05-28T08:00:00+00:00",
+        market_account_id=account.id,
+        market_code="smartstore",
+        draft_kind="create",
+        status="submitting",
+        display_title="submitting-title",
+        source_snapshot={"version": "2026-05-28T08:00:00+00:00"},
+        generated_payload={"market_code": "smartstore", "version": "submitting"},
+        validation_result={"status": "valid"},
+        recipe_versions={"title": "submitting-title:v1"},
+        adapter_version="smartstore-adapter:submitting",
+    )
+    db = FakeDB(accounts=[account], drafts=[submitting_draft])
+    adapters = {"smartstore": FakeAdapter("smartstore")}
+    processor_client = FakeProcessorClient([_snapshot("2026-05-28T09:00:00+00:00")])
+    job = _job(user_id, source_product_id)
+
+    await generate_drafts_for_job(job, db, processor_client, adapters)
+
+    assert len(db.drafts) == 1
+    assert db.drafts[0].id == submitting_draft.id
+    assert submitting_draft.status == "submitting"
+    assert submitting_draft.source_product_version == "2026-05-28T08:00:00+00:00"
+    assert submitting_draft.generated_payload == {
+        "market_code": "smartstore",
+        "version": "submitting",
+    }
+    assert submitting_draft.display_title == "submitting-title"
+    assert job.status == "completed"
+    assert job.generated_source_version == "2026-05-28T09:00:00+00:00"
+    assert job.error is None
+    assert adapters["smartstore"].calls == []
+
+
+@pytest.mark.asyncio
 async def test_generation_persists_pricing_summary_fields():
     user_id = uuid.uuid4()
     source_product_id = uuid.uuid4()
@@ -459,7 +540,7 @@ async def test_generation_sends_account_scoped_settings_to_matching_adapter():
 
 
 @pytest.mark.asyncio
-async def test_generation_uses_active_status_filter_and_create_draft_kind_lookup():
+async def test_generation_uses_split_status_filters_for_submitting_and_mutable_drafts():
     user_id = uuid.uuid4()
     source_product_id = uuid.uuid4()
     account = _account(user_id, "smartstore", "connected")
@@ -470,18 +551,21 @@ async def test_generation_uses_active_status_filter_and_create_draft_kind_lookup
 
     await generate_drafts_for_job(job, db, processor_client, adapters)
 
-    _sql, params = db.draft_lookup_compiles[0]
-    statuses = set()
-    for key, value in params.items():
-        if not key.startswith("status"):
-            continue
-        if isinstance(value, (list, tuple, set)):
-            statuses.update(value)
-        else:
-            statuses.add(value)
-    draft_kind = next(v for k, v in params.items() if k.startswith("draft_kind"))
-    assert statuses == ACTIVE_STATUSES
-    assert draft_kind == "create"
+    observed_status_sets = []
+    for _sql, params in db.draft_lookup_compiles:
+        statuses = set()
+        for key, value in params.items():
+            if not key.startswith("status"):
+                continue
+            if isinstance(value, (list, tuple, set)):
+                statuses.update(value)
+            else:
+                statuses.add(value)
+        observed_status_sets.append(statuses)
+        draft_kind = next(v for k, v in params.items() if k.startswith("draft_kind"))
+        assert draft_kind == "create"
+    assert {"submitting"} in observed_status_sets
+    assert MUTABLE_STATUSES in observed_status_sets
 
 
 @pytest.mark.asyncio
@@ -510,13 +594,13 @@ async def test_generation_recovers_on_active_draft_integrity_contention_and_comp
     winner_draft = MarketListingDraft(
         id=uuid.uuid4(),
         source_product_id=source_product_id,
-        source_product_version="winner-v1",
+        source_product_version="2026-05-28T08:00:00+00:00",
         market_account_id=account.id,
         market_code="smartstore",
         draft_kind="create",
         status="generated",
         display_title="winner-title",
-        source_snapshot={"version": "winner-v1"},
+        source_snapshot={"version": "2026-05-28T08:00:00+00:00"},
         generated_payload={"winner": True},
         override_patch={"originProduct": {"name": "수동 우승자"}},
         validation_result={"status": "valid"},
@@ -541,7 +625,7 @@ async def test_generation_recovers_on_active_draft_integrity_contention_and_comp
         on_rollback=_inject_winner,
     )
     adapters = {"smartstore": FakeAdapter("smartstore")}
-    processor_client = FakeProcessorClient([_snapshot("v2")])
+    processor_client = FakeProcessorClient([_snapshot("2026-05-28T09:00:00+00:00")])
     job = _job(user_id, source_product_id)
 
     await generate_drafts_for_job(job, db, processor_client, adapters)
@@ -549,7 +633,7 @@ async def test_generation_recovers_on_active_draft_integrity_contention_and_comp
     active_drafts = [d for d in db.drafts if d.status in ACTIVE_STATUSES]
     assert len(active_drafts) == 1
     assert active_drafts[0].id == winner_draft.id
-    assert active_drafts[0].source_product_version == "v2"
+    assert active_drafts[0].source_product_version == "2026-05-28T09:00:00+00:00"
     assert active_drafts[0].status == "needs_review"
     assert active_drafts[0].override_patch == {"originProduct": {"name": "수동 우승자"}}
     assert job.status == "completed"
@@ -570,12 +654,12 @@ async def test_generation_retry_after_rollback_uses_scalar_targets_not_expired_o
     winner_draft = MarketListingDraft(
         id=uuid.uuid4(),
         source_product_id=source_product_id,
-        source_product_version="winner-v1",
+        source_product_version="2026-05-28T08:00:00+00:00",
         market_account_id=account.id,
         market_code="smartstore",
         draft_kind="create",
         status="generated",
-        source_snapshot={"version": "winner-v1"},
+        source_snapshot={"version": "2026-05-28T08:00:00+00:00"},
         generated_payload={"winner": True},
         validation_result={"status": "valid"},
         recipe_versions={"title": "winner:v1"},
@@ -601,14 +685,14 @@ async def test_generation_retry_after_rollback_uses_scalar_targets_not_expired_o
         on_rollback=_expire_and_inject_winner,
     )
     adapters = {"smartstore": FakeAdapter("smartstore")}
-    processor_client = FakeProcessorClient([_snapshot("v2")])
+    processor_client = FakeProcessorClient([_snapshot("2026-05-28T09:00:00+00:00")])
 
     await generate_drafts_for_job(job, db, processor_client, adapters)
 
     active_drafts = [d for d in db.drafts if d.status in ACTIVE_STATUSES]
     assert len(active_drafts) == 1
     assert active_drafts[0].id == winner_draft.id
-    assert active_drafts[0].source_product_version == "v2"
+    assert active_drafts[0].source_product_version == "2026-05-28T09:00:00+00:00"
     assert job.status == "completed"
     assert db.commit_calls == 2
     assert db.rollback_calls == 1
@@ -623,12 +707,12 @@ async def test_generation_contention_retry_restores_job_audit_fields_after_rollb
     winner_draft = MarketListingDraft(
         id=uuid.uuid4(),
         source_product_id=source_product_id,
-        source_product_version="winner-v1",
+        source_product_version="2026-05-28T08:00:00+00:00",
         market_account_id=account.id,
         market_code="smartstore",
         draft_kind="create",
         status="generated",
-        source_snapshot={"version": "winner-v1"},
+        source_snapshot={"version": "2026-05-28T08:00:00+00:00"},
         generated_payload={"winner": True},
         validation_result={"status": "valid"},
         recipe_versions={"title": "winner:v1"},
@@ -654,12 +738,12 @@ async def test_generation_contention_retry_restores_job_audit_fields_after_rollb
         on_rollback=_clobber_job_and_inject_winner,
     )
     adapters = {"smartstore": FakeAdapter("smartstore")}
-    processor_client = FakeProcessorClient([_snapshot("v2")])
+    processor_client = FakeProcessorClient([_snapshot("2026-05-28T09:00:00+00:00")])
 
     await generate_drafts_for_job(job, db, processor_client, adapters)
 
     assert job.status == "completed"
-    assert job.generated_source_version == "v2"
+    assert job.generated_source_version == "2026-05-28T09:00:00+00:00"
     assert job.error is None
     assert db.commit_calls == 2
     assert db.rollback_calls == 1
