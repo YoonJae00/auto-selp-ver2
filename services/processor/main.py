@@ -1,7 +1,7 @@
 import os
 import uuid
 import pandas as pd
-from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, Request
+from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, Request, Header
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 from typing import Dict, Optional, List
@@ -29,7 +29,8 @@ from schemas import (
     ProductImportResponse,
     WholesaleSiteCreate,
     WholesaleSiteUpdate,
-    WholesaleSiteResponse
+    WholesaleSiteResponse,
+    MarketplaceSnapshotResponse,
 )
 from utils.prompt_manager import PromptManager
 from utils.wholesale_upload import parse_wholesale_row, validate_required_mappings
@@ -106,6 +107,13 @@ async def get_current_user(
         raise HTTPException(status_code=401, detail="User not found")
     
     return {"id": user.id, "username": user.username, "is_admin": user.is_admin}
+
+
+def require_internal_service_token(
+    internal_token: str | None = Header(default=None, alias="X-Internal-Service-Token")
+):
+    if internal_token != settings.INTERNAL_SERVICE_TOKEN:
+        raise HTTPException(status_code=401, detail="Invalid internal service token")
 
 
 # --- Wholesale Sites API ---
@@ -537,6 +545,56 @@ async def list_products(
         "page": page,
         "size": size,
         "items": items
+    }
+
+
+@app.get("/internal/products/{product_id}/marketplace-snapshot", response_model=MarketplaceSnapshotResponse)
+async def get_marketplace_snapshot(
+    product_id: uuid.UUID,
+    user_id: uuid.UUID,
+    _: None = Depends(require_internal_service_token),
+    db: AsyncSession = Depends(get_db),
+):
+    stmt = (
+        select(Product)
+        .where(and_(Product.id == product_id, Product.user_id == user_id))
+        .options(selectinload(Product.platform_mappings))
+    )
+    result = await db.execute(stmt)
+    product = result.scalar_one_or_none()
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    market_categories = {}
+    for mapping in product.platform_mappings or []:
+        platform_name = "smartstore" if mapping.platform_name == "naver" else mapping.platform_name
+        market_categories[platform_name] = {
+            "category_id": mapping.category_id,
+            "category_path": mapping.category_path,
+            "mapped_attributes": mapping.mapped_attributes,
+        }
+
+    return {
+        "product_id": product.id,
+        "version": product.updated_at.isoformat(),
+        "product_code": product.product_code,
+        "wholesale_product_id": product.wholesale_product_id,
+        "original_name": product.original_name,
+        "refined_name": product.refined_name,
+        "brand_name": product.brand_name,
+        "keywords": product.keywords,
+        "origin": product.origin,
+        "price": {
+            "wholesale": product.price_wholesale,
+            "retail": product.price_retail,
+            "minimum_selling": product.price_min_selling,
+        },
+        "images": {
+            "list": product.images_list or [],
+            "detail_content": product.image_detail,
+        },
+        "options": product.option_variants or [],
+        "market_categories": market_categories,
     }
 
 
