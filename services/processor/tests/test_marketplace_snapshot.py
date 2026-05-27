@@ -4,8 +4,9 @@ from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+import pytest
 from fastapi.testclient import TestClient
-
+from pydantic import ValidationError
 
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
 os.environ.setdefault("NAVER_API_KEY", "test")
@@ -20,6 +21,7 @@ os.environ.setdefault("OPENAI_API_KEY", "test")
 os.environ.setdefault("KIPRIS_API_KEY", "test")
 os.environ.setdefault("INTERNAL_SERVICE_TOKEN", "internal-test-token")
 
+from config import Settings
 import main as processor_main
 
 
@@ -250,3 +252,63 @@ def test_marketplace_snapshot_returns_404_for_absent_or_wrong_owner(monkeypatch)
         absent_client.close()
 
     assert absent.status_code == 404
+
+
+def test_marketplace_snapshot_prefers_explicit_smartstore_over_legacy_naver(monkeypatch):
+    product_id = uuid.uuid4()
+    user_id = uuid.uuid4()
+    product = build_product(product_id, user_id)
+    explicit_smartstore = SimpleNamespace(
+        platform_name="smartstore",
+        category_id="90000009",
+        category_path="우선/스마트스토어",
+        mapped_attributes={"priority": "explicit"},
+    )
+    legacy_naver = SimpleNamespace(
+        platform_name="naver",
+        category_id="50000001",
+        category_path="레거시/네이버",
+        mapped_attributes={"priority": "legacy"},
+    )
+
+    for mappings in ([legacy_naver, explicit_smartstore], [explicit_smartstore, legacy_naver]):
+        product.platform_mappings = mappings
+        fake_db = FakeDB(product=product)
+        client = make_client(fake_db, monkeypatch)
+
+        try:
+            response = client.get(
+                f"/internal/products/{product_id}/marketplace-snapshot",
+                params={"user_id": str(user_id)},
+                headers={"X-Internal-Service-Token": "internal-test-token"},
+            )
+        finally:
+            processor_main.app.dependency_overrides.clear()
+            client.close()
+
+        assert response.status_code == 200
+        assert response.json()["market_categories"]["smartstore"] == {
+            "category_id": "90000009",
+            "category_path": "우선/스마트스토어",
+            "mapped_attributes": {"priority": "explicit"},
+        }
+
+
+def test_settings_require_internal_service_token(monkeypatch):
+    monkeypatch.delenv("INTERNAL_SERVICE_TOKEN", raising=False)
+
+    with pytest.raises(ValidationError):
+        Settings(
+            _env_file=None,
+            DATABASE_URL="postgresql+asyncpg://test:test@localhost/test",
+            NAVER_API_KEY="test",
+            NAVER_SECRET_KEY="test",
+            NAVER_CUSTOMER_ID="test",
+            NAVER_CLIENT_ID="test",
+            NAVER_CLIENT_SECRET="test",
+            Coupang_Access_Key="test",
+            Coupang_Secret_Key="test",
+            GEMINI_API_KEY="test",
+            OPENAI_API_KEY="test",
+            KIPRIS_API_KEY="test",
+        )

@@ -565,8 +565,13 @@ async def get_marketplace_snapshot(
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
 
+    platform_mappings = product.platform_mappings or []
+    has_explicit_smartstore = any(mapping.platform_name == "smartstore" for mapping in platform_mappings)
+
     market_categories = {}
-    for mapping in product.platform_mappings or []:
+    for mapping in platform_mappings:
+        if has_explicit_smartstore and mapping.platform_name == "naver":
+            continue
         platform_name = "smartstore" if mapping.platform_name == "naver" else mapping.platform_name
         market_categories[platform_name] = {
             "category_id": mapping.category_id,
