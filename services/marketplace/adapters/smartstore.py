@@ -14,11 +14,8 @@ class SmartstoreAdapter(MarketplaceAdapter):
     adapter_version = "smartstore-adapter:v1"
     title_recipe_version = "smartstore-title:v1"
 
-    def build_draft(
-        self,
-        *,
-        source_snapshot: Mapping[str, Any],
-        account_settings: Mapping[str, Any] | None,
+    def generate_draft(
+        self, source_snapshot: Mapping[str, Any], account_settings: Mapping[str, Any] | None
     ) -> DraftResult:
         title = self._compose_title(source_snapshot)
         category_id = self._extract_category_id(source_snapshot)
@@ -106,12 +103,12 @@ class SmartstoreAdapter(MarketplaceAdapter):
                 }
             )
         if pricing_error_code:
-            errors = [
+            errors.append(
                 {
                     "code": pricing_error_code,
                     "message": "Smartstore pricing policy is missing or invalid.",
                 }
-            ]
+            )
 
         return DraftResult(
             display_title=title or None,
