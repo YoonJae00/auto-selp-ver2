@@ -2,54 +2,477 @@
   min-height: 100vh;
   display: flex;
   flex-direction: column;
+  background-color: var(--canvas);
+  color: var(--ink);
+  font-family: var(--font-body);
 }
 
-.nav {
-  height: 44px;
-  background: var(--surface-black);
-  color: #fff;
+/* Frosted Sticky Header */
+.header {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 64px;
+  background: rgba(255, 255, 255, 0.72);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  z-index: 1000;
   display: flex;
   align-items: center;
   justify-content: center;
+  transition: all 0.3s ease;
 }
 
-.navContent {
+.headerContent {
   width: 100%;
-  max-width: 980px;
-  padding: 0 20px;
+  max-width: 1200px;
+  padding: 0 24px;
   display: flex;
   justify-content: space-between;
   align-items: center;
 }
 
-.logo {
-  font-size: 17px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-}
-
-.hero {
-  flex: 1;
+.logoLink {
   display: flex;
-  flex-direction: column;
   align-items: center;
-  justify-content: center;
-  padding: 80px 20px;
-  text-align: center;
-  background: var(--canvas);
+  gap: 8px;
+  text-decoration: none;
+  color: var(--ink);
 }
 
-.hero h1 {
-  font-size: 56px;
+.logoIcon {
+  font-size: 20px;
+  color: var(--primary);
+  display: inline-block;
+  animation: logoPulse 2s infinite ease-in-out;
+}
+
+.logoText {
+  font-family: var(--font-display);
+  font-size: 19px;
   font-weight: 600;
-  margin: 0;
-  line-height: 1.07;
   letter-spacing: -0.02em;
 }
 
-.hero p {
-  font-size: 28px;
-  font-weight: 400;
-  margin: 12px 0 32px;
+.headerActions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.loginBtn {
+  font-size: 13px !important;
+  padding: 8px 16px !important;
+  color: var(--ink) !important;
+  background: transparent !important;
+  border: 1px solid rgba(0, 0, 0, 0.15) !important;
+  box-shadow: none !important;
+}
+
+.loginBtn:hover {
+  background: rgba(0, 0, 0, 0.04) !important;
+}
+
+.startBtn {
+  font-size: 13px !important;
+  padding: 8px 18px !important;
+}
+
+.main {
+  flex: 1;
+  padding-top: 64px; /* Offset sticky header */
+}
+
+.pageContainer {
+  display: flex;
+  flex-direction: column;
+}
+
+/* 1. Hero Section */
+.heroSection {
+  background-color: var(--canvas);
+  padding: 120px 24px 80px 24px;
+  display: flex;
+  justify-content: center;
+  text-align: center;
+}
+
+.heroContent {
+  max-width: 820px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.heroSuperTitle {
+  font-family: var(--font-display);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.15em;
+  color: var(--primary);
+  margin-bottom: 20px;
+  text-transform: uppercase;
+}
+
+.heroTitle {
+  font-family: var(--font-display);
+  font-size: 64px;
+  font-weight: 600;
+  line-height: 1.07;
+  letter-spacing: -0.025em;
+  color: var(--ink);
+  margin: 0 0 24px 0;
+}
+
+.heroDesc {
+  font-family: var(--font-body);
+  font-size: 21px;
+  line-height: 1.48;
+  letter-spacing: -0.012em;
+  color: var(--ink-muted-80);
+  margin: 0 0 40px 0;
+  max-width: 680px;
+}
+
+.heroActions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.heroPrimaryBtn {
+  font-size: 16px !important;
+  padding: 14px 28px !important;
+  box-shadow: 0 4px 14px rgba(0, 102, 204, 0.2);
+}
+
+.heroSecondaryBtn {
+  font-size: 16px !important;
+  padding: 14px 28px !important;
+  background: var(--canvas-parchment) !important;
+  color: var(--ink) !important;
+  border: 1px solid rgba(0, 0, 0, 0.08) !important;
+  box-shadow: none !important;
+}
+
+.heroSecondaryBtn:hover {
+  background: #e8e8ed !important;
+  border-color: rgba(0, 0, 0, 0.12) !important;
+}
+
+.heroSecondaryBtn span {
+  margin-left: 6px;
+  display: inline-block;
+  transition: transform 0.2s ease;
+}
+
+.heroSecondaryBtn:hover span {
+  transform: translateY(2px);
+}
+
+/* 2. Interactive Live Task Graph Section */
+.demoSection {
+  background-color: var(--canvas-parchment);
+  padding: 100px 24px;
+  border-top: 1px solid var(--hairline);
+  border-bottom: 1px solid var(--hairline);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.demoHeader {
+  max-width: 720px;
+  text-align: center;
+  margin-bottom: 56px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.sectionBadge {
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: var(--ink-muted-48);
+  margin-bottom: 16px;
+  text-transform: uppercase;
+}
+
+.sectionTitle {
+  font-family: var(--font-display);
+  font-size: 40px;
+  font-weight: 600;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+  margin: 0 0 16px 0;
+}
+
+.sectionDesc {
+  font-family: var(--font-body);
+  font-size: 17px;
+  line-height: 1.5;
+  color: var(--ink-muted-80);
+  margin: 0;
+}
+
+.graphContainer {
+  width: 100%;
+  max-width: 1200px;
+}
+
+/* 3. Feature Showcase Grid Section */
+.featuresSection {
+  background-color: var(--canvas);
+  padding: 100px 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.featuresHeader {
+  max-width: 720px;
+  text-align: center;
+  margin-bottom: 64px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.featuresGrid {
+  max-width: 1200px;
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 24px;
+}
+
+.featureCard {
+  background: var(--canvas);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 18px;
+  padding: 32px;
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: rgba(0, 0, 0, 0.01) 0px 4px 12px;
+}
+
+.featureCard:hover {
+  transform: translateY(-4px);
+  border-color: rgba(0, 0, 0, 0.12);
+  box-shadow: rgba(0, 0, 0, 0.08) 0px 12px 30px -8px;
+}
+
+.featureIcon {
+  font-size: 32px;
+  margin-bottom: 20px;
+}
+
+.featureTitle {
+  font-family: var(--font-display);
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  margin: 0 0 12px 0;
+}
+
+.featureText {
+  font-family: var(--font-body);
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--ink-muted-80);
+  margin: 0;
+}
+
+/* 4. Final CTA Section (Dark Mode Transition) */
+.ctaSection {
+  background: var(--surface-black);
+  color: #ffffff;
+  padding: 120px 24px;
+  text-align: center;
+  display: flex;
+  justify-content: center;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Subtle background mesh gradient for CTA */
+.ctaSection::before {
+  content: '';
+  position: absolute;
+  top: -50%;
+  left: -50%;
+  right: -50%;
+  bottom: -50%;
+  background: radial-gradient(circle at center, rgba(0, 102, 204, 0.15) 0%, transparent 60%);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.ctaContent {
+  max-width: 800px;
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.ctaTitle {
+  font-family: var(--font-display);
+  font-size: 44px;
+  font-weight: 600;
+  line-height: 1.15;
+  letter-spacing: -0.025em;
+  color: #ffffff;
+  margin: 0 0 20px 0;
+}
+
+.ctaDesc {
+  font-family: var(--font-body);
+  font-size: 19px;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.7);
+  margin: 0 0 40px 0;
   max-width: 600px;
+}
+
+.ctaBtn {
+  font-size: 16px !important;
+  padding: 14px 32px !important;
+  box-shadow: 0 6px 20px rgba(0, 102, 204, 0.4);
+}
+
+/* 5. Footer Section */
+.footer {
+  background-color: var(--canvas-parchment);
+  border-top: 1px solid var(--hairline);
+  padding: 64px 24px;
+  display: flex;
+  justify-content: center;
+}
+
+.footerContent {
+  max-width: 1200px;
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 32px;
+}
+
+.footerBrand {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.footerLogo {
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+}
+
+.footerCopy {
+  font-size: 12px;
+  color: var(--ink-muted-48);
+  margin: 0;
+}
+
+.footerLinks {
+  display: flex;
+  gap: 24px;
+}
+
+.footerLink {
+  text-decoration: none;
+  font-size: 13px;
+  color: var(--ink-muted-80);
+  transition: color 0.2s ease;
+}
+
+.footerLink:hover {
+  color: var(--primary);
+}
+
+/* Animations */
+@keyframes logoPulse {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.1); filter: brightness(1.2); }
+  100% { transform: scale(1); }
+}
+
+/* Responsive Breakpoints */
+@media (max-width: 900px) {
+  .heroTitle {
+    font-size: 48px;
+  }
+  .heroDesc {
+    font-size: 18px;
+  }
+  .sectionTitle {
+    font-size: 32px;
+  }
+  .featuresGrid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .ctaTitle {
+    font-size: 34px;
+  }
+}
+
+@media (max-width: 600px) {
+  .heroSection {
+    padding: 80px 16px 60px 16px;
+  }
+  .heroTitle {
+    font-size: 38px;
+  }
+  .heroDesc {
+    font-size: 16px;
+    margin-bottom: 28px;
+  }
+  .demoSection {
+    padding: 60px 16px;
+  }
+  .featuresSection {
+    padding: 60px 16px;
+  }
+  .featuresGrid {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+  .ctaSection {
+    padding: 80px 16px;
+  }
+  .ctaTitle {
+    font-size: 26px;
+  }
+  .ctaDesc {
+    font-size: 16px;
+  }
+  .footerContent {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 20px;
+  }
+  .footerLinks {
+    width: 100%;
+    justify-content: space-between;
+  }
+  .headerActions {
+    gap: 8px;
+  }
+  .loginBtn {
+    display: none; /* Hide login button in header on mobile to conserve space */
+  }
 }

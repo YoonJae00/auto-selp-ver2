@@ -31,6 +31,12 @@ This document is the current implementation snapshot. For active backlog items, 
 6. GitHub #35: CI/CD pipeline
    - Add GitHub Actions for automated tests and deployment checks.
 
+7. GitHub #47: 내일할일 도매처 Naver/Coupang 등록 양식 대응 및 AI 가공 파이프라인 연계
+   - '내일할일' Excel 레이아웃의 데이터 파싱 및 column mapping 연동
+   - Naver Smart Store 및 Coupang Wing 전용 대량 엑셀 등록 서식 구조 정의 및 export API 구현
+   - 네이버/쿠팡 노출 가이드(글자수 제한, 상표권/금지어 필터링, 검색 태그 추출)에 맞춤화된 AI 가공 프롬프트 및 파이프라인 추가
+   - 상품 목록 Dashboard에서 네이버/쿠팡 전용 엑셀 다운로드 UI 통합
+
 ## 2. Implemented Backend
 
 ### Auth Service (Port 8001)
@@ -76,7 +82,8 @@ This document is the current implementation snapshot. For active backlog items, 
 - **PillButton Upgrade (NEW)**: Added support for `disabled` prop on `PillButton` to control double-form submissions.
 - **Real-Time Product List Syncing (NEW)**: Integrated the local product processing grid (`/process`) with the global Zustand `taskStore`. The UI now dynamically overlays progress (`processing`, `completed`, `failed` statuses, AI refined names, and keywords) in real-time as Celery tasks run in the background (Approach 2), with an automatic DB refetch exactly once when the task finishes.
 - **Product Processing UX Enhancements (NEW)**: Added a dynamic page size selection filter dropdown (10, 30, 50, 100, 200 products) with an optimized 30-product default view. Added a native checkbox selector in the table's first column header (`선택` column of `<thead>`) to handle page-wide select-all toggle, replacing the secondary `PillButton` control for better visual clarity and standard UX conventions.
-- **Sidebar Clickability & Layout Alignment Fix (NEW)**: Resolved sidebar unclickability and icon misalignment issues on dense pages (such as `/process`) by adding a stacking context (`z-index: 100`) to `.sidebar` and setting `display: none` on `.sidebarCollapsed .navLabel`. Also resolved the ultimate root cause of UI unresponsiveness: fixed a critical React infinite rendering loop in `ProcessPage`'s task synchronization hook by replacing a state-driven previous task tracker with `useRef`.
+- **Sidebar Clickability, Layout Alignment, & Automatic Collapsing Fix (NEW)**: Resolved sidebar unclickability and icon misalignment issues on dense pages (such as `/process`) by adding a stacking context (`z-index: 100`) to `.sidebar` and setting `display: none` on `.sidebarCollapsed .navLabel`. Also resolved the ultimate root cause of UI unresponsiveness: fixed a critical React infinite rendering loop in `ProcessPage`'s task synchronization hook by replacing a state-driven previous task tracker with `useRef`. Additionally, fixed the automatic sidebar collapse regression for dense workspaces (`/process`, `/products`, `/upload`) by implementing workspace-aware separate localStorage preferences (`autoselp.sidebarCollapsed.dense` and `autoselp.sidebarCollapsed.normal`) to prevent a global user toggle preference from permanently disabling the automatic page-specific collapse behavior.
+- **Premium Landing Page Redesign (NEW)**: Completely overhauled the landing page with an Apple-inspired minimalist design, featuring high-fidelity responsive sections, a frosted-glass header with primary and secondary pill buttons, and an interactive **Live Task Graph** (`LiveTaskGraph.tsx`) that visualizes Auto-Selp's 5-stage AI processing pipeline (Upload, Refining, Keywords & Trademark, Category Mapping, Smart Upsert & Sync) with glowing SVG animated flows and live data panels.
 
 ## 4. Data Model Snapshot
 
