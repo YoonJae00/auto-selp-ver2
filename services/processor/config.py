@@ -4,6 +4,8 @@ class Settings(BaseSettings):
     DATABASE_URL: str
     REDIS_URL: str = "redis://redis:6379/0"
     SECRET_KEY: str = "yoursecretkeychangeit"
+    MARKETPLACE_BASE_URL: str = "http://marketplace:8003"
+    INTERNAL_SERVICE_TOKEN: str = "change-in-production"
     
     # Platform APIs
     NAVER_API_BASE_URL: str = "https://api.naver.com"
