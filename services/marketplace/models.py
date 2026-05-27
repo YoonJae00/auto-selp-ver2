@@ -52,7 +52,7 @@ class MarketAccount(Base):
     )
     drafts: Mapped[list["MarketListingDraft"]] = relationship(
         back_populates="market_account",
-        passive_deletes=True,
+        passive_deletes="all",
     )
 
 

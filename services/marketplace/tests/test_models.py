@@ -1,4 +1,7 @@
-from sqlalchemy import Float, Integer, UniqueConstraint
+import uuid
+
+from sqlalchemy import Float, Integer, UniqueConstraint, create_engine, event, select
+from sqlalchemy.orm import Session
 
 from models import (
     MarketAccount,
@@ -141,4 +144,76 @@ def test_market_account_has_no_user_market_unique_constraint():
 def test_market_account_drafts_relationship_uses_passive_deletes():
     drafts_relationship = MarketAccount.__mapper__.relationships["drafts"]
 
-    assert drafts_relationship.passive_deletes is True
+    assert drafts_relationship.passive_deletes == "all"
+
+
+def test_deleting_account_with_loaded_drafts_relies_on_fk_cascade_without_nullifying_updates():
+    engine = create_engine("sqlite:///:memory:")
+
+    @event.listens_for(engine, "connect")
+    def _enable_sqlite_fk(dbapi_connection, _connection_record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
+    MarketAccount.__table__.create(bind=engine)
+    MarketAccountSettings.__table__.create(bind=engine)
+    MarketListingDraft.__table__.create(bind=engine)
+
+    account_id = uuid.uuid4()
+    draft_id = uuid.uuid4()
+
+    with Session(engine) as session:
+        account = MarketAccount(
+            id=account_id,
+            user_id=uuid.uuid4(),
+            market_code="naver",
+            display_name="Main account",
+            credentials_encrypted="enc",
+        )
+        draft = MarketListingDraft(
+            id=draft_id,
+            source_product_id=uuid.uuid4(),
+            source_product_version="v1",
+            market_account_id=account_id,
+            market_code="naver",
+            source_snapshot={},
+            generated_payload={},
+            validation_result={},
+            recipe_versions={},
+            adapter_version="adapter-v1",
+        )
+        session.add(account)
+        session.add(draft)
+        session.commit()
+
+    statements: list[str] = []
+
+    @event.listens_for(engine, "before_cursor_execute")
+    def _capture_sql(_conn, _cursor, statement, _parameters, _context, _executemany):
+        statements.append(statement)
+
+    try:
+        with Session(engine) as session:
+            account = session.get(MarketAccount, account_id)
+            assert account is not None
+            assert len(account.drafts) == 1
+
+            session.delete(account)
+            session.commit()
+
+        with Session(engine) as session:
+            assert session.scalar(
+                select(MarketListingDraft).where(MarketListingDraft.id == draft_id)
+            ) is None
+    finally:
+        event.remove(engine, "before_cursor_execute", _capture_sql)
+        event.remove(engine, "connect", _enable_sqlite_fk)
+        engine.dispose()
+
+    nullify_updates = [
+        stmt
+        for stmt in statements
+        if "UPDATE market_listing_drafts" in stmt and "market_account_id" in stmt
+    ]
+    assert not nullify_updates
