@@ -76,6 +76,7 @@ This document is the current implementation snapshot. For active backlog items, 
 - Marketplace-specific pricing policy calculation with cost, proposed sale price, expected profit, and achieved margin summaries.
 - Versioned draft payloads, structured validation, and PostgreSQL-verified concurrency protection for stale generation, active draft insert contention, and `submitting` drafts.
 - Authenticated draft query APIs for the future registration inbox.
+- CORS middleware configured to allow cross-origin requests from the Next.js frontend, preventing 'Failed to fetch' browser errors.
 - External marketplace submission calls and registration UI are intentionally deferred.
 
 ## 3. Implemented Frontend

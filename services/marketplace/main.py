@@ -2,6 +2,7 @@ import asyncio
 import uuid
 
 from fastapi import Depends, FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import and_, select
 from sqlalchemy.exc import InterfaceError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -36,6 +37,14 @@ from security import encrypt_credentials
 from tasks import generate_market_listing_drafts
 
 app = FastAPI(title="Auto-Selp Marketplace Listing")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://localhost"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 DB_STARTUP_MAX_ATTEMPTS = 5
 DB_STARTUP_RETRY_DELAY_SECONDS = 2.0
