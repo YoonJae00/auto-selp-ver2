@@ -105,6 +105,7 @@ async def test_run_db_pipeline_delegates_products_to_langgraph_and_preserves_pro
 
     import_id = uuid.uuid4()
     product_id = uuid.uuid4()
+    another_product_id = uuid.uuid4()
     import_run = SimpleNamespace(
         id=import_id,
         status="pending",
@@ -114,6 +115,11 @@ async def test_run_db_pipeline_delegates_products_to_langgraph_and_preserves_pro
     product = SimpleNamespace(
         id=product_id,
         original_name="원본 상품명",
+        status="pending",
+    )
+    another_product = SimpleNamespace(
+        id=another_product_id,
+        original_name="두번째 상품명",
         status="pending",
     )
 
@@ -134,16 +140,20 @@ async def test_run_db_pipeline_delegates_products_to_langgraph_and_preserves_pro
     mock_db = AsyncMock()
     mock_db.execute = AsyncMock(side_effect=[
         FakeResult(scalar=import_run),
-        FakeResult(scalars=[product]),
+        FakeResult(scalars=[product, another_product]),
     ])
 
     mock_task = MagicMock()
 
+    marketplace_client = object()
+    seen_marketplace_clients = []
+
     async def fake_process_product_with_graph(context):
-        assert context.product is product
+        assert context.product is product or context.product is another_product
         assert context.import_run is import_run
-        context.completed_rows.append({"name": "원본 상품명", "stages": []})
-        context.all_warnings[0] = [{"keyword": "브랜드"}]
+        seen_marketplace_clients.append(context.marketplace_client)
+        context.completed_rows.append({"name": context.product.original_name, "stages": []})
+        context.all_warnings[context.row_index] = [{"keyword": "브랜드"}]
         context.import_run.success_count += 1
         return {"refined_name": "정제 상품명"}
 
@@ -151,6 +161,7 @@ async def test_run_db_pipeline_delegates_products_to_langgraph_and_preserves_pro
          patch("tasks.get_llm_client") as mock_get_llm, \
          patch("tasks.KeywordEngine") as mock_keyword_engine_class, \
          patch("tasks.CategoryMapper") as mock_category_mapper_class, \
+         patch("tasks.MarketplaceClient", return_value=marketplace_client) as mock_marketplace_client_class, \
          patch("tasks.process_product_with_graph", side_effect=fake_process_product_with_graph) as mock_graph:
         mock_session_class.return_value.__aenter__.return_value = mock_db
         mock_get_llm.return_value = object()
@@ -160,9 +171,11 @@ async def test_run_db_pipeline_delegates_products_to_langgraph_and_preserves_pro
         result = await _run_db_pipeline(mock_task, str(import_id), {}, "gemini", True)
 
     assert result["status"] == "Completed"
-    assert result["total"] == 1
-    assert mock_graph.await_count == 1
+    assert result["total"] == 2
+    assert mock_graph.await_count == 2
     assert import_run.status == "completed"
+    mock_marketplace_client_class.assert_called_once_with()
+    assert seen_marketplace_clients == [marketplace_client, marketplace_client]
 
     progress_meta = mock_task.update_state.call_args.kwargs["meta"]
     assert set(progress_meta) == {
@@ -176,4 +189,4 @@ async def test_run_db_pipeline_delegates_products_to_langgraph_and_preserves_pro
     }
     assert progress_meta["stage"] == "completed_row"
     assert progress_meta["percent"] == 100
-    assert progress_meta["completed_rows"][0]["name"] == "원본 상품명"
+    assert [row["name"] for row in progress_meta["completed_rows"]] == ["원본 상품명", "두번째 상품명"]
