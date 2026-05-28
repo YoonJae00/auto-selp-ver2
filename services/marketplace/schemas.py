@@ -84,6 +84,7 @@ class MarketListingDraftResponse(BaseModel):
     id: uuid.UUID
     source_product_id: uuid.UUID
     source_product_version: str
+    market_account_id: uuid.UUID
     market_code: str
     draft_kind: str
     status: str
@@ -94,8 +95,10 @@ class MarketListingDraftResponse(BaseModel):
     expected_profit: int | None
     expected_margin_rate: float | None
     primary_image_url: str | None
+    source_snapshot: dict[str, Any]
     validation_result: dict[str, Any]
     generated_payload: dict[str, Any]
+    override_patch: dict[str, Any] | None = None
     recipe_versions: dict[str, str]
     adapter_version: str
     created_at: datetime
@@ -104,3 +107,29 @@ class MarketListingDraftResponse(BaseModel):
 
 class MarketListingDraftListResponse(BaseModel):
     items: list[MarketListingDraftResponse]
+
+
+class MarketListingDraftUpdate(BaseModel):
+    status: str | None = None
+    override_patch: dict[str, Any] | None = None
+
+
+class SubmissionCreate(BaseModel):
+    market_account_id: uuid.UUID
+    draft_ids: list[uuid.UUID]
+
+
+class SubmissionJobResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    market_account_id: uuid.UUID
+    market_code: str
+    status: str
+    draft_count: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class SubmissionJobListResponse(BaseModel):
+    items: list[SubmissionJobResponse]

@@ -93,7 +93,7 @@ Note: older files under `docs/superpowers/plans/` are historical implementation 
 
 ## Phase 7: Marketplace Listing
 - [x] Marketplace draft foundation: service boundary, snapshot contract, account settings, Smart Store/Coupang initial draft adapters, draft generation jobs, and processor success notification.
-- [ ] Unified registration inbox and per-market settings/editing UI.
-- [ ] External Smart Store/Coupang submission jobs, retry behavior, and registration history.
+- [x] Unified registration inbox and per-market settings/editing UI.
+- [ ] External Smart Store/Coupang submission jobs, retry behavior, and registration history. ([GitHub #52](https://github.com/YoonJae00/auto-selp-ver2/issues/52))
 - [ ] Recipe extensions for SEO titles and category-specific attributes.
 - [ ] Margin calculator UI, bulk price-policy application, and per-product price-override preview.
