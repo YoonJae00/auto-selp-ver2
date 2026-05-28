@@ -59,3 +59,48 @@ class DraftResult(BaseModel):
     validation_result: dict[str, Any] = Field(default_factory=dict)
     adapter_version: str
     recipe_versions: dict[str, str] = Field(default_factory=dict)
+
+
+class DraftGenerationRequest(BaseModel):
+    source_product_id: uuid.UUID
+    source_product_updated_at: datetime
+    source_user_id: uuid.UUID
+    reason: str = "processing_completed"
+
+
+class DraftGenerationJobResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    source_product_id: uuid.UUID
+    requested_source_version: str
+    reason: str
+    status: str
+
+
+class MarketListingDraftResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    source_product_id: uuid.UUID
+    source_product_version: str
+    market_code: str
+    draft_kind: str
+    status: str
+    display_title: str | None
+    category_id: str | None
+    sale_price: int | None
+    cost_price: int | None
+    expected_profit: int | None
+    expected_margin_rate: float | None
+    primary_image_url: str | None
+    validation_result: dict[str, Any]
+    generated_payload: dict[str, Any]
+    recipe_versions: dict[str, str]
+    adapter_version: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class MarketListingDraftListResponse(BaseModel):
+    items: list[MarketListingDraftResponse]
