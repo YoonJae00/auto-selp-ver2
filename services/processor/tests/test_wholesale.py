@@ -1,3 +1,5 @@
+import os
+os.environ.setdefault("INTERNAL_SERVICE_TOKEN", "internal-test-token")
 import pytest
 import uuid
 import pandas as pd
@@ -6,6 +8,7 @@ from fastapi import HTTPException
 from sqlalchemy import select, and_, func
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from database import Base, engine
+
 from config import settings
 from schemas import ProcessRequest
 import main as processor_main

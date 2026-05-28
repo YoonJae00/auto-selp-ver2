@@ -1,6 +1,6 @@
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from datetime import datetime
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Any
 from uuid import UUID
 
 class ProcessRequest(BaseModel):
@@ -119,3 +119,36 @@ class WholesaleSiteResponse(WholesaleSiteBase):
     created_at: datetime
     updated_at: datetime
     model_config = ConfigDict(from_attributes=True)
+
+
+class MarketplaceSnapshotPrice(BaseModel):
+    wholesale: Optional[int] = None
+    retail: Optional[int] = None
+    minimum_selling: Optional[int] = None
+
+
+class MarketplaceSnapshotImages(BaseModel):
+    list: List[str] = []
+    detail_content: Optional[str] = None
+
+
+class MarketplaceSnapshotCategory(BaseModel):
+    category_id: Optional[str] = None
+    category_path: Optional[str] = None
+    mapped_attributes: Optional[Dict[str, Any]] = None
+
+
+class MarketplaceSnapshotResponse(BaseModel):
+    product_id: UUID
+    version: str
+    product_code: Optional[str] = None
+    wholesale_product_id: Optional[str] = None
+    original_name: str
+    refined_name: Optional[str] = None
+    brand_name: Optional[str] = None
+    keywords: List[str] = Field(default_factory=list)
+    origin: Optional[str] = None
+    price: MarketplaceSnapshotPrice
+    images: MarketplaceSnapshotImages
+    options: List[Dict[str, Any]] = []
+    market_categories: Dict[str, MarketplaceSnapshotCategory] = {}

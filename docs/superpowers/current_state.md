@@ -1,6 +1,6 @@
 # Auto-Selp Project Implementation State
 
-Last updated: 2026-05-22
+Last updated: 2026-05-28
 
 This document is the current implementation snapshot. For active backlog items, use `TODO.md` and GitHub open issues as the source of truth. Older files under `docs/superpowers/plans/` are historical planning artifacts; unchecked boxes there are not reliable status indicators.
 
@@ -58,6 +58,19 @@ This document is the current implementation snapshot. For active backlog items, 
 - **PostgreSQL Product Management DB (NEW)**: Core/Platform 1:N extensible database schema utilizing JSONB for schema-less marketplace customization. Direct Celery upsert to `products` and `product_platform_mappings` per row.
 - **DB REST APIs (NEW)**: `POST /process-db` (bulk inserts products as pending and starts Celery), `GET /products` (paginated, searchable, status-filtered, import-batch filtered), `POST /products/export` (streams memory-buffered Excel), and `GET /imports` (lists import history).
 - **Wholesale Management & Smart Upsert (NEW, GitHub #46)**: Wholesale-site metadata and JSONB column mappings, supplier upload schema ingestion, formatted option-price parsing, and SMART UPSERT change tracking for price/stock updates.
+- **Marketplace Draft Notification (NEW)**: Successful DB product processing now commits the completed product first, then best-effort requests marketplace draft generation through the internal marketplace API. Notification failures are stored as `marketplace_generation` warnings and do not fail the processed product.
+
+### Marketplace Listing Service (Port 8003)
+
+- Dedicated marketplace API/worker boundary for listing preparation, separate from the processor service.
+- Market account storage with encrypted credentials and account-scoped marketplace settings for connection, fulfillment, claim, listing defaults, and generation rules.
+- Protected internal draft-generation job API and Celery worker task that retrieves processor snapshots and generates reviewable listing drafts.
+- Protected processor product snapshot contract containing product-specific registration ingredients, including origin, images, detail content, options, prices, and market category mappings.
+- Smart Store and Coupang adapter-based draft generation from processor snapshots, storing channel-native JSON payloads with adapter and recipe versions.
+- Marketplace-specific pricing policy calculation with cost, proposed sale price, expected profit, and achieved margin summaries.
+- Versioned draft payloads, structured validation, and PostgreSQL-verified concurrency protection for stale generation, active draft insert contention, and `submitting` drafts.
+- Authenticated draft query APIs for the future registration inbox.
+- External marketplace submission calls and registration UI are intentionally deferred.
 
 ## 3. Implemented Frontend
 

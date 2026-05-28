@@ -5,6 +5,12 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
@@ -22,6 +28,7 @@ services:
     depends_on:
       - auth
       - processor
+      - marketplace
 
   auth:
     build: ./services/auth
@@ -51,6 +58,29 @@ services:
       - redis
     volumes:
       - uploads_data:/app/uploads
+    restart: always
+
+  marketplace:
+    build: ./services/marketplace
+    env_file: .env
+    ports:
+      - "8003:8003"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    restart: unless-stopped
+
+  marketplace-worker:
+    build: ./services/marketplace
+    command: celery -A tasks.celery_app worker --loglevel=info
+    env_file: .env
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
     restart: always
 
   kipris-mcp:
