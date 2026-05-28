@@ -174,6 +174,7 @@ def test_deleting_account_with_loaded_drafts_relies_on_fk_cascade_without_nullif
         draft = MarketListingDraft(
             id=draft_id,
             source_product_id=uuid.uuid4(),
+            source_user_id=account.user_id,
             source_product_version="v1",
             market_account_id=account_id,
             market_code="naver",
