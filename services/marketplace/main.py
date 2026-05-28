@@ -29,7 +29,6 @@ from schemas import (
 from security import encrypt_credentials
 from tasks import generate_market_listing_drafts
 
-
 app = FastAPI(title="Auto-Selp Marketplace Listing")
 
 DB_STARTUP_MAX_ATTEMPTS = 5

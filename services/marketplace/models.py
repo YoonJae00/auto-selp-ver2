@@ -115,9 +115,7 @@ class MarketDraftGenerationJob(Base):
         server_default=func.now(),
         onupdate=func.now(),
     )
-    completed_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class MarketListingDraft(Base):
@@ -140,9 +138,6 @@ class MarketListingDraft(Base):
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     source_product_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), index=True, nullable=False
-    )
-    source_user_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), index=True, nullable=False
     )
     source_product_version: Mapped[str] = mapped_column(String(100), nullable=False)
