@@ -28,7 +28,6 @@ export default function AiMallLayout({
   const pathname = usePathname();
   const isDenseWorkspace = DENSE_WORKSPACE_PATHS.some((path) => pathname?.startsWith(path));
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [hasSidebarPreference, setHasSidebarPreference] = useState(false);
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
@@ -37,22 +36,17 @@ export default function AiMallLayout({
   }, [isLoading, isAuthenticated, router]);
 
   useEffect(() => {
-    const stored = window.localStorage.getItem('autoselp.sidebarCollapsed');
+    const key = isDenseWorkspace 
+      ? 'autoselp.sidebarCollapsed.dense' 
+      : 'autoselp.sidebarCollapsed.normal';
+    
+    const stored = window.localStorage.getItem(key);
     if (stored === null) {
       setSidebarCollapsed(isDenseWorkspace);
-      setHasSidebarPreference(false);
-      return;
+    } else {
+      setSidebarCollapsed(stored === 'true');
     }
-
-    setSidebarCollapsed(stored === 'true');
-    setHasSidebarPreference(true);
-  }, [isDenseWorkspace]);
-
-  useEffect(() => {
-    if (!hasSidebarPreference) {
-      setSidebarCollapsed(isDenseWorkspace);
-    }
-  }, [hasSidebarPreference, isDenseWorkspace]);
+  }, [pathname, isDenseWorkspace]);
 
   if (isLoading) {
     return (
@@ -70,10 +64,12 @@ export default function AiMallLayout({
   };
 
   const toggleSidebar = () => {
-    setHasSidebarPreference(true);
     setSidebarCollapsed((current) => {
       const next = !current;
-      window.localStorage.setItem('autoselp.sidebarCollapsed', String(next));
+      const key = isDenseWorkspace 
+        ? 'autoselp.sidebarCollapsed.dense' 
+        : 'autoselp.sidebarCollapsed.normal';
+      window.localStorage.setItem(key, String(next));
       return next;
     });
   };

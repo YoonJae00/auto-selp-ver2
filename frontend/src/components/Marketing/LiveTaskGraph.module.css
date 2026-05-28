@@ -1,0 +1,517 @@
+.container {
+  width: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 20px;
+}
+
+.glassPanel {
+  background: rgba(20, 20, 25, 0.75);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 24px;
+  padding: 32px;
+  box-shadow: rgba(0, 0, 0, 0.4) 0px 30px 60px -12px, rgba(255, 255, 255, 0.03) 0px 0px 0px 1px inset;
+  color: #ffffff;
+  overflow: hidden;
+}
+
+/* Header & Controls */
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  padding-bottom: 20px;
+  margin-bottom: 32px;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.pulseIndicator {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.pulseDot {
+  width: 8px;
+  height: 8px;
+  background-color: #30d158; /* iOS Green */
+  border-radius: 50%;
+  display: inline-block;
+  box-shadow: 0 0 12px #30d158;
+  animation: pulseGreen 1.8s infinite ease-in-out;
+}
+
+.headerText {
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.controlBtn {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 9999px;
+  color: #ffffff;
+  padding: 8px 16px;
+  font-family: var(--font-body);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.controlBtn:hover {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.2);
+  transform: translateY(-1px);
+}
+
+.controlBtn:active {
+  transform: translateY(1px);
+}
+
+.playBtn {
+  background: var(--primary);
+  border-color: transparent;
+  box-shadow: 0 4px 12px rgba(0, 102, 204, 0.3);
+}
+
+.playBtn:hover {
+  background: var(--primary-focus);
+  box-shadow: 0 6px 16px rgba(0, 102, 204, 0.4);
+}
+
+.pauseBtn {
+  background: rgba(255, 255, 255, 0.15);
+  border-color: rgba(255, 255, 255, 0.25);
+}
+
+.resetBtn {
+  opacity: 0.8;
+}
+
+.speedSelect {
+  display: flex;
+  background: rgba(255, 255, 255, 0.04);
+  padding: 3px;
+  border-radius: 9999px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  margin-left: 8px;
+}
+
+.speedBtn {
+  background: transparent;
+  border: none;
+  color: rgba(255, 255, 255, 0.5);
+  padding: 5px 12px;
+  border-radius: 9999px;
+  font-family: var(--font-body);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.speedActive {
+  background: rgba(255, 255, 255, 0.12);
+  color: #ffffff;
+}
+
+/* Layout Split */
+.graphLayout {
+  display: grid;
+  grid-template-columns: 1.2fr 0.8fr;
+  gap: 40px;
+  align-items: start;
+}
+
+@media (max-width: 1024px) {
+  .graphLayout {
+    grid-template-columns: 1fr;
+    gap: 32px;
+  }
+}
+
+/* Graph Area */
+.graphArea {
+  position: relative;
+  height: 240px;
+  display: flex;
+  align-items: center;
+  padding: 0 40px;
+}
+
+.nodesWrapper {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  position: relative;
+  z-index: 2;
+}
+
+.nodeContainer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+  position: relative;
+  width: 80px;
+}
+
+.nodeIconWrapper {
+  width: 56px;
+  height: 56px;
+  background: rgba(30, 30, 40, 0.8);
+  border: 2px solid rgba(255, 255, 255, 0.15);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+.nodeIcon {
+  font-size: 22px;
+  z-index: 2;
+}
+
+.nodeGlowRing {
+  position: absolute;
+  top: -2px;
+  left: -2px;
+  right: -2px;
+  bottom: -2px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.nodeLabel {
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.5);
+  text-align: center;
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  white-space: nowrap;
+}
+
+/* Node States */
+.nodePassed .nodeIconWrapper {
+  border-color: rgba(99, 102, 241, 0.6);
+  background: rgba(99, 102, 241, 0.1);
+}
+
+.nodePassed .nodeLabel {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.nodeActive .nodeIconWrapper {
+  border-color: #0066cc;
+  background: rgba(0, 102, 204, 0.2);
+  transform: scale(1.15);
+  box-shadow: 0 0 20px rgba(0, 102, 204, 0.5);
+}
+
+.nodeActive .nodeLabel {
+  color: #ffffff;
+  font-weight: 600;
+}
+
+.nodeActive .nodeGlowRing {
+  border-color: #0066cc;
+  animation: rotateGlow 3s linear infinite;
+}
+
+.pulseRadar {
+  position: absolute;
+  top: 18px;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  border: 2px solid #0066cc;
+  animation: radarPulse 2s infinite ease-out;
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* Edges SVG styling */
+.svgEdges {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.edgeBg {
+  stroke: rgba(255, 255, 255, 0.08);
+  stroke-width: 3px;
+  stroke-linecap: round;
+  transition: stroke 0.4s ease;
+}
+
+.edgeBg.edgePassed {
+  stroke: rgba(99, 102, 241, 0.4);
+}
+
+.edgeFlow {
+  stroke: url(#edgeGrad);
+  stroke-width: 3px;
+  stroke-linecap: round;
+  stroke-dasharray: 10, 50;
+  animation: flowParticle 1.5s linear infinite;
+}
+
+/* Details Panel */
+.detailsArea {
+  min-height: 380px;
+}
+
+.detailsCard {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 20px;
+  padding: 24px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.detailsHeader {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.detailsIcon {
+  font-size: 32px;
+}
+
+.detailsTitleWrapper {
+  display: flex;
+  flex-direction: column;
+}
+
+.detailsTitle {
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 600;
+  margin: 0;
+  letter-spacing: -0.01em;
+}
+
+.detailsSubtitle {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  color: var(--primary);
+  text-transform: uppercase;
+  margin-top: 2px;
+}
+
+.detailsDesc {
+  font-family: var(--font-body);
+  font-size: 14px;
+  line-height: 1.55;
+  color: rgba(255, 255, 255, 0.7);
+  margin: 0 0 24px 0;
+}
+
+/* Input Output Area */
+.ioWrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  flex: 1;
+}
+
+.ioBox {
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 12px;
+  padding: 16px;
+}
+
+.ioLabel {
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: rgba(255, 255, 255, 0.4);
+  display: block;
+  margin-bottom: 10px;
+}
+
+.ioContentInput {
+  font-family: monospace;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.9);
+  line-height: 1.4;
+  word-break: break-all;
+}
+
+.ioContentOutput {
+  font-family: var(--font-body);
+  font-size: 13px;
+  color: #ffffff;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.outputRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  padding-bottom: 8px;
+}
+
+.outputRow:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.outputKey {
+  color: rgba(255, 255, 255, 0.5);
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+.outputVal {
+  text-align: right;
+  word-break: break-word;
+}
+
+.outputBadgeList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.keywordBadge {
+  background: rgba(0, 102, 204, 0.15);
+  color: #2997ff;
+  border: 1px solid rgba(0, 102, 204, 0.3);
+  padding: 3px 8px;
+  border-radius: 9999px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.alertVal {
+  color: #ff9f0a; /* iOS Orange */
+  font-weight: 600;
+}
+
+.dangerVal {
+  color: #ff453a; /* iOS Red */
+  font-weight: 600;
+  background: rgba(255, 69, 58, 0.1);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+/* Animations */
+@keyframes pulseGreen {
+  0% {
+    box-shadow: 0 0 0 0 rgba(48, 209, 88, 0.7);
+  }
+  70% {
+    box-shadow: 0 0 0 8px rgba(48, 209, 88, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(48, 209, 88, 0);
+  }
+}
+
+@keyframes flowParticle {
+  to {
+    stroke-dashoffset: -60;
+  }
+}
+
+@keyframes radarPulse {
+  0% {
+    transform: scale(0.9);
+    opacity: 0.8;
+  }
+  100% {
+    transform: scale(1.4);
+    opacity: 0;
+  }
+}
+
+@keyframes rotateGlow {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+/* Mobile responsive node layouts styling */
+@media (max-width: 600px) {
+  .graphArea {
+    height: 480px;
+    padding: 40px 0;
+    justify-content: center;
+  }
+  
+  .nodesWrapper {
+    flex-direction: column;
+    align-items: center;
+    height: 100%;
+    justify-content: space-between;
+  }
+  
+  .nodeContainer {
+    width: auto;
+    flex-direction: row;
+    gap: 16px;
+    align-items: center;
+  }
+  
+  .nodeLabel {
+    text-align: left;
+  }
+  
+  .svgEdges {
+    display: none; /* Hide edges on pure mobile stack */
+  }
+  
+  .controlBtn {
+    padding: 6px 12px;
+    font-size: 12px;
+  }
+  
+  .speedSelect {
+    display: none; /* Hide speed control on tight mobile */
+  }
+}

@@ -30,6 +30,7 @@ Note: older files under `docs/superpowers/plans/` are historical implementation 
 - [ ] **User API Key Management**: UI for users to input their own Naver/Coupang keys. GitHub #33
 - [ ] **Mobile Responsive UI**: Adjust frontend for tablets and phones. GitHub #34
 - [x] **Product Processing Page UX/UI Improvement**: Relocate processing button to table toolbar, implement floating bar, top pagination, name search, dynamic page sizing (10/30/50/100/200), and table-header checkbox select-all control.
+- [x] **Premium Landing Page Redesign**: Complete Apple-inspired minimalist redesign with high-fidelity responsive sections, a frosted-glass header, and an interactive **Live Task Graph** demonstrating Auto-Selp's 5-stage AI processing pipeline in real-time.
 - [ ] **CI/CD Pipeline**: Github Actions for automated testing and deployment. GitHub #35
 
 
@@ -51,7 +52,7 @@ Note: older files under `docs/superpowers/plans/` are historical implementation 
 - [x] **상표권 검증 모달 호출 제거**: 트레이스 뷰 중심 UX로 이동. Legacy `TrademarkModal.tsx` 파일과 관련 CSS 정리는 Phase 5 #43에서 함께 처리.
 - [x] **모달 스크롤 수정**: `min-height: 0` + 명시적 height 설정
 - [x] **Docker 이미지 리빌드**: `docker compose build worker` 워크플로우 확립
-- [x] **Sidebar Clickability & Layout Alignment Fix**: Resolved sidebar unclickability and icon misalignment issues on dense pages (such as `/process`) by adding a stacking context (`z-index: 100`) to `.sidebar` and setting `display: none` on `.sidebarCollapsed .navLabel`. Also resolved the ultimate root cause of UI unresponsiveness: fixed a critical React infinite rendering loop in `ProcessPage`'s task synchronization hook by replacing a state-driven previous task tracker with `useRef`.
+- [x] **Sidebar Clickability, Layout Alignment, & Automatic Collapsing Fix**: Resolved sidebar unclickability and icon misalignment issues on dense pages (such as `/process`) by adding a stacking context (`z-index: 100`) to `.sidebar` and setting `display: none` on `.sidebarCollapsed .navLabel`. Also resolved the ultimate root cause of UI unresponsiveness: fixed a critical React infinite rendering loop in `ProcessPage`'s task synchronization hook by replacing a state-driven previous task tracker with `useRef`. Additionally, fixed the automatic sidebar collapse regression for dense workspaces (`/process`, `/products`, `/upload`) by implementing workspace-aware separate localStorage preferences (`autoselp.sidebarCollapsed.dense` and `autoselp.sidebarCollapsed.normal`) to prevent a global user toggle preference from permanently disabling the automatic page-specific collapse behavior.
 
 
 ## Phase 5: Continuous Improvement & Knowledge Compounding (Completed)
@@ -70,6 +71,12 @@ Note: older files under `docs/superpowers/plans/` are historical implementation 
   - 의심 키워드 없음: `상표권 이슈 없음` 표시
   - `filtered` 데이터를 KIPRIS 확인/LLM 추측으로 구분
   - Legacy `TrademarkModal.tsx`와 미사용 CSS 정리
+- [/] **내일할일 도매처 Naver/Coupang 등록 양식 대응 및 AI 가공 파이프라인 연계**: GitHub #47
+  - [ ] '내일할일' 도매처 전용 엑셀 업로드 기본 컬럼 매핑 설계 및 DB Seed 등록
+  - [x] Naver Smart Store 및 Coupang Wing 엑셀 일괄 등록 서식 분석 및 DB 매핑 기획 완료 ([analysis_results.md](file:///Users/yoonjae/.gemini/antigravity-cli/brain/cadf0c75-03bf-4464-817c-0d707c7389c4/analysis_results.md))
+  - [ ] Naver Smart Store 및 Coupang Wing 엑셀 일괄 등록 서식 전용 익스포트 기능 개발
+  - [ ] 각 쇼핑몰 가이드라인(상품명 길이, 검색 키워드 태그, 카테고리 매핑)에 맞춘 특화 AI 가공 파이프라인 구현
+  - [ ] 상품 목록 페이지(`/products`)에 Naver/Coupang 대장 다운로드(내보내기) UI 및 액션 툴바 연동
 - [x] **상품 DB 마이그레이션**: 엑셀 업/다운로드 방식 → PostgreSQL 기반 상품 관리로 전환. GitHub #42
   - [x] **설계 완료**: [2026-05-20-product-db-migration.md](file:///home/yoonjae/auto-selp-ver2/docs/superpowers/plans/2026-05-20-product-db-migration.md) 스키마 상세 참조
   - [x] 상품 테이블 스키마 생성 및 적용 (확장형 Core/Platform 분리 구조)
