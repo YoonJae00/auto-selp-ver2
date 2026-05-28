@@ -1,6 +1,6 @@
 # Auto-Selp Project TODO
 
-Last updated: 2026-05-22
+Last updated: 2026-05-28
 
 Authoritative task sources:
 - GitHub open issues: #32, #33, #34, #35, #43, #45
@@ -83,3 +83,10 @@ Note: older files under `docs/superpowers/plans/` are historical implementation 
   - [x] `/wholesale-sites` CRUD API 및 `/process-db` 업그레이드 (도매처별 커스텀 템플릿 매핑 및 스마트 갱신 적용)
   - [x] Next.js `/upload` 도매처 관리 & Visual Column Mapper 드래그 앤 드롭 업로드 화면 개발
   - [x] `/products` 상품 목록에 도매처 필터, 업데이트 대기 필터, 변동 상태(가격/품절) 뱃지, disabled 쇼핑몰 동기화 버튼 추가
+
+## Phase 7: Marketplace Listing
+- [x] Marketplace draft foundation: service boundary, snapshot contract, account settings, Smart Store/Coupang initial draft adapters, draft generation jobs, and processor success notification.
+- [ ] Unified registration inbox and per-market settings/editing UI.
+- [ ] External Smart Store/Coupang submission jobs, retry behavior, and registration history.
+- [ ] Recipe extensions for SEO titles and category-specific attributes.
+- [ ] Margin calculator UI, bulk price-policy application, and per-product price-override preview.
