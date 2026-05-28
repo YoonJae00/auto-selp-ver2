@@ -9,6 +9,7 @@ from utils.category_mapper import CategoryMapper
 from utils.prompt_manager import PromptManager
 from utils.wholesale_upload import merge_product_warnings
 from clients.llm_factory import get_llm_client
+from clients.marketplace_client import MarketplaceClient
 from database import SessionLocal
 from graphs.product_processor import ProductProcessingContext, process_product_with_graph
 
@@ -262,6 +263,7 @@ async def _run_db_pipeline(
         llm_client = get_llm_client(llm_provider, prompt_manager)
         keyword_engine = KeywordEngine(llm_client, kipris_enabled=kipris_enabled)
         category_mapper = CategoryMapper()
+        marketplace_client = MarketplaceClient()
 
         for index, product in enumerate(products):
             original_name = product.original_name
@@ -288,6 +290,7 @@ async def _run_db_pipeline(
                 llm_client=llm_client,
                 keyword_engine=keyword_engine,
                 category_mapper=category_mapper,
+                marketplace_client=marketplace_client,
                 progress_emitter=emit_stage,
                 completed_rows=completed_rows,
                 all_warnings=all_warnings,

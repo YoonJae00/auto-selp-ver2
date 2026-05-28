@@ -63,7 +63,7 @@ class CancelledLLMClient:
         raise asyncio.CancelledError()
 
 
-def make_context(progress_events=None, db=None):
+def make_context(progress_events=None, db=None, marketplace_client=None):
     from graphs.product_processor import ProductProcessingContext
 
     product = SimpleNamespace(
@@ -92,6 +92,7 @@ def make_context(progress_events=None, db=None):
         llm_client=FakeLLMClient(),
         keyword_engine=FakeKeywordEngine(),
         category_mapper=FakeCategoryMapper(),
+        marketplace_client=marketplace_client,
         progress_emitter=emit,
         completed_rows=[],
         all_warnings={},
@@ -131,7 +132,8 @@ async def test_process_product_with_graph_success_updates_product_and_trace():
     from graphs import product_processor
 
     progress_events = []
-    context = make_context(progress_events)
+    marketplace_client = AsyncMock()
+    context = make_context(progress_events, marketplace_client=marketplace_client)
 
     async def fake_get_or_create_mapping(_runtime, _platform_name):
         return SimpleNamespace(category_id=None, category_path=None, sync_status="draft")
@@ -157,6 +159,7 @@ async def test_process_product_with_graph_success_updates_product_and_trace():
     assert context.completed_rows[0]["stages"][2]["naver_category"] == "50000001"
     assert context.all_warnings[0][0]["keyword"] == "브랜드"
     assert [event[0] for event in progress_events] == ["refining", "keywords", "categorizing"]
+    marketplace_client.request_draft_generation.assert_awaited_once_with(context.product)
 
 
 @pytest.mark.asyncio
@@ -217,3 +220,35 @@ async def test_process_product_with_graph_late_failure_restores_success_and_incr
     assert context.import_run.success_count == 5
     assert context.import_run.failed_count == 3
     assert context.completed_rows[0]["error"] == "commit exploded"
+
+
+@pytest.mark.asyncio
+async def test_process_product_with_graph_marketplace_failure_adds_warning_without_failure_state():
+    from graphs import product_processor
+
+    marketplace_client = AsyncMock()
+    marketplace_client.request_draft_generation = AsyncMock(side_effect=RuntimeError("notify failed"))
+    context = make_context([], marketplace_client=marketplace_client)
+
+    async def fake_get_or_create_mapping(_runtime, _platform_name):
+        return SimpleNamespace(category_id=None, category_path=None, sync_status="draft")
+
+    original = product_processor._get_or_create_mapping
+    product_processor._get_or_create_mapping = fake_get_or_create_mapping
+    try:
+        result = await product_processor.process_product_with_graph(context)
+    finally:
+        product_processor._get_or_create_mapping = original
+
+    assert "error" not in result
+    assert context.product.status == "completed"
+    assert context.import_run.success_count == 1
+    assert context.import_run.failed_count == 0
+    warnings = (context.product.warnings or {}).get("processing_warnings") or []
+    assert any(
+        warning.get("stage") == "marketplace_generation"
+        and warning.get("key") == "marketplace_generation"
+        and "notify failed" in warning.get("message", "")
+        for warning in warnings
+    )
+    assert context.db.commits == 3

@@ -39,6 +39,7 @@ class ProductProcessingContext:
     llm_client: Any
     keyword_engine: Any
     category_mapper: Any
+    marketplace_client: Any | None = None
     progress_emitter: ProgressEmitter = noop_progress_emitter
     completed_rows: list[dict[str, Any]] = field(default_factory=list)
     all_warnings: dict[int, list[dict[str, Any]]] = field(default_factory=dict)
@@ -211,6 +212,22 @@ async def persist_success(
     if runtime.context.import_run:
         runtime.context.import_run.success_count += 1
     await runtime.context.db.commit()
+    refresh = getattr(runtime.context.db, "refresh", None)
+    if callable(refresh):
+        await refresh(product)
+
+    marketplace_client = runtime.context.marketplace_client
+    if marketplace_client is not None:
+        try:
+            await marketplace_client.request_draft_generation(product)
+        except Exception as error:
+            warning = {
+                "stage": "marketplace_generation",
+                "key": "marketplace_generation",
+                "message": f"Failed to request marketplace draft generation: {error}",
+            }
+            product.warnings = merge_product_warnings(product.warnings, [warning])
+            await runtime.context.db.commit()
 
     completed_row = {
         "name": state["original_name"],
