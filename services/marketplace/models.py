@@ -174,3 +174,66 @@ class MarketListingDraft(Base):
     )
 
     market_account: Mapped[MarketAccount] = relationship(back_populates="drafts")
+
+
+class MarketSubmissionJob(Base):
+    __tablename__ = "market_submission_jobs"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), index=True, nullable=False
+    )
+    market_account_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("market_accounts.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    market_code: Mapped[str] = mapped_column(String(50), index=True, nullable=False)
+    draft_ids: Mapped[list] = mapped_column(JSON, nullable=False)
+    status: Mapped[str] = mapped_column(String(50), nullable=False, default="queued")
+    draft_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class MarketSubmissionAttempt(Base):
+    __tablename__ = "market_submission_attempts"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    submission_job_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("market_submission_jobs.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    draft_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("market_listing_drafts.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    market_code: Mapped[str] = mapped_column(String(50), index=True, nullable=False)
+    status: Mapped[str] = mapped_column(String(50), nullable=False, default="queued")
+    attempt_number: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    submitted_payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    response_payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    error: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    remote_product_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

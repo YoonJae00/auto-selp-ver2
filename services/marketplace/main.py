@@ -15,6 +15,8 @@ from models import (
     MarketAccountSettings,
     MarketDraftGenerationJob,
     MarketListingDraft,
+    MarketSubmissionAttempt,
+    MarketSubmissionJob,
 )
 from schemas import (
     DraftGenerationJobResponse,
@@ -23,8 +25,12 @@ from schemas import (
     MarketAccountResponse,
     MarketAccountSettingsResponse,
     MarketAccountSettingsUpdate,
+    MarketListingDraftUpdate,
     MarketListingDraftListResponse,
     MarketListingDraftResponse,
+    SubmissionCreate,
+    SubmissionJobListResponse,
+    SubmissionJobResponse,
 )
 from security import encrypt_credentials
 from tasks import generate_market_listing_drafts
@@ -133,6 +139,33 @@ async def update_market_account_settings(
     return existing_settings
 
 
+@app.get("/accounts/{account_id}/settings", response_model=MarketAccountSettingsResponse)
+async def get_market_account_settings(
+    account_id: uuid.UUID,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    account_result = await db.execute(
+        select(MarketAccount).where(
+            MarketAccount.id == account_id,
+            MarketAccount.user_id == current_user["id"],
+        )
+    )
+    account = account_result.scalar_one_or_none()
+    if account is None:
+        raise HTTPException(status_code=404, detail="Market account not found")
+
+    settings_result = await db.execute(
+        select(MarketAccountSettings).where(
+            MarketAccountSettings.market_account_id == account_id
+        )
+    )
+    existing_settings = settings_result.scalar_one_or_none()
+    if existing_settings is None:
+        raise HTTPException(status_code=404, detail="Market account settings not found")
+    return existing_settings
+
+
 @app.post(
     "/internal/draft-generation-jobs",
     response_model=DraftGenerationJobResponse,
@@ -200,3 +233,147 @@ async def get_draft(
     if draft is None:
         raise HTTPException(status_code=404, detail="Draft not found")
     return draft
+
+
+@app.patch("/drafts/{draft_id}", response_model=MarketListingDraftResponse)
+async def update_draft(
+    draft_id: uuid.UUID,
+    payload: MarketListingDraftUpdate,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(MarketListingDraft)
+        .join(MarketAccount, MarketListingDraft.market_account_id == MarketAccount.id)
+        .where(
+            MarketListingDraft.id == draft_id,
+            MarketAccount.user_id == current_user["id"],
+        )
+    )
+    draft = result.scalar_one_or_none()
+    if draft is None:
+        raise HTTPException(status_code=404, detail="Draft not found")
+
+    if payload.status is not None:
+        if payload.status not in {"generated", "needs_review", "ready", "failed"}:
+            raise HTTPException(status_code=422, detail="Unsupported draft status")
+        if payload.status == "ready" and _validation_status(draft) == "blocked":
+            raise HTTPException(status_code=422, detail="blocked draft cannot be marked ready")
+        draft.status = payload.status
+
+    if payload.override_patch is not None:
+        draft.override_patch = payload.override_patch
+
+    await db.commit()
+    await db.refresh(draft)
+    return draft
+
+
+@app.post("/submissions", response_model=SubmissionJobResponse, status_code=202)
+async def create_submission(
+    payload: SubmissionCreate,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if not payload.draft_ids:
+        raise HTTPException(status_code=422, detail="draft_ids is required")
+
+    account_result = await db.execute(
+        select(MarketAccount).where(
+            MarketAccount.id == payload.market_account_id,
+            MarketAccount.user_id == current_user["id"],
+        )
+    )
+    account = account_result.scalar_one_or_none()
+    if account is None:
+        raise HTTPException(status_code=404, detail="Market account not found")
+
+    drafts_result = await db.execute(
+        select(MarketListingDraft).where(
+            MarketListingDraft.market_account_id == account.id,
+            MarketListingDraft.id.in_(payload.draft_ids),
+        )
+    )
+    drafts = drafts_result.scalars().all()
+    if len(drafts) != len(set(payload.draft_ids)):
+        raise HTTPException(status_code=404, detail="One or more drafts were not found")
+
+    blocked_drafts = [draft for draft in drafts if _validation_status(draft) == "blocked"]
+    if blocked_drafts:
+        raise HTTPException(status_code=422, detail="blocked drafts cannot be submitted")
+
+    invalid_statuses = [
+        draft.status for draft in drafts if draft.status not in {"ready", "needs_review", "generated"}
+    ]
+    if invalid_statuses:
+        raise HTTPException(status_code=422, detail="draft status cannot be submitted")
+
+    job = MarketSubmissionJob(
+        id=uuid.uuid4(),
+        user_id=current_user["id"],
+        market_account_id=account.id,
+        market_code=account.market_code,
+        draft_ids=[str(draft_id) for draft_id in payload.draft_ids],
+        status="queued",
+        draft_count=len(drafts),
+        error=None,
+    )
+    db.add(job)
+
+    for draft in drafts:
+        draft.status = "submitting"
+        attempt = MarketSubmissionAttempt(
+            id=uuid.uuid4(),
+            submission_job_id=job.id,
+            draft_id=draft.id,
+            market_code=draft.market_code,
+            status="queued",
+            attempt_number=1,
+            submitted_payload=_effective_payload(draft),
+            response_payload=None,
+            error=None,
+        )
+        db.add(attempt)
+
+    await db.commit()
+    await db.refresh(job)
+    return job
+
+
+@app.get("/submissions", response_model=SubmissionJobListResponse)
+async def list_submissions(
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(MarketSubmissionJob)
+        .where(MarketSubmissionJob.user_id == current_user["id"])
+        .order_by(MarketSubmissionJob.created_at.desc())
+    )
+    return {"items": result.scalars().all()}
+
+
+def _validation_status(draft: MarketListingDraft) -> str | None:
+    validation_result = draft.validation_result
+    if isinstance(validation_result, dict):
+        status = validation_result.get("status")
+        if isinstance(status, str):
+            return status
+    return None
+
+
+def _effective_payload(draft: MarketListingDraft) -> dict:
+    payload = dict(draft.generated_payload or {})
+    if isinstance(draft.override_patch, dict):
+        payload = _deep_merge(payload, draft.override_patch)
+    return payload
+
+
+def _deep_merge(base: dict, patch: dict) -> dict:
+    merged = dict(base)
+    for key, value in patch.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge(merged[key], value)
+        else:
+            merged[key] = value
+    return merged

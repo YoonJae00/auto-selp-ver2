@@ -223,8 +223,8 @@ async def test_get_draft_scopes_by_owner_and_returns_inbox_payload_fields():
     assert body["generated_payload"] == {"name": "generated"}
     assert body["validation_result"] == {"status": "valid"}
     assert body["recipe_versions"] == {"pricing": "price:v1"}
-    assert "source_snapshot" not in body
-    assert "market_account_id" not in body
+    assert body["source_snapshot"] == {"version": "2026-05-28T10:20:00+00:00"}
+    assert body["market_account_id"] == str(owner_account.id)
 
     assert missing.status_code == 404
     assert missing.json()["detail"] == "Draft not found"

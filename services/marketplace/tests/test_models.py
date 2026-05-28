@@ -8,6 +8,8 @@ from models import (
     MarketAccountSettings,
     MarketDraftGenerationJob,
     MarketListingDraft,
+    MarketSubmissionAttempt,
+    MarketSubmissionJob,
 )
 
 
@@ -16,6 +18,8 @@ def test_model_table_names():
     assert MarketAccountSettings.__tablename__ == "market_account_settings"
     assert MarketDraftGenerationJob.__tablename__ == "market_draft_generation_jobs"
     assert MarketListingDraft.__tablename__ == "market_listing_drafts"
+    assert MarketSubmissionJob.__tablename__ == "market_submission_jobs"
+    assert MarketSubmissionAttempt.__tablename__ == "market_submission_attempts"
 
 
 def test_market_account_and_job_user_id_are_non_nullable():

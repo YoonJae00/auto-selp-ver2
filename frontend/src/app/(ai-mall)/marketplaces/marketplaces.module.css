@@ -1,0 +1,182 @@
+.page {
+  padding: 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+}
+
+.eyebrow {
+  margin: 0;
+  color: var(--ink-muted-48);
+  font-size: 13px;
+}
+
+.title {
+  margin: 4px 0 0;
+  font-size: 30px;
+}
+
+.headerActions {
+  display: flex;
+  gap: 8px;
+}
+
+.linkButton,
+.submitButton,
+.saveButton,
+.readyButton,
+.chip,
+.activeChip {
+  border-radius: 10px;
+  border: 1px solid var(--hairline);
+  padding: 8px 12px;
+  background: #fff;
+  color: var(--ink);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.submitButton,
+.saveButton,
+.readyButton,
+.activeChip {
+  background: var(--primary);
+  color: #fff;
+  border-color: var(--primary);
+}
+
+.filters {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.filterGroup {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: 1.15fr 1fr;
+  gap: 14px;
+  min-height: 560px;
+}
+
+.listPane,
+.detailPane {
+  background: #fff;
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  padding: 12px;
+  overflow: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.table th,
+.table td {
+  border-bottom: 1px solid var(--hairline);
+  padding: 8px;
+  text-align: left;
+}
+
+.activeRow {
+  background: rgba(79, 70, 229, 0.08);
+}
+
+.detailTitle {
+  margin: 4px 0 14px;
+  font-size: 18px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.grid label,
+.blockLabel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--ink-muted-48);
+}
+
+.grid input,
+.blockLabel textarea {
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink);
+  padding: 8px;
+  font-size: 13px;
+}
+
+.blockLabel {
+  margin-top: 10px;
+}
+
+.blockLabel textarea {
+  min-height: 88px;
+  resize: vertical;
+}
+
+.marketSection {
+  margin-top: 12px;
+  border: 1px dashed var(--hairline);
+  border-radius: 10px;
+  padding: 10px;
+}
+
+.marketSection h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.sectionText {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--ink-muted-48);
+}
+
+.detailActions {
+  margin-top: 12px;
+  display: flex;
+  gap: 8px;
+}
+
+.saveButton,
+.readyButton {
+  margin-top: 0;
+}
+
+.loading,
+.error {
+  margin: 8px 0;
+  font-size: 13px;
+}
+
+.error {
+  color: #b91c1c;
+}
+
+@media (max-width: 1200px) {
+  .layout {
+    grid-template-columns: 1fr;
+  }
+}

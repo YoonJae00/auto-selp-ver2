@@ -13,10 +13,11 @@ const NAV_ITEMS = [
   { href: '/process', label: '상품 가공', railLabel: 'AI' },
   { href: '/upload', label: '도매처 & 업로드 설정', railLabel: 'UP' },
   { href: '/products', label: '상품 관리', railLabel: 'PR' },
+  { href: '/marketplaces', label: '마켓 등록', railLabel: 'MK' },
   { href: '/settings', label: '설정', railLabel: 'ST' },
 ];
 
-const DENSE_WORKSPACE_PATHS = ['/products', '/upload', '/process'];
+const DENSE_WORKSPACE_PATHS = ['/products', '/upload', '/process', '/marketplaces'];
 
 export default function AiMallLayout({
   children,
