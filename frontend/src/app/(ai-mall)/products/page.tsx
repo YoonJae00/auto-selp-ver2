@@ -38,6 +38,9 @@ interface Product {
   brand_name?: string | null;
   wholesale_status?: string | null;
   wholesale_registered_at?: string | null;
+  images_list?: string[] | null;
+  raw_metadata?: any | null;
+  image_detail?: string | null;
 }
 
 interface ProductImport {
@@ -65,62 +68,80 @@ interface WholesaleSite {
 
 const DEFAULT_ORDER = [
   'checkbox',
+  'main_image',
   'refined_name',
   'original_name',
+  'brand_name',
   'keywords',
   'option_variants',
+  'option_values_raw',
   'platform_mappings',
+  'mapped_attributes',
+  'warnings',
   'status',
-  'created_at',
+  'raw_metadata',
+  'image_detail',
   'product_code',
   'wholesale_product_id',
   'price_wholesale',
   'price_retail',
   'price_min_selling',
   'origin',
-  'brand_name',
   'wholesale_status',
-  'wholesale_registered_at'
+  'wholesale_registered_at',
+  'created_at'
 ];
 
 const DEFAULT_VISIBILITY: Record<string, boolean> = {
   checkbox: true,
+  main_image: true,
   refined_name: true,
   original_name: true,
+  brand_name: true,
   keywords: true,
   option_variants: true,
+  option_values_raw: false,
   platform_mappings: true,
+  mapped_attributes: true,
+  warnings: true,
   status: true,
-  created_at: true,
+  raw_metadata: true,
+  image_detail: false,
   product_code: false,
   wholesale_product_id: false,
   price_wholesale: false,
   price_retail: false,
   price_min_selling: false,
   origin: false,
-  brand_name: false,
   wholesale_status: false,
-  wholesale_registered_at: false
+  wholesale_registered_at: false,
+  created_at: true
 };
 
 const COLUMNS_REGISTRY: Record<string, string> = {
   checkbox: '',
+  main_image: '대표 이미지',
   refined_name: '상품 명칭',
   original_name: '원래 상품명',
+  brand_name: '브랜드명',
   keywords: '정제 키워드',
   option_variants: '옵션',
+  option_values_raw: '옵션 원본',
   platform_mappings: '마켓 카테고리 매핑',
+  mapped_attributes: '가공 속성',
+  warnings: 'AI 가공 경고',
   status: '가공 상태',
-  created_at: '등록 시각',
+  raw_metadata: '원본 데이터',
+  image_detail: '상세이미지 URL',
   product_code: '상품 코드',
   wholesale_product_id: '도매처 상품 ID',
   price_wholesale: '도매가',
   price_retail: '소매가',
   price_min_selling: '최소 판매가',
   origin: '원산지',
-  brand_name: '브랜드명',
   wholesale_status: '도매 상태',
-  wholesale_registered_at: '도매 등록일'
+  wholesale_registered_at: '도매 등록일',
+  created_at: '등록 시각'
 };
 
 export default function ProductsPage() {
@@ -659,6 +680,25 @@ export default function ProductsPage() {
                               </td>
                             );
 
+                          case 'main_image': {
+                            // images_list[0] 검출 또는 raw_metadata의 이미지 주소 검출
+                            let imgSrc = '';
+                            if (p.images_list && p.images_list.length > 0) {
+                              imgSrc = p.images_list[0];
+                            } else if (p.raw_metadata) {
+                              imgSrc = p.raw_metadata['목록이미지1'] || p.raw_metadata['목록이미지'] || '';
+                            }
+                            return (
+                              <td key={colKey}>
+                                {imgSrc ? (
+                                  <img src={imgSrc} className={styles.tableThumbnail} alt="Product Thumb" />
+                                ) : (
+                                  <span className={styles.emptyInline}>이미지 없음</span>
+                                )}
+                              </td>
+                            );
+                          }
+
                           case 'refined_name':
                             return (
                               <td key="refined_name">
@@ -678,6 +718,14 @@ export default function ProductsPage() {
                                 <span className={styles.origName}>{p.original_name}</span>
                               </td>
                             );
+
+                          case 'brand_name': {
+                            return (
+                              <td key={colKey}>
+                                {p.brand_name || <span className={styles.emptyInline}>-</span>}
+                              </td>
+                            );
+                          }
 
                           case 'keywords':
                             return (
@@ -727,6 +775,20 @@ export default function ProductsPage() {
                               </td>
                             );
 
+                          case 'option_values_raw': {
+                            return (
+                              <td key={colKey}>
+                                {p.option_values_raw ? (
+                                  <span title={p.option_values_raw} style={{ cursor: 'help' }}>
+                                    {p.option_values_raw}
+                                  </span>
+                                ) : (
+                                  <span className={styles.emptyInline}>-</span>
+                                )}
+                              </td>
+                            );
+                          }
+
                           case 'platform_mappings':
                             return (
                               <td key="platform_mappings">
@@ -755,6 +817,64 @@ export default function ProductsPage() {
                               </td>
                             );
 
+                          case 'mapped_attributes': {
+                            const naver = p.platform_mappings.find((m) => m.platform_name === 'naver');
+                            const coupang = p.platform_mappings.find((m) => m.platform_name === 'coupang');
+                            
+                            const hasNaverAttrs = naver?.mapped_attributes && Object.keys(naver.mapped_attributes).length > 0;
+                            // 쿠팡 속성은 product_attributes 또는 item_attributes 검출
+                            const hasCoupangAttrs = coupang?.mapped_attributes && 
+                              (coupang.mapped_attributes.product_attributes?.length > 0 || 
+                               coupang.mapped_attributes.item_attributes?.length > 0);
+                               
+                            return (
+                              <td key={colKey}>
+                                <div className={styles.attributeGroup}>
+                                  {hasNaverAttrs && (
+                                    <div>
+                                      <div className={styles.platformAttrTitle}>Naver</div>
+                                      {Object.entries(naver.mapped_attributes).map(([k, v]) => (
+                                        <span key={k} className={styles.attributeTag}>{k}: {String(v)}</span>
+                                      ))}
+                                    </div>
+                                  )}
+                                  {hasCoupangAttrs && (
+                                    <div>
+                                      <div className={styles.platformAttrTitle}>Coupang</div>
+                                      {coupang.mapped_attributes.product_attributes?.slice(0, 4).map((attr: any, i: number) => (
+                                        <span key={i} className={styles.attributeTag}>
+                                          {attr.attributeTypeName}: {attr.attributeValueName}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  )}
+                                  {!hasNaverAttrs && !hasCoupangAttrs && (
+                                    <span className={styles.emptyInline}>가공된 속성 없음</span>
+                                  )}
+                                </div>
+                              </td>
+                            );
+                          }
+
+                          case 'warnings': {
+                            const warningCount = p.warnings ? Object.keys(p.warnings).length : 0;
+                            return (
+                              <td key={colKey}>
+                                {warningCount > 0 ? (
+                                  <span 
+                                    className={styles.warningPill} 
+                                    title={JSON.stringify(p.warnings, null, 2)}
+                                    style={{ cursor: 'help' }}
+                                  >
+                                    ⚠️ 경고 {warningCount}건
+                                  </span>
+                                ) : (
+                                  <span className={styles.emptyInline}>경고 없음</span>
+                                )}
+                              </td>
+                            );
+                          }
+
                           case 'status':
                             return (
                               <td key="status">
@@ -766,6 +886,68 @@ export default function ProductsPage() {
                                 </span>
                               </td>
                             );
+
+                          case 'raw_metadata': {
+                            return (
+                              <td key={colKey}>
+                                <details className={styles.rawMetaDetails}>
+                                  <summary className={styles.rawMetaSummary}>🔍 원본 보기</summary>
+                                  <div className={styles.rawMetaContent}>
+                                    {p.raw_metadata && Object.keys(p.raw_metadata).length > 0 ? (
+                                      Object.entries(p.raw_metadata).map(([k, v]) => (
+                                        <div key={k} className={styles.rawMetaLine}>
+                                          <strong className={styles.rawMetaKey}>{k}:</strong>
+                                          <span className={styles.rawMetaVal}>{String(v)}</span>
+                                        </div>
+                                      ))
+                                    ) : (
+                                      <div className={styles.emptyInline}>원본 정보 없음</div>
+                                    )}
+                                  </div>
+                                </details>
+                              </td>
+                            );
+                          }
+
+                          case 'image_detail': {
+                            //상세페이지 HTML에서 이미지 추출 또는 원본 텍스트 주소 검출
+                            let detailUrl = '';
+                            if (p.image_detail) {
+                              if (p.image_detail.startsWith('http')) {
+                                detailUrl = p.image_detail;
+                              } else {
+                                // HTML에서 첫 img tag의 src 추출 시도
+                                const match = p.image_detail.match(/src=["'](https?:\/\/[^"']+)["']/i);
+                                if (match) {
+                                  detailUrl = match[1];
+                                }
+                              }
+                            } else if (p.raw_metadata) {
+                              detailUrl = p.raw_metadata['상세이미지'] || '';
+                              if (detailUrl && !detailUrl.startsWith('http')) {
+                                const match = detailUrl.match(/src=["'](https?:\/\/[^"']+)["']/i);
+                                if (match) {
+                                  detailUrl = match[1];
+                                }
+                              }
+                            }
+                            return (
+                              <td key={colKey}>
+                                {detailUrl ? (
+                                  <a 
+                                    href={detailUrl} 
+                                    target="_blank" 
+                                    rel="noopener noreferrer" 
+                                    className={styles.detailLinkBtn}
+                                  >
+                                    🔗 상세 이미지 보기
+                                  </a>
+                                ) : (
+                                  <span className={styles.emptyInline}>URL 없음</span>
+                                )}
+                              </td>
+                            );
+                          }
 
                           case 'created_at':
                             return (
@@ -818,13 +1000,6 @@ export default function ProductsPage() {
                             return (
                               <td key="origin">
                                 {p.origin || <span className={styles.emptyInline}>-</span>}
-                              </td>
-                            );
-
-                          case 'brand_name':
-                            return (
-                              <td key="brand_name">
-                                {p.brand_name || <span className={styles.emptyInline}>-</span>}
                               </td>
                             );
 
