@@ -4,7 +4,7 @@ import { useSettingsStore } from '@/store/settingsStore';
 import styles from './settings.module.css';
 
 export default function SettingsPage() {
-  const { llmProvider, setLlmProvider, kiprisEnabled, setKiprisEnabled } = useSettingsStore();
+  const { llmProvider, setLlmProvider, visionLlmProvider, setVisionLlmProvider, kiprisEnabled, setKiprisEnabled } = useSettingsStore();
 
   return (
     <div className={styles.container}>
@@ -25,6 +25,21 @@ export default function SettingsPage() {
           </select>
           <p className={styles.hint}>
             상품명 정제 및 키워드 생성에 사용될 기본 인공지능 모델을 선택합니다.
+          </p>
+        </div>
+
+        <div className={styles.formGroup}>
+          <label className={styles.label}>Vision LLM 엔진</label>
+          <select 
+            className={styles.select}
+            value={visionLlmProvider}
+            onChange={(e) => setVisionLlmProvider(e.target.value)}
+          >
+            <option value="gemini">Gemini 3.1 Flash-Lite (추천)</option>
+            <option value="openai">gpt-5.4-mini (고성능)</option>
+          </select>
+          <p className={styles.hint}>
+            상품 상세 이미지로부터 속성 및 사양 정보를 해독하고 추출하는 데 사용될 비전 AI 모델을 선택합니다.
           </p>
         </div>
       </section>
