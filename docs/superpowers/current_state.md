@@ -76,7 +76,7 @@ This document is the current implementation snapshot. For active backlog items, 
 - Market account storage with encrypted credentials and account-scoped marketplace settings for connection, fulfillment, claim, listing defaults, and generation rules.
 - Protected internal draft-generation job API and Celery worker task that retrieves processor snapshots and generates reviewable listing drafts.
 - Protected processor product snapshot contract containing product-specific registration ingredients, including origin, images, detail content, options, prices, and market category mappings.
-- Smart Store and Coupang adapter-based draft generation from processor snapshots, storing channel-native JSON payloads with adapter and recipe versions.
+- Smart Store and Coupang adapter-based draft generation from processor snapshots, storing channel-native JSON payloads with adapter and recipe versions, including consumption of mapped_attributes at the product and item/options levels.
 - Marketplace-specific pricing policy calculation with cost, proposed sale price, expected profit, and achieved margin summaries.
 - Versioned draft payloads, structured validation, and PostgreSQL-verified concurrency protection for stale generation, active draft insert contention, and `submitting` drafts.
 - Authenticated draft query APIs for the future registration inbox.

@@ -46,6 +46,17 @@ class SmartstoreAdapter(MarketplaceAdapter):
         expected_profit = pricing_output["expectedProfit"] if pricing_output else None
         expected_margin_rate = pricing_output["expectedMarginRate"] if pricing_output else None
 
+        # Add attribute mapping consumption
+        smartstore_category = source_snapshot.get("market_categories", {}).get("smartstore", {})
+        mapped_attrs = smartstore_category.get("mapped_attributes", {}) if smartstore_category else {}
+        
+        detail_attribute = {
+            "originAreaInfo": {"rawOrigin": origin},
+            "optionInfo": {"optionCombinations": options},
+        }
+        if mapped_attrs and mapped_attrs.get("naver_attributes"):
+            detail_attribute["productAttributes"] = mapped_attrs["naver_attributes"]
+
         payload = {
             "originProduct": {
                 "name": title,
@@ -56,10 +67,7 @@ class SmartstoreAdapter(MarketplaceAdapter):
                     "optionalImages": [{"url": image_url} for image_url in optional_images],
                 },
                 "detailContent": detail_content,
-                "detailAttribute": {
-                    "originAreaInfo": {"rawOrigin": origin},
-                    "optionInfo": {"optionCombinations": options},
-                },
+                "detailAttribute": detail_attribute,
             },
             "smartstoreChannelProduct": listing_defaults,
             "pricing": pricing_output,

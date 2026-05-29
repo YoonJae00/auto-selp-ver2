@@ -98,6 +98,20 @@ class CoupangAdapter(MarketplaceAdapter):
             "pricing": pricing_output,
         }
 
+        # Add product level and item level attributes consumption
+        coupang_category = source_snapshot.get("market_categories", {}).get("coupang", {})
+        mapped_attrs = coupang_category.get("mapped_attributes", {}) if coupang_category else {}
+        
+        if mapped_attrs and mapped_attrs.get("coupang_attributes"):
+            payload["attributes"] = mapped_attrs["coupang_attributes"].get("product_attributes", [])
+            
+            item_attrs = mapped_attrs["coupang_attributes"].get("item_attributes", [])
+            if item_attrs:
+                for item in payload["items"]:
+                    if "attributes" not in item:
+                        item["attributes"] = []
+                    item["attributes"].extend(item_attrs)
+
         errors: list[dict[str, str]] = []
         if not category_id:
             errors.append(

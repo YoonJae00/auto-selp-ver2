@@ -99,5 +99,6 @@ Note: older files under `docs/superpowers/plans/` are historical implementation 
 - [x] **Coupang Attribute Schema Provider**: Fetch, cache, and model Coupang attribute schemas using Redis caching.
 - [x] **Attribute Mappers**: Implement Naver and Coupang attribute mappers translating market-neutral extracted specifications into market-specific formats.
 - [x] **extract_attributes Node in LangGraph**: Integrated the attribute extraction node into the product processing LangGraph to run after category mapping and before persistence.
+- [x] **Consume mapped_attributes in Adapters**: Smart Store and Coupang adapters now consume mapped category attributes during draft generation (Task 6).
 - [ ] Recipe extensions for SEO titles and category-specific attributes.
 - [ ] Margin calculator UI, bulk price-policy application, and per-product price-override preview.

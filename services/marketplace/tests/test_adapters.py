@@ -346,3 +346,65 @@ def test_market_keyed_pricing_policy_map_is_not_supported_for_single_account_set
         "SMARTSTORE_MISSING_PRICING_POLICY",
         "SMARTSTORE_MISSING_SALE_PRICE",
     ]
+
+
+def test_smartstore_adapter_consumes_attributes():
+    from adapters.smartstore import SmartstoreAdapter
+    adapter = SmartstoreAdapter()
+    snapshot = {
+        "product_id": "8f19eb9d-c852-4ed1-8c41-ef4ece5be177",
+        "version": "2026-05-27T12:30:45",
+        "original_name": "원본",
+        "refined_name": "정제",
+        "brand_name": "브랜드",
+        "keywords": [],
+        "origin": "해외|아시아|중국",
+        "price": {"wholesale": 8000, "retail": 18000, "minimum_selling": 15000},
+        "images": {"list": ["https://img.example/1.jpg"], "detail_content": ""},
+        "options": [],
+        "market_categories": {
+            "smartstore": {
+                "category_id": "50000001",
+                "mapped_attributes": {
+                    "naver_attributes": [{"attributeSeq": 1, "attributeValueSeq": 2}]
+                }
+            }
+        }
+    }
+    result = adapter.generate_draft(snapshot, _smartstore_settings())
+    
+    assert "productAttributes" in result.generated_payload["originProduct"]["detailAttribute"]
+    assert result.generated_payload["originProduct"]["detailAttribute"]["productAttributes"][0]["attributeSeq"] == 1
+
+
+def test_coupang_adapter_consumes_attributes():
+    from adapters.coupang import CoupangAdapter
+    adapter = CoupangAdapter()
+    snapshot = {
+        "product_id": "8f19eb9d-c852-4ed1-8c41-ef4ece5be177",
+        "version": "2026-05-27T12:30:45",
+        "original_name": "원본",
+        "refined_name": "정제",
+        "brand_name": "브랜드",
+        "keywords": [],
+        "origin": "해외|아시아|중국",
+        "price": {"wholesale": 8000, "retail": 18000, "minimum_selling": 15000},
+        "images": {"list": ["https://img.example/1.jpg"], "detail_content": ""},
+        "options": [],
+        "market_categories": {
+            "coupang": {
+                "category_id": "12345",
+                "mapped_attributes": {
+                    "coupang_attributes": {
+                        "product_attributes": [{"attributeTypeName": "브랜드", "attributeValueName": "우리브랜드"}],
+                        "item_attributes": [{"attributeTypeName": "색상", "attributeValueName": "레드"}]
+                    }
+                }
+            }
+        }
+    }
+    result = adapter.generate_draft(snapshot, _coupang_settings())
+    
+    payload = result.generated_payload
+    assert payload["attributes"] == [{"attributeTypeName": "브랜드", "attributeValueName": "우리브랜드"}]
+    assert payload["items"][0]["attributes"][0] == {"attributeTypeName": "색상", "attributeValueName": "레드"}
