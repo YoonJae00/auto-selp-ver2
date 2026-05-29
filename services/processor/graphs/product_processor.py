@@ -40,6 +40,7 @@ class ProductProcessingContext:
     llm_client: Any
     keyword_engine: Any
     category_mapper: Any
+    vision_llm_client: Any | None = None
     marketplace_client: Any | None = None
     progress_emitter: ProgressEmitter = noop_progress_emitter
     completed_rows: list[dict[str, Any]] = field(default_factory=list)

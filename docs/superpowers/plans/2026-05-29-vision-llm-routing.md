@@ -182,7 +182,7 @@
 - Modify: `services/processor/tasks.py`
 - Modify: `services/processor/graphs/product_processor.py`
 
-- [ ] **Step 1: Add parameter to task headers**
+- [x] **Step 1: Add parameter to task headers**
   Modify `services/processor/tasks.py`:
   Update signatures for `process_excel_task`, `_run_pipeline`, `process_db_products_task`, and `_run_db_pipeline` to accept `vision_llm_provider`:
   ```python
@@ -202,7 +202,7 @@
       )
   ```
 
-- [ ] **Step 2: Instantiate `vision_llm_client` in pipeline**
+- [x] **Step 2: Instantiate `vision_llm_client` in pipeline**
   Inside `_run_db_pipeline` (around line 265 in `tasks.py`), instantiate the vision client:
   ```python
   from clients.llm_factory import get_llm_client, get_vision_llm_client # <-- Update imports
@@ -225,7 +225,7 @@
   ```
   Do the exact same for `process_excel_task` and `_run_pipeline`.
 
-- [ ] **Step 3: Update `ProductProcessingContext` constructor**
+- [x] **Step 3: Update `ProductProcessingContext` constructor**
   Modify `services/processor/graphs/product_processor.py` to add `vision_llm_client` on line 41:
   ```python
   @dataclass
@@ -240,7 +240,7 @@
       # ...
   ```
 
-- [ ] **Step 4: Commit pipeline changes**
+- [x] **Step 4: Commit pipeline changes**
   ```bash
   git add services/processor/tasks.py services/processor/graphs/product_processor.py
   git commit -m "feat(tasks): integrate vision_llm_client instantiation and inject into LangGraph Context"

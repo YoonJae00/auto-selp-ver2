@@ -8,7 +8,7 @@ from utils.keyword_engine import KeywordEngine
 from utils.category_mapper import CategoryMapper
 from utils.prompt_manager import PromptManager
 from utils.wholesale_upload import merge_product_warnings
-from clients.llm_factory import get_llm_client
+from clients.llm_factory import get_llm_client, get_vision_llm_client
 from clients.marketplace_client import MarketplaceClient
 from database import SessionLocal
 from graphs.product_processor import ProductProcessingContext, process_product_with_graph
@@ -23,6 +23,7 @@ def process_excel_task(
     column_mapping: dict,
     llm_provider: str = "gemini",
     kipris_enabled: bool = True,
+    vision_llm_provider: str = "gemini",
 ):
     """엑셀 가공 전체 파이프라인 Celery Task"""
     loop = asyncio.get_event_loop()
@@ -30,7 +31,7 @@ def process_excel_task(
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
     return loop.run_until_complete(
-        _run_pipeline(self, file_path, column_mapping, llm_provider, kipris_enabled)
+        _run_pipeline(self, file_path, column_mapping, llm_provider, kipris_enabled, vision_llm_provider)
     )
 
 
@@ -40,6 +41,7 @@ async def _run_pipeline(
     column_mapping: dict,
     llm_provider: str,
     kipris_enabled: bool = True,
+    vision_llm_provider: str = "gemini",
 ):
     df = pd.read_excel(file_path)
     total_rows = len(df)
@@ -49,6 +51,7 @@ async def _run_pipeline(
     async with SessionLocal() as db:
         prompt_manager = PromptManager(db)
         llm_client = get_llm_client(llm_provider, prompt_manager)
+        vision_llm_client = get_vision_llm_client(vision_llm_provider, prompt_manager)
         keyword_engine = KeywordEngine(llm_client, kipris_enabled=kipris_enabled)
         category_mapper = CategoryMapper()
 
@@ -204,6 +207,7 @@ def process_db_products_task(
     llm_provider: str = "gemini",
     kipris_enabled: bool = True,
     product_ids: list[str] | None = None,
+    vision_llm_provider: str = "gemini",
 ):
     """DB에 등록된 상품 가공 전체 파이프라인 Celery Task"""
     loop = asyncio.get_event_loop()
@@ -211,7 +215,7 @@ def process_db_products_task(
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
     return loop.run_until_complete(
-        _run_db_pipeline(self, import_id, column_mapping, llm_provider, kipris_enabled, product_ids)
+        _run_db_pipeline(self, import_id, column_mapping, llm_provider, kipris_enabled, product_ids, vision_llm_provider)
     )
 
 
@@ -222,6 +226,7 @@ async def _run_db_pipeline(
     llm_provider: str,
     kipris_enabled: bool = True,
     product_ids: list[str] | None = None,
+    vision_llm_provider: str = "gemini",
 ):
     import uuid
     from models import ProductImport, Product, ProductPlatformMapping
@@ -261,6 +266,7 @@ async def _run_db_pipeline(
 
         prompt_manager = PromptManager(db)
         llm_client = get_llm_client(llm_provider, prompt_manager)
+        vision_llm_client = get_vision_llm_client(vision_llm_provider, prompt_manager)
         keyword_engine = KeywordEngine(llm_client, kipris_enabled=kipris_enabled)
         category_mapper = CategoryMapper()
         marketplace_client = MarketplaceClient()
@@ -288,6 +294,7 @@ async def _run_db_pipeline(
                 import_run=import_run,
                 product=product,
                 llm_client=llm_client,
+                vision_llm_client=vision_llm_client,
                 keyword_engine=keyword_engine,
                 category_mapper=category_mapper,
                 marketplace_client=marketplace_client,
