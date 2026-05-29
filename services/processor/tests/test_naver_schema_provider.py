@@ -3,11 +3,11 @@ from unittest.mock import AsyncMock, patch
 from clients.naver_schema_provider import NaverAttributeSchemaProvider, AttributeSchema, AttributeDef
 
 @pytest.mark.asyncio
-async def test_get_attribute_schema_cached(mocker):
+async def test_get_attribute_schema_cached():
     provider = NaverAttributeSchemaProvider(redis_client=AsyncMock())
     
     # Mock redis get to return cached schema
-    cached_data = '{"market_code": "naver", "category_id": "123", "attributes": [{"name": "색상", "required": true, "data_type": "STRING", "input_type": "SELECT", "unit": null, "valid_values": ["레드"]}]}'
+    cached_data = '{"market_code": "naver", "category_id": "123", "attributes": [{"name": "색상", "required": true, "data_type": "STRING", "input_type": "SELECT", "unit": null, "valid_values": ["레드"]}], "meta": {"색상": {"attributeSeq": 1, "unitCode": ""}}}'
     provider.redis.get.return_value = cached_data
     
     result = await provider.get_attribute_schema("123")
