@@ -255,7 +255,7 @@
 - Modify: `services/processor/clients/gemini_client.py`
 - Modify: `services/processor/clients/openai_client.py`
 
-- [ ] **Step 1: Parameterize models in Gemini and OpenAI Clients**
+- [x] **Step 1: Parameterize models in Gemini and OpenAI Clients**
   Modify `services/processor/clients/gemini_client.py` to support parameterized model override:
   ```python
   class GeminiClient(LLMClient):
@@ -273,7 +273,7 @@
           self.prompt_manager = prompt_manager
   ```
 
-- [ ] **Step 2: Add dynamic `get_vision_llm_client` in Factory**
+- [x] **Step 2: Add dynamic `get_vision_llm_client` in Factory**
   Modify `services/processor/clients/llm_factory.py`:
   ```python
   from clients.gemini_client import GeminiClient
@@ -292,12 +292,12 @@
       return GeminiClient(prompt_manager, model="gemini-3.1-flash-lite")
   ```
 
-- [ ] **Step 3: Run clients unit tests**
+- [x] **Step 3: Run clients unit tests**
   Ensure no instantiation issues occur.
   Run: `PYTHONPATH=services/processor pytest services/processor/tests/test_gemini_client.py`
   Expected: PASS
 
-- [ ] **Step 4: Commit factory and dynamic clients**
+- [x] **Step 4: Commit factory and dynamic clients**
   ```bash
   git add services/processor/clients/llm_factory.py services/processor/clients/gemini_client.py services/processor/clients/openai_client.py
   git commit -m "feat(llm): support parameterized model initialization in factory and clients"

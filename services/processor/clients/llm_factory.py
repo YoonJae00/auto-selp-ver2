@@ -10,6 +10,6 @@ def get_llm_client(provider: str, prompt_manager: PromptManager = None) -> LLMCl
 
 def get_vision_llm_client(provider: str, prompt_manager: PromptManager = None) -> LLMClient:
     if provider.lower() == "openai":
-        return OpenAIClient(prompt_manager)
-    return GeminiClient(prompt_manager)
+        return OpenAIClient(prompt_manager, model="gpt-5.4-mini")
+    return GeminiClient(prompt_manager, model="gemini-3.1-flash-lite")
 

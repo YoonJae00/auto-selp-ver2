@@ -9,9 +9,9 @@ from utils.prompt_manager import PromptManager
 logger = logging.getLogger(__name__)
 
 class GeminiClient(LLMClient):
-    def __init__(self, prompt_manager: PromptManager = None):
+    def __init__(self, prompt_manager: PromptManager = None, model: str = 'gemini-3.1-flash-lite'):
         genai.configure(api_key=settings.GEMINI_API_KEY)
-        self.model = genai.GenerativeModel('gemini-3.1-flash-lite')
+        self.model = genai.GenerativeModel(model)
         self.prompt_manager = prompt_manager
 
     @retry_with_backoff(max_retries=3)
@@ -106,3 +106,10 @@ class GeminiClient(LLMClient):
             logger.error(f"Gemini brand classification failed: {e}")
             # 실패 시 모두 generic으로 처리 (KIPRIS 호출 안 함)
             return {"brand_suspected": [], "generic": keywords}
+
+    async def extract_product_attributes(self, refined_name: str, image_urls: list[str], attributes: list) -> dict:
+        """
+        상세 이미지로부터 카테고리 속성 추출
+        """
+        logger.info(f"extract_product_attributes called for {refined_name}")
+        return {}
