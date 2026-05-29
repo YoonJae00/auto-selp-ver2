@@ -65,6 +65,7 @@ This document is the current implementation snapshot. For active backlog items, 
 - **DB REST APIs (NEW)**: `POST /process-db` (bulk inserts products as pending and starts Celery), `GET /products` (paginated, searchable, status-filtered, import-batch filtered), `POST /products/export` (streams memory-buffered Excel), and `GET /imports` (lists import history).
 - **Wholesale Management & Smart Upsert (NEW, GitHub #46)**: Wholesale-site metadata and JSONB column mappings, supplier upload schema ingestion, formatted option-price parsing, and SMART UPSERT change tracking for price/stock updates.
 - **Marketplace Draft Notification (NEW)**: Successful DB product processing now commits the completed product first, then best-effort requests marketplace draft generation through the internal marketplace API. Notification failures are stored as `marketplace_generation` warnings and do not fail the processed product.
+- **Naver Attribute Schema Provider (NEW)**: Fetches, caches, and models Naver-specific category attributes with Redis caching.
 
 ### Marketplace Listing Service (Port 8003)
 
