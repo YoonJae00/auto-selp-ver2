@@ -28,6 +28,16 @@ interface Product {
   warnings: any;
   created_at: string;
   platform_mappings: PlatformMapping[];
+  // Column configuration fields
+  product_code?: string | null;
+  wholesale_product_id?: string | null;
+  price_wholesale?: number | null;
+  price_retail?: number | null;
+  price_min_selling?: number | null;
+  origin?: string | null;
+  brand_name?: string | null;
+  wholesale_status?: string | null;
+  wholesale_registered_at?: string | null;
 }
 
 interface ProductImport {
@@ -52,6 +62,66 @@ interface WholesaleSite {
   homepage_url: string | null;
   column_mapping: any;
 }
+
+const DEFAULT_ORDER = [
+  'checkbox',
+  'refined_name',
+  'original_name',
+  'keywords',
+  'option_variants',
+  'platform_mappings',
+  'status',
+  'created_at',
+  'product_code',
+  'wholesale_product_id',
+  'price_wholesale',
+  'price_retail',
+  'price_min_selling',
+  'origin',
+  'brand_name',
+  'wholesale_status',
+  'wholesale_registered_at'
+];
+
+const DEFAULT_VISIBILITY: Record<string, boolean> = {
+  checkbox: true,
+  refined_name: true,
+  original_name: true,
+  keywords: true,
+  option_variants: true,
+  platform_mappings: true,
+  status: true,
+  created_at: true,
+  product_code: false,
+  wholesale_product_id: false,
+  price_wholesale: false,
+  price_retail: false,
+  price_min_selling: false,
+  origin: false,
+  brand_name: false,
+  wholesale_status: false,
+  wholesale_registered_at: false
+};
+
+const COLUMNS_REGISTRY: Record<string, string> = {
+  checkbox: '',
+  refined_name: '상품 명칭',
+  original_name: '원래 상품명',
+  keywords: '정제 키워드',
+  option_variants: '옵션',
+  platform_mappings: '마켓 카테고리 매핑',
+  status: '가공 상태',
+  created_at: '등록 시각',
+  product_code: '상품 코드',
+  wholesale_product_id: '도매처 상품 ID',
+  price_wholesale: '도매가',
+  price_retail: '소매가',
+  price_min_selling: '최소 판매가',
+  origin: '원산지',
+  brand_name: '브랜드명',
+  wholesale_status: '도매 상태',
+  wholesale_registered_at: '도매 등록일'
+};
 
 export default function ProductsPage() {
   const [products, setProducts] = useState<Product[]>([]);
@@ -78,11 +148,128 @@ export default function ProductsPage() {
   const [isExporting, setIsExporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Column settings & drag-and-drop states
+  const [columnOrder, setColumnOrder] = useState<string[]>(DEFAULT_ORDER);
+  const [columnVisibility, setColumnVisibility] = useState<Record<string, boolean>>(DEFAULT_VISIBILITY);
+  const [showSettings, setShowSettings] = useState(false);
+  const [draggedColKey, setDraggedColKey] = useState<string | null>(null);
+  const [dragOverColKey, setDragOverColKey] = useState<string | null>(null);
+  const [dragDirection, setDragDirection] = useState<'left' | 'right' | null>(null);
+
+  // Load configuration from localStorage on mount
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem('autoselp_product_columns_config');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed.order && Array.isArray(parsed.order)) {
+          const filteredOrder = parsed.order.filter((k: string) => COLUMNS_REGISTRY[k] !== undefined);
+          const missingKeys = DEFAULT_ORDER.filter((k) => !filteredOrder.includes(k));
+          setColumnOrder([...filteredOrder, ...missingKeys]);
+        }
+        if (parsed.visibility && typeof parsed.visibility === 'object') {
+          setColumnVisibility({ ...DEFAULT_VISIBILITY, ...parsed.visibility });
+        }
+      }
+    } catch (e) {
+      console.error('Failed to load columns config from localStorage:', e);
+    }
+  }, []);
+
+  // Persist configuration to localStorage
+  const updateConfig = (newOrder: string[], newVisibility: Record<string, boolean>) => {
+    try {
+      localStorage.setItem(
+        'autoselp_product_columns_config',
+        JSON.stringify({ order: newOrder, visibility: newVisibility })
+      );
+    } catch (e) {
+      console.error('Failed to save columns config to localStorage:', e);
+    }
+  };
+
+  // Toggle dynamic column visibility
+  const toggleColumnVisibility = (key: string) => {
+    if (key === 'checkbox') return;
+    const updated = {
+      ...columnVisibility,
+      [key]: !columnVisibility[key]
+    };
+    setColumnVisibility(updated);
+    updateConfig(columnOrder, updated);
+  };
+
+  // Outside click to close column settings popover
+  useEffect(() => {
+    const handleOutsideClick = (e: MouseEvent) => {
+      const container = document.getElementById('column-settings-container');
+      if (container && !container.contains(e.target as Node)) {
+        setShowSettings(false);
+      }
+    };
+    document.addEventListener('mousedown', handleOutsideClick);
+    return () => {
+      document.removeEventListener('mousedown', handleOutsideClick);
+    };
+  }, []);
+
+  // Drag & Drop event handlers
+  const handleDragStart = (e: React.DragEvent<HTMLTableHeaderCellElement>, key: string) => {
+    if (key === 'checkbox') return;
+    setDraggedColKey(key);
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleDragOver = (e: React.DragEvent<HTMLTableHeaderCellElement>, key: string) => {
+    if (key === 'checkbox' || !draggedColKey || draggedColKey === key) return;
+    e.preventDefault();
+
+    const targetRect = e.currentTarget.getBoundingClientRect();
+    const mouseX = e.clientX - targetRect.left;
+    const midpoint = targetRect.width / 2;
+
+    const direction: 'left' | 'right' = mouseX < midpoint ? 'left' : 'right';
+    setDragOverColKey(key);
+    setDragDirection(direction);
+  };
+
+  const handleDrop = (e: React.DragEvent<HTMLTableHeaderCellElement>, targetKey: string) => {
+    if (targetKey === 'checkbox' || !draggedColKey || draggedColKey === targetKey) return;
+    e.preventDefault();
+
+    const activeIndex = columnOrder.indexOf(draggedColKey);
+    let targetIndex = columnOrder.indexOf(targetKey);
+
+    if (activeIndex === -1 || targetIndex === -1) return;
+
+    const updatedOrder = columnOrder.filter((key) => key !== draggedColKey);
+
+    if (dragDirection === 'right') {
+      targetIndex = updatedOrder.indexOf(targetKey) + 1;
+    } else {
+      targetIndex = updatedOrder.indexOf(targetKey);
+    }
+
+    updatedOrder.splice(targetIndex, 0, draggedColKey);
+    setColumnOrder(updatedOrder);
+    updateConfig(updatedOrder, columnVisibility);
+
+    setDraggedColKey(null);
+    setDragOverColKey(null);
+    setDragDirection(null);
+  };
+
+  const handleDragEnd = () => {
+    setDraggedColKey(null);
+    setDragOverColKey(null);
+    setDragDirection(null);
+  };
+
   // Debounce search input
   useEffect(() => {
     const handler = setTimeout(() => {
       setSearchDebounced(search);
-      setPage(1); // Reset to first page when search changes
+      setPage(1);
     }, 300);
     return () => clearTimeout(handler);
   }, [search]);
@@ -185,7 +372,7 @@ export default function ProductsPage() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(body),
-        credentials: 'include', // Pass session/jwt cookie directly
+        credentials: 'include',
       });
 
       if (!response.ok) {
@@ -345,6 +532,37 @@ export default function ProductsPage() {
           />
           업데이트 대기 상품만 보기
         </label>
+
+        {/* Column Settings Button & Popover */}
+        <div className={styles.columnSettingsContainer} id="column-settings-container">
+          <PillButton 
+            variant="secondary" 
+            onClick={() => setShowSettings(!showSettings)}
+            type="button"
+          >
+            열 설정 ⚙️
+          </PillButton>
+          {showSettings && (
+            <div className={styles.columnSettingsPopover}>
+              <div className={styles.popoverHeader}>표시할 열 선택</div>
+              <div className={styles.popoverList}>
+                {columnOrder.map((colKey) => {
+                  if (colKey === 'checkbox') return null;
+                  return (
+                    <label key={colKey} className={styles.popoverItem}>
+                      <input 
+                        type="checkbox"
+                        checked={columnVisibility[colKey] !== false}
+                        onChange={() => toggleColumnVisibility(colKey)}
+                      />
+                      {COLUMNS_REGISTRY[colKey]}
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Products Table Section */}
@@ -365,20 +583,53 @@ export default function ProductsPage() {
             <table className={styles.table}>
               <thead>
                 <tr>
-                  <th className={styles.checkboxCol}>
-                    <input 
-                      type="checkbox" 
-                      checked={isAllSelected}
-                      onChange={handleSelectAll}
-                      className={styles.checkbox}
-                    />
-                  </th>
-                  <th>상품 명칭 (원래 상품명 / 정제상품명)</th>
-                  <th>정제 키워드</th>
-                  <th>옵션</th>
-                  <th>마켓 카테고리 매핑</th>
-                  <th>상태</th>
-                  <th>등록 시각</th>
+                  {columnOrder.map((colKey) => {
+                    const isVisible = columnVisibility[colKey] !== false;
+                    if (!isVisible) return null;
+
+                    if (colKey === 'checkbox') {
+                      return (
+                        <th key="checkbox" className={styles.checkboxCol}>
+                          <input 
+                            type="checkbox" 
+                            checked={isAllSelected}
+                            onChange={handleSelectAll}
+                            className={styles.checkbox}
+                          />
+                        </th>
+                      );
+                    }
+
+                    const label = COLUMNS_REGISTRY[colKey];
+                    const isDragging = draggedColKey === colKey;
+                    const isDragOver = dragOverColKey === colKey;
+
+                    let thClassName = styles.thDraggable;
+                    if (isDragging) {
+                      thClassName += ` ${styles.thDragging}`;
+                    }
+                    if (isDragOver) {
+                      if (dragDirection === 'left') {
+                        thClassName += ` ${styles.dragIndicatorLeft}`;
+                      } else if (dragDirection === 'right') {
+                        thClassName += ` ${styles.dragIndicatorRight}`;
+                      }
+                    }
+
+                    return (
+                      <th
+                        key={colKey}
+                        className={thClassName}
+                        draggable
+                        onDragStart={(e) => handleDragStart(e, colKey)}
+                        onDragOver={(e) => handleDragOver(e, colKey)}
+                        onDrop={(e) => handleDrop(e, colKey)}
+                        onDragEnd={handleDragEnd}
+                      >
+                        {label}
+                      </th>
+                    );
+                  })}
                 </tr>
               </thead>
               <tbody>
@@ -391,104 +642,223 @@ export default function ProductsPage() {
 
                   return (
                     <tr key={p.id}>
-                      <td className={styles.checkboxCol}>
-                        <input 
-                          type="checkbox"
-                          checked={selectedIds.has(p.id)}
-                          onChange={(e) => handleSelectOne(p.id, e.target.checked)}
-                          className={styles.checkbox}
-                        />
-                      </td>
-                      <td>
-                        <div className={styles.nameWrapper}>
-                          <span className={styles.refName}>
-                            {p.refined_name ? p.refined_name : <span className={styles.refNameEmpty}>가공 전</span>}
-                            {priceChanged && <span className={styles.changeBadgeOrange}>가격 변동</span>}
-                            {stockChanged && <span className={styles.changeBadgeRed}>품절 변동</span>}
-                          </span>
-                          <span className={styles.origName}>원본: {p.original_name}</span>
-                        </div>
-                      </td>
-                      <td>
-                        <div className={styles.keywordWrapper}>
-                          {p.keywords && p.keywords.length > 0 ? (
-                            p.keywords.slice(0, 5).map((kw, i) => (
-                              <span key={i} className={styles.keywordBadge}>{kw}</span>
-                            ))
-                          ) : (
-                            <span className={styles.emptyInline}>없음</span>
-                          )}
-                          {p.keywords && p.keywords.length > 5 && (
-                            <span className={styles.moreKeywords}>
-                              +{p.keywords.length - 5}
-                            </span>
-                          )}
-                        </div>
-                      </td>
-                      <td>
-                        {p.option_variants && p.option_variants.length > 0 ? (
-                          <details className={styles.optionDetails}>
-                            <summary className={styles.optionSummary}>
-                              <span className={styles.optionCount}>옵션 {p.option_variants.length}개</span>
-                              <span className={styles.optionPreview}>
-                                {p.option_variants[0].name} · {formatPrice(p.option_variants[0].price_wholesale)}
-                              </span>
-                            </summary>
-                            <ul className={styles.optionTree}>
-                              {p.option_variants.map((opt, index) => (
-                                <li key={`${opt.name}-${index}`} className={styles.optionItem}>
-                                  <span className={styles.optionName}>{opt.name}</span>
-                                  <span className={styles.optionPrice}>{formatPrice(opt.price_wholesale)}</span>
-                                </li>
-                              ))}
-                            </ul>
-                          </details>
-                        ) : p.option_values_raw ? (
-                          <div className={styles.optionFallback}>{p.option_values_raw}</div>
-                        ) : (
-                          <span className={styles.optionEmpty}>없음</span>
-                        )}
-                      </td>
-                      <td>
-                        <div className={styles.categoryCell}>
-                          <div className={styles.marketBadge}>
-                            <span className={`${styles.marketLabel} ${styles.naver}`}>Naver</span>
-                            {naverMapping && (naverMapping.category_path || naverMapping.category_id) ? (
-                              <span className={styles.categoryPath} title={naverMapping.category_path || ''}>
-                                {naverMapping.category_id || naverMapping.category_path}
-                              </span>
-                            ) : (
-                              <span className={styles.categoryEmpty}>미매핑</span>
-                            )}
-                          </div>
-                          <div className={styles.marketBadge}>
-                            <span className={`${styles.marketLabel} ${styles.coupang}`}>Coupang</span>
-                            {coupangMapping && coupangMapping.category_id ? (
-                              <span className={styles.categoryPath}>
-                                {coupangMapping.category_id}
-                              </span>
-                            ) : (
-                              <span className={styles.categoryEmpty}>미매핑</span>
-                            )}
-                          </div>
-                        </div>
-                      </td>
-                      <td>
-                        <span className={`${styles.statusPill} ${styles[p.status]}`}>
-                          {p.status === 'completed' && '완료'}
-                          {p.status === 'processing' && '가공 중'}
-                          {p.status === 'pending' && '대기'}
-                          {p.status === 'failed' && '실패'}
-                        </span>
-                      </td>
-                      <td className={styles.dateCell}>
-                        {new Date(p.created_at).toLocaleString('ko-KR', {
-                          month: 'numeric',
-                          day: 'numeric',
-                          hour: '2-digit',
-                          minute: '2-digit',
-                        })}
-                      </td>
+                      {columnOrder.map((colKey) => {
+                        const isVisible = columnVisibility[colKey] !== false;
+                        if (!isVisible) return null;
+
+                        switch (colKey) {
+                          case 'checkbox':
+                            return (
+                              <td key="checkbox" className={styles.checkboxCol}>
+                                <input 
+                                  type="checkbox"
+                                  checked={selectedIds.has(p.id)}
+                                  onChange={(e) => handleSelectOne(p.id, e.target.checked)}
+                                  className={styles.checkbox}
+                                />
+                              </td>
+                            );
+
+                          case 'refined_name':
+                            return (
+                              <td key="refined_name">
+                                <div className={styles.nameWrapper}>
+                                  <span className={styles.refName}>
+                                    {p.refined_name ? p.refined_name : <span className={styles.refNameEmpty}>가공 전</span>}
+                                    {priceChanged && <span className={styles.changeBadgeOrange}>가격 변동</span>}
+                                    {stockChanged && <span className={styles.changeBadgeRed}>품절 변동</span>}
+                                  </span>
+                                </div>
+                              </td>
+                            );
+
+                          case 'original_name':
+                            return (
+                              <td key="original_name">
+                                <span className={styles.origName}>{p.original_name}</span>
+                              </td>
+                            );
+
+                          case 'keywords':
+                            return (
+                              <td key="keywords">
+                                <div className={styles.keywordWrapper}>
+                                  {p.keywords && p.keywords.length > 0 ? (
+                                    p.keywords.slice(0, 5).map((kw, i) => (
+                                      <span key={i} className={styles.keywordBadge}>{kw}</span>
+                                    ))
+                                  ) : (
+                                    <span className={styles.emptyInline}>없음</span>
+                                  )}
+                                  {p.keywords && p.keywords.length > 5 && (
+                                    <span className={styles.moreKeywords}>
+                                      +{p.keywords.length - 5}
+                                    </span>
+                                  )}
+                                </div>
+                              </td>
+                            );
+
+                          case 'option_variants':
+                            return (
+                              <td key="option_variants">
+                                {p.option_variants && p.option_variants.length > 0 ? (
+                                  <details className={styles.optionDetails}>
+                                    <summary className={styles.optionSummary}>
+                                      <span className={styles.optionCount}>옵션 {p.option_variants.length}개</span>
+                                      <span className={styles.optionPreview}>
+                                        {p.option_variants[0].name} · {formatPrice(p.option_variants[0].price_wholesale)}
+                                      </span>
+                                    </summary>
+                                    <ul className={styles.optionTree}>
+                                      {p.option_variants.map((opt, index) => (
+                                        <li key={`${opt.name}-${index}`} className={styles.optionItem}>
+                                          <span className={styles.optionName}>{opt.name}</span>
+                                          <span className={styles.optionPrice}>{formatPrice(opt.price_wholesale)}</span>
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  </details>
+                                ) : p.option_values_raw ? (
+                                  <div className={styles.optionFallback}>{p.option_values_raw}</div>
+                                ) : (
+                                  <span className={styles.optionEmpty}>없음</span>
+                                )}
+                              </td>
+                            );
+
+                          case 'platform_mappings':
+                            return (
+                              <td key="platform_mappings">
+                                <div className={styles.categoryCell}>
+                                  <div className={styles.marketBadge}>
+                                    <span className={`${styles.marketLabel} ${styles.naver}`}>Naver</span>
+                                    {naverMapping && (naverMapping.category_path || naverMapping.category_id) ? (
+                                      <span className={styles.categoryPath} title={naverMapping.category_path || ''}>
+                                        {naverMapping.category_id || naverMapping.category_path}
+                                      </span>
+                                    ) : (
+                                      <span className={styles.categoryEmpty}>미매핑</span>
+                                    )}
+                                  </div>
+                                  <div className={styles.marketBadge}>
+                                    <span className={`${styles.marketLabel} ${styles.coupang}`}>Coupang</span>
+                                    {coupangMapping && coupangMapping.category_id ? (
+                                      <span className={styles.categoryPath}>
+                                        {coupangMapping.category_id}
+                                      </span>
+                                    ) : (
+                                      <span className={styles.categoryEmpty}>미매핑</span>
+                                    )}
+                                  </div>
+                                </div>
+                              </td>
+                            );
+
+                          case 'status':
+                            return (
+                              <td key="status">
+                                <span className={`${styles.statusPill} ${styles[p.status]}`}>
+                                  {p.status === 'completed' && '완료'}
+                                  {p.status === 'processing' && '가공 중'}
+                                  {p.status === 'pending' && '대기'}
+                                  {p.status === 'failed' && '실패'}
+                                </span>
+                              </td>
+                            );
+
+                          case 'created_at':
+                            return (
+                              <td key="created_at" className={styles.dateCell}>
+                                {new Date(p.created_at).toLocaleString('ko-KR', {
+                                  month: 'numeric',
+                                  day: 'numeric',
+                                  hour: '2-digit',
+                                  minute: '2-digit',
+                                })}
+                              </td>
+                            );
+
+                          case 'product_code':
+                            return (
+                              <td key="product_code">
+                                {p.product_code || <span className={styles.emptyInline}>-</span>}
+                              </td>
+                            );
+
+                          case 'wholesale_product_id':
+                            return (
+                              <td key="wholesale_product_id">
+                                {p.wholesale_product_id || <span className={styles.emptyInline}>-</span>}
+                              </td>
+                            );
+
+                          case 'price_wholesale':
+                            return (
+                              <td key="price_wholesale">
+                                {formatPrice(p.price_wholesale)}
+                              </td>
+                            );
+
+                          case 'price_retail':
+                            return (
+                              <td key="price_retail">
+                                {formatPrice(p.price_retail)}
+                              </td>
+                            );
+
+                          case 'price_min_selling':
+                            return (
+                              <td key="price_min_selling">
+                                {formatPrice(p.price_min_selling)}
+                              </td>
+                            );
+
+                          case 'origin':
+                            return (
+                              <td key="origin">
+                                {p.origin || <span className={styles.emptyInline}>-</span>}
+                              </td>
+                            );
+
+                          case 'brand_name':
+                            return (
+                              <td key="brand_name">
+                                {p.brand_name || <span className={styles.emptyInline}>-</span>}
+                              </td>
+                            );
+
+                          case 'wholesale_status':
+                            return (
+                              <td key="wholesale_status">
+                                {p.wholesale_status ? (
+                                  <span>{p.wholesale_status}</span>
+                                ) : (
+                                  <span className={styles.emptyInline}>-</span>
+                                )}
+                              </td>
+                            );
+
+                          case 'wholesale_registered_at':
+                            return (
+                              <td key="wholesale_registered_at" className={styles.dateCell}>
+                                {p.wholesale_registered_at ? (
+                                  new Date(p.wholesale_registered_at).toLocaleString('ko-KR', {
+                                    month: 'numeric',
+                                    day: 'numeric',
+                                    hour: '2-digit',
+                                    minute: '2-digit',
+                                  })
+                                ) : (
+                                  <span className={styles.emptyInline}>-</span>
+                                )}
+                              </td>
+                            );
+
+                          default:
+                            return null;
+                        }
+                      })}
                     </tr>
                   );
                 })}
@@ -513,7 +883,6 @@ export default function ProductsPage() {
               </button>
               {Array.from({ length: totalPages }).map((_, i) => {
                 const pNum = i + 1;
-                // Only show a range of page buttons to avoid overflow if pages are high
                 if (totalPages > 5 && Math.abs(page - pNum) > 2 && pNum !== 1 && pNum !== totalPages) {
                   if (pNum === 2 || pNum === totalPages - 1) {
                     return <span key={pNum} className={styles.pageEllipsis}>...</span>;
