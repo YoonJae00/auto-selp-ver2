@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import logging
 import time
@@ -9,8 +10,9 @@ from config import settings
 
 logger = logging.getLogger(__name__)
 
-# Module-level token cache shared across all instances
+# Module-level token cache and lock shared across all instances
 _token_cache: dict = {"access_token": None, "expires_at": 0.0}
+_token_lock = asyncio.Lock()
 
 
 class NaverCommerceClient:
@@ -34,17 +36,20 @@ class NaverCommerceClient:
 
     async def _get_access_token(self) -> str:
         """Return a valid Bearer token, fetching a new one when the cache
-        is empty or expired."""
-        global _token_cache
+        is empty or expired.
 
-        if _token_cache["access_token"] and time.time() < _token_cache["expires_at"]:
-            return _token_cache["access_token"]
+        The lock prevents concurrent coroutines from all firing token requests
+        when the cache expires simultaneously (token-stampede problem).
+        """
+        async with _token_lock:
+            if _token_cache["access_token"] and time.time() < _token_cache["expires_at"]:
+                return _token_cache["access_token"]
 
-        token = await self._fetch_new_token()
-        if token:
-            _token_cache["access_token"] = token
-            _token_cache["expires_at"] = time.time() + 3500  # 1 h − safety margin
-        return token or ""
+            token = await self._fetch_new_token()
+            if token:
+                _token_cache["access_token"] = token
+                _token_cache["expires_at"] = time.time() + 3500  # 1 h − safety margin
+            return token or ""
 
     async def _fetch_new_token(self) -> str | None:
         """Request a fresh OAuth2 token from the Naver Commerce API.
@@ -84,6 +89,13 @@ class NaverCommerceClient:
                 response.raise_for_status()
                 data = response.json()
                 return data.get("access_token")
+        except httpx.HTTPStatusError as exc:
+            logger.error(
+                "NaverCommerceClient: token fetch HTTP error %s: %s",
+                exc.response.status_code,
+                exc.response.text,
+            )
+            return None
         except Exception as exc:
             logger.error("NaverCommerceClient: token fetch failed: %s", exc)
             return None
@@ -117,10 +129,10 @@ class NaverCommerceClient:
                 )
                 response.raise_for_status()
                 data = response.json()
-                # The API returns the list directly or wrapped in a key.
+                # The API returns the list directly or wrapped in a dict key.
                 if isinstance(data, list):
                     return data
-                return data if isinstance(data, list) else []
+                return data.get("contents", []) if isinstance(data, dict) else []
         except Exception as exc:
             logger.error(
                 "NaverCommerceClient: get_category_attributes failed (category=%s): %s",
@@ -157,7 +169,7 @@ class NaverCommerceClient:
                 data = response.json()
                 if isinstance(data, list):
                     return data
-                return data if isinstance(data, list) else []
+                return data.get("contents", []) if isinstance(data, dict) else []
         except Exception as exc:
             logger.error(
                 "NaverCommerceClient: get_category_attribute_values failed (category=%s): %s",
