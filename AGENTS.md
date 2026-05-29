@@ -2,18 +2,15 @@
 
 ## Skills
 
-This project uses the **Compound Engineering** workflow to ensure continuous learning and prevent regressions.
+This project uses a selective **Compound Engineering** workflow only for documenting resolved problems and lessons learned.
 
-The following skills are available in `./.antigravitycli/skills/`:
+The following skill is available:
 - `/ce-compound`: Document a recently solved problem.
-- `/ce-sessions`: Search session history for relevant knowledge.
-- `/ce-plan`: Technical planning workflow.
 
 ### Usage Rule
 
-1. **Before starting work**: Always check `docs/solutions/` for related problems and solutions.
-2. **After finishing work**: (When merging or creating a PR) ALWAYS run `/ce-compound mode:headless` to document the solution and lessons learned.
-3. **During review**: After implementing fixes based on feedback, run `/ce-compound` to capture the insights from the review cycle.
+1. **After finishing work**: (When merging or creating a PR) ALWAYS run `/ce-compound mode:headless` to document the solution and lessons learned in `docs/solutions/`.
+2. **During review**: After implementing fixes based on feedback, run `/ce-compound` to capture the insights from the review cycle.
 
 ## Documentation
 

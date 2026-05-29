@@ -186,7 +186,7 @@ This document is the current implementation snapshot. For active backlog items, 
 
 ## 7. Continuous Improvement & Knowledge Compounding
 
-- **Compound Engineering Integration**: Completed local installation of `EveryInc/compound-engineering-plugin` core skills (including `/ce-compound`, `/ce-sessions`, `/ce-plan`) under `./.antigravitycli/skills/`.
-- **Workflow Automation**: Integrated the Compound workflow into `AGENTS.md` instructions. Agents will automatically check `docs/solutions/` before work and run `/ce-compound mode:headless` after successfully completing/merging dev branches or implementing code review fixes to capture valuable lessons, preventing repeated regressions.
+- **Compound Engineering Integration**: Retained only the core `/ce-compound` skill from the `EveryInc/compound-engineering-plugin` to document resolved problems while minimizing token consumption. Other CE skills have been removed to optimize efficiency.
+- **Workflow Automation**: Integrated `/ce-compound mode:headless` execution into `AGENTS.md` to run automatically after successfully completing/merging dev branches or implementing code review fixes, capturing valuable lessons in a token-efficient manner.
 - **Knowledge Base**: Established `docs/solutions/` directory for searchable knowledge storage of past solutions (bugs, architectural patterns, conventions).
 - **GitHub MCP Fix (2026-05-20)**: Resolved JSON parsing error by initializing empty `mcp_config.json` with `{}` and successfully authenticated the remote Copilot MCP server using token headers in `settings.json` and plugin configurations, resolving OAuth issues.
