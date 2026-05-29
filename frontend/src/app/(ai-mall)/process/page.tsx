@@ -123,7 +123,7 @@ const renderAttributes = (product: Product) => {
 };
 
 export default function ProcessPage() {
-  const { llmProvider, kiprisEnabled } = useSettingsStore();
+  const { llmProvider, visionLlmProvider, kiprisEnabled } = useSettingsStore();
   const { tasks, addTask } = useTaskStore();
 
   const [wholesaleSites, setWholesaleSites] = useState<WholesaleSite[]>([]);
@@ -317,6 +317,7 @@ export default function ProcessPage() {
         product_ids: Array.from(selectedIds),
         column_mapping: activeSite.column_mapping || { original_name: 'original_name' },
         llm_provider: llmProvider,
+        vision_llm_provider: visionLlmProvider,
         kipris_enabled: kiprisEnabled,
       });
 
