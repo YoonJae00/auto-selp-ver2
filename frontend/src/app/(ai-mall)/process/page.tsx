@@ -78,8 +78,8 @@ const renderAttributes = (product: Product) => {
 
   const attrsList: { key: string; value: string }[] = [];
 
-  if (coupangMapping?.mapped_attributes?.coupang_attributes) {
-    const coupangAttrs = coupangMapping.mapped_attributes.coupang_attributes;
+  if (coupangMapping?.mapped_attributes) {
+    const coupangAttrs = coupangMapping.mapped_attributes;
     const prodAttrs = coupangAttrs.product_attributes || [];
     const itemAttrs = coupangAttrs.item_attributes || [];
 
@@ -98,8 +98,8 @@ const renderAttributes = (product: Product) => {
     });
   }
 
-  if (attrsList.length === 0 && naverMapping?.mapped_attributes?.naver_attributes) {
-    const naverAttrs = naverMapping.mapped_attributes.naver_attributes || [];
+  if (attrsList.length === 0 && Array.isArray(naverMapping?.mapped_attributes)) {
+    const naverAttrs = naverMapping.mapped_attributes;
     naverAttrs.forEach((attr: any) => {
       if (attr.attributeRealValue) {
         attrsList.push({ key: `속성 #${attr.attributeSeq}`, value: attr.attributeRealValue });
