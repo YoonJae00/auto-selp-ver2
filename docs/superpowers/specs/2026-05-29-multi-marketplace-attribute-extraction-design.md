@@ -96,17 +96,17 @@ A single LLM call extracts a standardized set of product specifications from the
 ```
                     ┌────────────────────────────┐
                     │   Product Detail Content    │
-                    │   (HTML text or image URL)  │
+                    │   (HTML with images / URLs) │
                     └──────────┬─────────────────┘
                                │
                     ┌──────────▼─────────────────┐
-                    │   Text Extraction Layer     │
-                    │   HTML→text or Vision LLM   │
+                    │   Detail Image Gathering    │
+                    │   (Extract image URLs)      │
                     └──────────┬─────────────────┘
                                │
           ┌────────────────────▼────────────────────┐
-          │     LLM Attribute Extraction (1 call)   │
-          │  Input: product name + detail text +    │
+          │     Vision LLM Attribute Extraction     │
+          │  Input: product name + images +         │
           │         category attribute schemas      │
           │  Output: standardized key-value specs   │
           └────────────────────┬────────────────────┘
@@ -133,26 +133,22 @@ The existing LangGraph pipeline gains one node after `map_categories`:
 load_product_context → mark_processing → refine_name → curate_keywords → map_categories → extract_attributes → persist_success
 ```
 
-`extract_attributes` depends on `map_categories` because category IDs are needed to fetch attribute schemas.
+`extract_attributes` depends on `map_categories` because category IDs are needed to fetch attribute schemas. It utilizes the already resolved `state["naver_category"]["id"]` and `state["coupang_category"]` values from the DB mapping context.
 
-### Detail Content Text Extraction
+### Detail Content Vision Processing
 
-The `image_detail` field in the product model contains one of:
-1. **HTML content** — contains `<img>` tags, text content, spec tables.
-2. **Image URL(s)** — points to product detail images.
-
-The extraction layer handles both:
+The `image_detail` field in the product model contains HTML content with `<img>` tags or raw image URLs. Since product specifications in wholesale data are heavily reliant on images rather than raw text, we will bypass HTML text parsing entirely and rely on a Vision LLM.
 
 ```python
-def extract_text_from_detail_content(image_detail: str | None) -> str:
+def extract_images_from_detail_content(image_detail: str | None) -> list[str]:
     """
-    1. If None/empty → return ""
-    2. If contains HTML tags → parse with BeautifulSoup, extract text
-    3. If is a plain image URL → flag for Vision LLM processing
+    1. If None/empty → return []
+    2. Parse HTML to extract all `src` from `<img>` tags.
+    3. If it's just a raw URL, return it as a list.
     """
 ```
 
-For the initial implementation, HTML text extraction with BeautifulSoup is the primary path. Vision LLM integration for image-only detail pages is deferred to a follow-up iteration.
+The Vision LLM will be supplied with these images directly (using models like Gemini 1.5 Pro/Flash Vision capabilities) to visually parse spec tables, dimension markers, and textual details embedded in the images.
 
 ### Attribute Schema Providers
 
@@ -192,16 +188,15 @@ class AttributeSchema:
 
 **Caching:** Category attribute schemas change infrequently. The providers cache results in Redis with a TTL of 24 hours, keyed by `{market_code}:{category_id}`.
 
-### LLM Attribute Extraction
+### Vision LLM Attribute Extraction
 
-The LLM receives the product name, detail content text, and a unified summary of required attributes from all target marketplaces. It returns a single set of standardized specs.
+The Vision LLM receives the product name, the extracted detail images, and a unified summary of required attributes from all target marketplaces. It returns a single set of standardized specs.
 
 **Input:**
 ```
 상품명: {refined_name}
 브랜드: {brand_name}
-상세페이지 내용:
-{detail_content_text (truncated to ~2000 chars)}
+상세페이지 이미지: [Image 1], [Image 2], ...
 
 [필요한 속성 목록]
 - 색상 (필수, 선택: 레드/블루/블랙/화이트)
@@ -228,7 +223,7 @@ The LLM receives the product name, detail content text, and a unified summary of
 }
 ```
 
-The attribute list fed to the LLM is a union of all marketplace schemas, deduplicated by normalized attribute name. This ensures one LLM call covers all marketplaces.
+The attribute list fed to the Vision LLM is a union of all marketplace schemas, deduplicated by normalized attribute name. This ensures one LLM call covers all marketplaces.
 
 ### Attribute Mappers
 
@@ -350,8 +345,9 @@ Attribute extraction failures never block the product processing pipeline. They 
 ## Scope Boundaries
 
 ### In scope
-- HTML detail page text extraction with BeautifulSoup.
-- LLM-based attribute extraction from text.
+- Extracting image URLs from detail page HTML.
+- Vision LLM-based attribute extraction from detail images.
+- Using existing mapped category IDs (`state["naver_category"]["id"]`, `state["coupang_category"]`) for schema lookups.
 - Naver SmartStore attribute schema provider and mapper.
 - Coupang attribute schema provider and mapper.
 - Redis caching for attribute schemas.
@@ -361,7 +357,7 @@ Attribute extraction failures never block the product processing pipeline. They 
 - LLM prompt template stored in the `prompts` table.
 
 ### Out of scope (follow-up iterations)
-- Vision LLM for image-only detail pages (OCR).
+- Fallback text-only extraction for text-heavy detail pages without images.
 - User-facing attribute review/edit UI.
 - Attribute extraction accuracy dashboard.
 - Attribute schema cache invalidation webhook.
@@ -369,7 +365,6 @@ Attribute extraction failures never block the product processing pipeline. They 
 
 ## New Dependencies
 
-- `beautifulsoup4` and `lxml` for HTML parsing (processor service).
 - Naver Commerce API client credentials for attribute schema lookup.
 - Coupang Open API client credentials for category metadata lookup.
 - No new database tables or migrations needed (`mapped_attributes` column already exists).
