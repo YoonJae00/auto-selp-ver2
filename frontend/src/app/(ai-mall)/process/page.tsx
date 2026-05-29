@@ -14,6 +14,15 @@ interface WholesaleSite {
   column_mapping: Record<string, string> | null;
 }
 
+interface ProductPlatformMapping {
+  id: string;
+  platform_name: string;
+  category_id: string | null;
+  category_path: string | null;
+  sync_status: string;
+  mapped_attributes: Record<string, any> | null;
+}
+
 interface Product {
   id: string;
   wholesale_site_id: string | null;
@@ -32,6 +41,7 @@ interface Product {
   refined_name: string | null;
   keywords: string[] | null;
   status: 'pending' | 'processing' | 'completed' | 'failed';
+  platform_mappings?: ProductPlatformMapping[] | null;
 }
 
 interface ProductListResponse {
@@ -56,6 +66,60 @@ const processingStatusLabel: Record<Product['status'], string> = {
   processing: '가공 중',
   completed: '완료',
   failed: '실패',
+};
+
+const renderAttributes = (product: Product) => {
+  if (!product.platform_mappings || product.platform_mappings.length === 0) {
+    return <span className={styles.emptyAttributes}>-</span>;
+  }
+
+  const coupangMapping = product.platform_mappings.find((m) => m.platform_name === 'coupang');
+  const naverMapping = product.platform_mappings.find((m) => m.platform_name === 'naver');
+
+  const attrsList: { key: string; value: string }[] = [];
+
+  if (coupangMapping?.mapped_attributes?.coupang_attributes) {
+    const coupangAttrs = coupangMapping.mapped_attributes.coupang_attributes;
+    const prodAttrs = coupangAttrs.product_attributes || [];
+    const itemAttrs = coupangAttrs.item_attributes || [];
+
+    prodAttrs.forEach((attr: any) => {
+      if (attr.attributeTypeName && attr.attributeValueName) {
+        attrsList.push({ key: attr.attributeTypeName, value: attr.attributeValueName });
+      }
+    });
+
+    itemAttrs.forEach((attr: any) => {
+      if (attr.attributeTypeName && attr.attributeValueName) {
+        if (!attrsList.some((a) => a.key === attr.attributeTypeName)) {
+          attrsList.push({ key: attr.attributeTypeName, value: attr.attributeValueName });
+        }
+      }
+    });
+  }
+
+  if (attrsList.length === 0 && naverMapping?.mapped_attributes?.naver_attributes) {
+    const naverAttrs = naverMapping.mapped_attributes.naver_attributes || [];
+    naverAttrs.forEach((attr: any) => {
+      if (attr.attributeRealValue) {
+        attrsList.push({ key: `속성 #${attr.attributeSeq}`, value: attr.attributeRealValue });
+      }
+    });
+  }
+
+  if (attrsList.length === 0) {
+    return <span className={styles.emptyAttributes}>-</span>;
+  }
+
+  return (
+    <div className={styles.attributeCloud}>
+      {attrsList.map((attr, idx) => (
+        <span key={`${product.id}-attr-${idx}`} className={styles.attributeTag}>
+          <span className={styles.attributeKey}>{attr.key}</span>: {attr.value}
+        </span>
+      ))}
+    </div>
+  );
 };
 
 export default function ProcessPage() {
@@ -455,21 +519,19 @@ export default function ProcessPage() {
                   <th>키워드</th>
                   <th>도매처 코드</th>
                   <th>도매가</th>
-                  <th>소비자가</th>
-                  <th>원산지</th>
-                  <th>상태</th>
+                  <th>속성</th>
                   <th>가공상태</th>
                 </tr>
               </thead>
               <tbody>
                 {isLoadingProducts && (
                   <tr>
-                    <td colSpan={12} className={styles.tableMessage}>상품을 불러오는 중입니다.</td>
+                    <td colSpan={10} className={styles.tableMessage}>상품을 불러오는 중입니다.</td>
                   </tr>
                 )}
                 {!isLoadingProducts && products.length === 0 && (
                   <tr>
-                    <td colSpan={12} className={styles.tableMessage}>이 조건에 맞는 상품이 없습니다.</td>
+                    <td colSpan={10} className={styles.tableMessage}>이 조건에 맞는 상품이 없습니다.</td>
                   </tr>
                 )}
                 {!isLoadingProducts && products.map((product) => {
@@ -557,11 +619,7 @@ export default function ProcessPage() {
                       </td>
                       <td>{product.product_code || product.wholesale_product_id || '-'}</td>
                       <td className={styles.priceCell}>{formatPrice(product.price_wholesale)}</td>
-                      <td>{formatPrice(product.price_retail)}</td>
-                      <td>{product.origin || '-'}</td>
-                      <td>
-                        <span className={styles.statusText}>{product.wholesale_status || '미정'}</span>
-                      </td>
+                      <td>{renderAttributes(product)}</td>
                       <td>
                         <span className={`${styles.statusBadge} ${styles[`status_${displayStatus}`] || ''}`}>
                           {processingStatusLabel[displayStatus]}
