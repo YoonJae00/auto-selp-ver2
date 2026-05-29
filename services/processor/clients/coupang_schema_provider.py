@@ -36,9 +36,10 @@ class CoupangAttributeSchemaProvider:
         if self.coupang_client:
             try:
                 raw_response = await self.coupang_client.get_category_attributes(str(category_id))
-                # Response shape: {"code": "SUCCESS", "data": [{..., "attributes": [...]}]}
-                data_list = raw_response.get("data", [])
-                raw_attrs = data_list[0].get("attributes", []) if data_list else []
+                # Response shape: {"code": "SUCCESS", "data": {"attributes": [...], ...}}
+                # NOTE: data is a DICT, not a list
+                data_obj = raw_response.get("data", {})
+                raw_attrs = data_obj.get("attributes", []) if isinstance(data_obj, dict) else []
 
                 for attr in raw_attrs:
                     attr_name = attr.get("attributeTypeName", "")
@@ -57,10 +58,9 @@ class CoupangAttributeSchemaProvider:
                         unit=attr.get("basicUnit"),
                         valid_values=valid_vals if valid_vals else None,
                     ))
-                    # CoupangMapper uses `exposed` key; Coupang API has no such field.
-                    # All attributes mapped to product_attributes (exposed="NONE") for now.
+                    # Use the actual `exposed` field from the API response
                     meta[attr_name] = {
-                        "exposed": "NONE",
+                        "exposed": attr.get("exposed", "NONE"),
                     }
             except Exception as e:
                 logger.warning(
