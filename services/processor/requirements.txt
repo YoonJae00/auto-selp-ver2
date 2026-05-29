@@ -18,3 +18,4 @@ xlrd
 python-jose[cryptography]
 langgraph
 beautifulsoup4
+bcrypt

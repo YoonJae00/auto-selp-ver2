@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     Coupang_Access_Key: str
     Coupang_Secret_Key: str
     
+    NAVER_COMMERCE_CLIENT_ID: str = ""
+    NAVER_COMMERCE_CLIENT_SECRET: str = ""
+    
     GEMINI_API_KEY: str
     OPENAI_API_KEY: str
     KIPRIS_API_KEY: str
