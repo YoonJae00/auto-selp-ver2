@@ -96,5 +96,6 @@ Note: older files under `docs/superpowers/plans/` are historical implementation 
 - [x] Unified registration inbox and per-market settings/editing UI.
 - [ ] External Smart Store/Coupang submission jobs, retry behavior, and registration history. ([GitHub #52](https://github.com/YoonJae00/auto-selp-ver2/issues/52))
 - [x] **Naver Attribute Schema Provider**: Fetch, cache, and model Naver attribute schemas using Redis caching.
+- [x] **Coupang Attribute Schema Provider**: Fetch, cache, and model Coupang attribute schemas using Redis caching.
 - [ ] Recipe extensions for SEO titles and category-specific attributes.
 - [ ] Margin calculator UI, bulk price-policy application, and per-product price-override preview.
