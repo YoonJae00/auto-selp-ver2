@@ -51,7 +51,7 @@ services:
 
   worker:
     build: ./services/processor
-    command: celery -A tasks.celery_app worker --loglevel=info
+    command: celery -A tasks.celery_app worker --loglevel=info -Q processor
     env_file: .env
     depends_on:
       - db
@@ -74,7 +74,7 @@ services:
 
   marketplace-worker:
     build: ./services/marketplace
-    command: celery -A tasks.celery_app worker --loglevel=info
+    command: celery -A tasks.celery_app worker --loglevel=info -Q marketplace
     env_file: .env
     depends_on:
       db:

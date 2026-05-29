@@ -18,3 +18,10 @@ class LLMClient(ABC):
         반환: {"brand_suspected": [...], "generic": [...]}
         """
         pass
+
+    @abstractmethod
+    async def extract_product_attributes(self, refined_name: str, image_urls: list[str], attributes: list) -> dict:
+        """
+        상세 이미지로부터 카테고리 속성 추출
+        """
+        pass

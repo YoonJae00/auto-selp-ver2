@@ -15,4 +15,5 @@ celery_app.conf.update(
     result_serializer="json",
     timezone="Asia/Seoul",
     enable_utc=True,
+    task_default_queue="marketplace",
 )

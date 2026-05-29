@@ -312,3 +312,30 @@ def test_settings_require_internal_service_token(monkeypatch):
             OPENAI_API_KEY="test",
             KIPRIS_API_KEY="test",
         )
+
+
+def test_marketplace_snapshot_with_list_attributes(monkeypatch):
+    product_id = uuid.uuid4()
+    user_id = uuid.uuid4()
+    product = build_product(product_id, user_id)
+    # Set naver mapping attributes as a list (which matches real Smartstore list-based attributes)
+    for mapping in product.platform_mappings:
+        if mapping.platform_name == "naver":
+            mapping.mapped_attributes = [{"attributeSeq": 1, "attributeValueSeq": 2}]
+            
+    fake_db = FakeDB(product=product)
+    client = make_client(fake_db, monkeypatch)
+
+    try:
+        response = client.get(
+            f"/internal/products/{product_id}/marketplace-snapshot",
+            params={"user_id": str(user_id)},
+            headers={"X-Internal-Service-Token": "internal-test-token"},
+        )
+    finally:
+        processor_main.app.dependency_overrides.clear()
+        client.close()
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["market_categories"]["smartstore"]["mapped_attributes"] == [{"attributeSeq": 1, "attributeValueSeq": 2}]
