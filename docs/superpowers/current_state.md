@@ -69,6 +69,7 @@ This document is the current implementation snapshot. For active backlog items, 
 - **Coupang Attribute Schema Provider (NEW)**: Fetches, caches, and models Coupang-specific category attributes with Redis caching.
 - **Attribute Mappers (NEW)**: Translate market-neutral extracted specifications into market-specific formats for Naver (SmartStore) and Coupang (Wing).
 - **extract_attributes Node in LangGraph (NEW)**: Integrated the vision LLM attribute extraction node into the product processing LangGraph flow, executing after category mapping and before the persistence node, complete with stage timing tracking.
+- **Vision LLM Routing Celery Task Integration (NEW)**: Dynamic routing and client instantiation of `vision_llm_client` in Celery task pipelines (`process_excel_task`, `_run_pipeline`, `process_db_products_task`, `_run_db_pipeline`) and injection into LangGraph `ProductProcessingContext`.
 
 ### Marketplace Listing Service (Port 8003)
 
