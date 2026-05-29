@@ -32,3 +32,22 @@ class CoupangClient:
             )
             response.raise_for_status()
             return response.json()
+
+    @retry_with_backoff(max_retries=3)
+    async def get_category_attributes(self, display_category_code: str):
+        """
+        쿠팡 카테고리별 속성 정의 조회 API
+        Returns the full response dict: {"code": "SUCCESS", "data": [{...attributes...}]}
+        """
+        path = f"/v2/providers/seller_api/apis/api/v1/marketplace/meta/category-related-metas/display-category-codes/{display_category_code}"
+        method = "GET"
+        
+        headers = get_coupang_auth_header(method, path)
+        
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{self.base_url}{path}",
+                headers=headers
+            )
+            response.raise_for_status()
+            return response.json()
