@@ -34,7 +34,7 @@ class ProductPlatformMappingResponse(BaseModel):
     platform_product_id: Optional[str] = None
     sync_status: str
     sync_error: Optional[str] = None
-    mapped_attributes: Optional[Dict] = None
+    mapped_attributes: Optional[Any] = None
     price_changed: Optional[bool] = False
     stock_changed: Optional[bool] = False
     last_synced_price: Optional[int] = None
