@@ -626,3 +626,98 @@
     flex: 1;
   }
 }
+
+/* 열 설정 버튼 및 팝오버 컨테이너 */
+.columnSettingsContainer {
+  position: relative;
+  display: inline-block;
+}
+
+.columnSettingsPopover {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 100;
+  width: 240px;
+  max-height: 380px;
+  overflow-y: auto;
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  padding: 12px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
+}
+
+.popoverHeader {
+  font-size: 11px;
+  font-weight: 750;
+  color: var(--ink-muted-48);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.popoverList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.popoverItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  cursor: pointer;
+  color: var(--ink-muted-80);
+  user-select: none;
+}
+
+.popoverItem input {
+  cursor: pointer;
+}
+
+/* 드래그 상태 전용 CSS */
+.thDraggable {
+  cursor: grab;
+  user-select: none;
+  position: relative;
+}
+
+.thDraggable:active {
+  cursor: grabbing;
+}
+
+.thDragging {
+  opacity: 0.3;
+  background: #eef1f6 !important;
+}
+
+/* 드롭 안내 블루 인디케이터 (Apple Blue) */
+.dragIndicatorLeft::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background-color: var(--primary);
+  box-shadow: 0 0 4px var(--primary);
+  z-index: 10;
+}
+
+.dragIndicatorRight::before {
+  content: '';
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background-color: var(--primary);
+  box-shadow: 0 0 4px var(--primary);
+  z-index: 10;
+}

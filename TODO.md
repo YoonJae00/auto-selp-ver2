@@ -20,6 +20,7 @@ Note: older files under `docs/superpowers/plans/` are historical implementation 
 - [x] Final E2E Integration test with `doto_sample.xlsx`
 
 ## Phase 3: Advanced Features & Refinement (In Progress)
+- [/] **Product Columns Visibility & Reordering**: Custom column visibility toggle and native drag-and-drop column reordering persisted in localStorage. (Task 1: CSS 스타일 구현 완료)
 - [x] **Secure Authentication Upgrade**: OAuth2 (Google, Naver) & Admin secret verification.
 - [x] **Auth UI Redesign**: Premium Glassmorphism & Animated Mesh Gradient background for Login/Register.
 - [x] **User Profile**: Nickname support and multi-provider storage.
