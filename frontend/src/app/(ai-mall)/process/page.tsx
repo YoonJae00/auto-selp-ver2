@@ -20,7 +20,7 @@ interface ProductPlatformMapping {
   category_id: string | null;
   category_path: string | null;
   sync_status: string;
-  mapped_attributes: Record<string, any> | null;
+  mapped_attributes: Record<string, any> | any[] | null;
 }
 
 interface Product {

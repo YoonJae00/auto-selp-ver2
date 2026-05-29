@@ -1,6 +1,6 @@
 import asyncio
 import time
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, is_dataclass
 from typing import Any, Awaitable, Callable, TypedDict
 
 from langgraph.graph import END, START, StateGraph
@@ -10,6 +10,8 @@ from utils.wholesale_upload import merge_product_warnings
 
 from clients.naver_schema_provider import NaverAttributeSchemaProvider
 from clients.coupang_schema_provider import CoupangAttributeSchemaProvider
+from clients.naver_commerce_client import NaverCommerceClient
+from clients.coupang_client import CoupangClient
 from utils.attribute_mappers import NaverAttributeMapper, CoupangAttributeMapper
 from utils.detail_image import extract_images_from_detail_content
 import redis.asyncio as aioredis
@@ -203,52 +205,47 @@ async def extract_attributes(
         image_urls = extract_images_from_detail_content(product.image_detail or "")
         
         # Setup providers with real API clients
-        from clients.naver_commerce_client import NaverCommerceClient
-        from clients.coupang_client import CoupangClient
-        
-        redis_client = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
-        naver_provider = NaverAttributeSchemaProvider(redis_client, NaverCommerceClient())
-        coupang_provider = CoupangAttributeSchemaProvider(redis_client, CoupangClient())
-        
-        # Retrieve Category target definitions
-        naver_cat_id = state.get("naver_category", {}).get("id")
-        coupang_cat_id = state.get("coupang_category")
-        
-        naver_schema = await naver_provider.get_attribute_schema(naver_cat_id) if naver_cat_id else None
-        coupang_schema = await coupang_provider.get_attribute_schema(coupang_cat_id) if coupang_cat_id else None
-        
-        # Merge definitions
-        merged_attributes = []
-        if naver_schema:
-            merged_attributes.extend(naver_schema.attributes)
-        if coupang_schema:
-            merged_attributes.extend(coupang_schema.attributes)
+        async with aioredis.from_url(settings.REDIS_URL, decode_responses=True) as redis_client:
+            naver_provider = NaverAttributeSchemaProvider(redis_client, NaverCommerceClient())
+            coupang_provider = CoupangAttributeSchemaProvider(redis_client, CoupangClient())
             
-        # Call Vision LLM — serialize AttributeDef dataclasses to dicts first
-        import dataclasses
-        attributes_dicts = [
-            dataclasses.asdict(a) if dataclasses.is_dataclass(a) else a
-            for a in merged_attributes
-        ]
-        extracted_specs = await vision_client.extract_product_attributes(
-            refined_name=state["refined_name"],
-            image_urls=image_urls,
-            attributes=attributes_dicts,
-        )
-        
-        # Map to platform specifications
-        naver_mapper = NaverAttributeMapper()
-        coupang_mapper = CoupangAttributeMapper()
-        
-        naver_attrs = naver_mapper.map_attributes(extracted_specs, naver_schema) if naver_schema else []
-        coupang_attrs = coupang_mapper.map_attributes(extracted_specs, coupang_schema) if coupang_schema else {"product_attributes": [], "item_attributes": []}
-        
-        mapped_attributes = {
-            "extracted_specs": extracted_specs,
-            "naver_attributes": naver_attrs,
-            "coupang_attributes": coupang_attrs
-        }
-        await redis_client.close()
+            # Retrieve Category target definitions
+            naver_cat_id = state.get("naver_category", {}).get("id")
+            coupang_cat_id = state.get("coupang_category")
+            
+            naver_schema = await naver_provider.get_attribute_schema(naver_cat_id) if naver_cat_id else None
+            coupang_schema = await coupang_provider.get_attribute_schema(coupang_cat_id) if coupang_cat_id else None
+            
+            # Merge definitions
+            merged_attributes = []
+            if naver_schema:
+                merged_attributes.extend(naver_schema.attributes)
+            if coupang_schema:
+                merged_attributes.extend(coupang_schema.attributes)
+                
+            # Call Vision LLM — serialize AttributeDef dataclasses to dicts first
+            attributes_dicts = [
+                asdict(a) if is_dataclass(a) else a
+                for a in merged_attributes
+            ]
+            extracted_specs = await vision_client.extract_product_attributes(
+                refined_name=state["refined_name"],
+                image_urls=image_urls,
+                attributes=attributes_dicts,
+            )
+            
+            # Map to platform specifications
+            naver_mapper = NaverAttributeMapper()
+            coupang_mapper = CoupangAttributeMapper()
+            
+            naver_attrs = naver_mapper.map_attributes(extracted_specs, naver_schema) if naver_schema else []
+            coupang_attrs = coupang_mapper.map_attributes(extracted_specs, coupang_schema) if coupang_schema else {"product_attributes": [], "item_attributes": []}
+            
+            mapped_attributes = {
+                "extracted_specs": extracted_specs,
+                "naver_attributes": naver_attrs,
+                "coupang_attributes": coupang_attrs
+            }
         
     if runtime is not None:
         _finish_stage(state, "extracting")
