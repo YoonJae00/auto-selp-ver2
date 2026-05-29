@@ -67,6 +67,7 @@ This document is the current implementation snapshot. For active backlog items, 
 - **Marketplace Draft Notification (NEW)**: Successful DB product processing now commits the completed product first, then best-effort requests marketplace draft generation through the internal marketplace API. Notification failures are stored as `marketplace_generation` warnings and do not fail the processed product.
 - **Naver Attribute Schema Provider (NEW)**: Fetches, caches, and models Naver-specific category attributes with Redis caching.
 - **Coupang Attribute Schema Provider (NEW)**: Fetches, caches, and models Coupang-specific category attributes with Redis caching.
+- **Attribute Mappers (NEW)**: Translate market-neutral extracted specifications into market-specific formats for Naver (SmartStore) and Coupang (Wing).
 
 ### Marketplace Listing Service (Port 8003)
 
