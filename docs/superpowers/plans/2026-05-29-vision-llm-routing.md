@@ -300,19 +300,14 @@
 - [x] **Step 4: Commit factory and dynamic clients**
   ```bash
   git add services/processor/clients/llm_factory.py services/processor/clients/gemini_client.py services/processor/clients/openai_client.py
-  git commit -m "feat(llm): support parameterized model initialization in factory and clients"
-  ```
-
----
-
-### Task 6: Implement Vision LLM Attributes Extraction Node & Clients
+  git commit -### Task 6: Implement Vision LLM Attributes Extraction Node & Clients
 
 **Files:**
 - Modify: `services/processor/clients/gemini_client.py`
 - Modify: `services/processor/clients/openai_client.py`
 - Modify: `services/processor/graphs/product_processor.py`
 
-- [ ] **Step 1: Implement detail image downloader in clients**
+- [x] **Step 1: Implement detail image downloader in clients**
   Add image downloader to `GeminiClient` and `OpenAIClient` using `httpx`:
   ```python
   import httpx
@@ -328,7 +323,7 @@
       return None
   ```
 
-- [ ] **Step 2: Implement Vision Attribute Extraction in `GeminiClient`**
+- [x] **Step 2: Implement Vision Attribute Extraction in `GeminiClient`**
   Modify `GeminiClient` in `gemini_client.py` to write `extract_product_attributes`:
   ```python
   async def extract_product_attributes(self, refined_name: str, image_urls: list[str], attributes: list) -> dict:
@@ -368,11 +363,11 @@
           return {}
   ```
 
-- [ ] **Step 3: Implement Vision Attribute Extraction in `OpenAIClient`**
+- [x] **Step 3: Implement Vision Attribute Extraction in `OpenAIClient`**
   Modify `OpenAIClient` in `openai_client.py` to write `extract_product_attributes`:
   ```python
   import base64
-
+  
   async def extract_product_attributes(self, refined_name: str, image_urls: list[str], attributes: list) -> dict:
       if not image_urls:
           return {}
@@ -414,7 +409,7 @@
           return {}
   ```
 
-- [ ] **Step 4: Update the `extract_attributes` Node in LangGraph**
+- [x] **Step 4: Update the `extract_attributes` Node in LangGraph**
   Modify `services/processor/graphs/product_processor.py` around line 175:
   Instantiate mappings and call context's `vision_llm_client` to extract attributes from images.
   ```python
@@ -493,12 +488,12 @@
       return {**state, "mapped_attributes": mapped_attributes}
   ```
 
-- [ ] **Step 5: Run all graph tests**
+- [x] **Step 5: Run all graph tests**
   Verify the full product processor graph behaves successfully.
   Run: `DATABASE_URL=postgresql+asyncpg://admin:password@localhost:5432/autoselp INTERNAL_SERVICE_TOKEN=internal-test-token NAVER_API_KEY=test NAVER_SECRET_KEY=test NAVER_CUSTOMER_ID=test NAVER_CLIENT_ID=test NAVER_CLIENT_SECRET=test Coupang_Access_Key=test Coupang_Secret_Key=test GEMINI_API_KEY=test OPENAI_API_KEY=test KIPRIS_API_KEY=test PYTHONPATH=services/processor pytest services/processor/tests/`
   Expected: PASS (All 63 tests pass)
 
-- [ ] **Step 6: Commit all vision LLM implementation**
+- [x] **Step 6: Commit all vision LLM implementation**
   ```bash
   git add services/processor/clients/gemini_client.py services/processor/clients/openai_client.py services/processor/graphs/product_processor.py
   git commit -m "feat(vision): implement vision-based attribute extraction in clients and graphs node"

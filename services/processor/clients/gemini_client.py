@@ -1,4 +1,5 @@
 import google.generativeai as genai
+import httpx
 import json
 import logging
 from config import settings
@@ -107,9 +108,48 @@ class GeminiClient(LLMClient):
             # 실패 시 모두 generic으로 처리 (KIPRIS 호출 안 함)
             return {"brand_suspected": [], "generic": keywords}
 
+    async def _download_image(self, url: str) -> bytes | None:
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(url, timeout=10.0)
+                if response.status_code == 200:
+                    return response.content
+        except Exception as e:
+            logger.error(f"Failed to download image {url}: {e}")
+        return None
+
     async def extract_product_attributes(self, refined_name: str, image_urls: list[str], attributes: list) -> dict:
-        """
-        상세 이미지로부터 카테고리 속성 추출
-        """
-        logger.info(f"extract_product_attributes called for {refined_name}")
-        return {}
+        if not image_urls:
+            return {}
+        
+        # Download first 3 details page images
+        image_parts = []
+        for url in image_urls[:3]:
+            img_bytes = await self._download_image(url)
+            if img_bytes:
+                image_parts.append({
+                    "mime_type": "image/jpeg",
+                    "data": img_bytes
+                })
+        
+        attr_schema_str = json.dumps(attributes, ensure_ascii=False)
+        prompt = (
+            f"상품명: {refined_name}\n"
+            f"대상 속성 요구사항:\n{attr_schema_str}\n\n"
+            f"상세 이미지들을 분석하여 요구사항에 맞는 속성(값)들을 추출해줘.\n"
+            f"반드시 다음 JSON 포맷의 구조로 설명 없이 JSON만 응답해:\n"
+            f'{{"속성명": "추출값", ...}}'
+        )
+        
+        try:
+            contents = [prompt] + image_parts
+            response = await self.model.generate_content_async(contents)
+            text = response.text
+            if "```json" in text:
+                text = text.split("```json")[1].split("```")[0].strip()
+            elif "{" in text and "}" in text:
+                text = text[text.find("{"):text.rfind("}")+1]
+            return json.loads(text)
+        except Exception as e:
+            logger.error(f"Gemini attribute extraction failed: {e}")
+            return {}

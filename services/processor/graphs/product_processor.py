@@ -8,6 +8,13 @@ from langgraph.runtime import Runtime
 from sqlalchemy import select
 from utils.wholesale_upload import merge_product_warnings
 
+from clients.naver_schema_provider import NaverAttributeSchemaProvider
+from clients.coupang_schema_provider import CoupangAttributeSchemaProvider
+from utils.attribute_mappers import NaverAttributeMapper, CoupangAttributeMapper
+from utils.detail_image import extract_images_from_detail_content
+import redis.asyncio as aioredis
+from config import settings
+
 
 class ProductProcessingState(TypedDict, total=False):
     import_id: str
@@ -175,20 +182,66 @@ async def map_categories(
 
 async def extract_attributes(
     state: ProductProcessingState,
-    runtime: Any,  # using Any to prevent Runtime typing mismatch in tests if needed
+    runtime: Any,
 ) -> ProductProcessingState:
     """Extract product attributes using Vision LLM and map to target marketplaces."""
-    # Placeholder for actual LLM call. Real implementation will inject llm_client from runtime
-    # and use state["naver_category"]["id"] / state["coupang_category"] for schemas.
     if runtime is not None:
         await _start_stage(state, runtime, "extracting")
         
+    product = runtime.context.product if runtime else None
+    vision_client = runtime.context.vision_llm_client if runtime else None
+    
+    # Default empty structure
     mapped_attributes = {
         "extracted_specs": {},
         "naver_attributes": [],
         "coupang_attributes": {"product_attributes": [], "item_attributes": []}
     }
     
+    if product and vision_client:
+        # Extract detail images from HTML
+        image_urls = extract_images_from_detail_content(product.image_detail or "")
+        
+        # Setup providers
+        redis_client = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
+        naver_provider = NaverAttributeSchemaProvider(redis_client)
+        coupang_provider = CoupangAttributeSchemaProvider(redis_client)
+        
+        # Retrieve Category target definitions
+        naver_cat_id = state.get("naver_category", {}).get("id")
+        coupang_cat_id = state.get("coupang_category")
+        
+        naver_schema = await naver_provider.get_attribute_schema(naver_cat_id) if naver_cat_id else None
+        coupang_schema = await coupang_provider.get_attribute_schema(coupang_cat_id) if coupang_cat_id else None
+        
+        # Merge definitions
+        merged_attributes = []
+        if naver_schema:
+            merged_attributes.extend(naver_schema.attributes)
+        if coupang_schema:
+            merged_attributes.extend(coupang_schema.attributes)
+            
+        # Call Vision LLM
+        extracted_specs = await vision_client.extract_product_attributes(
+            refined_name=state["refined_name"],
+            image_urls=image_urls,
+            attributes=merged_attributes
+        )
+        
+        # Map to platform specifications
+        naver_mapper = NaverAttributeMapper()
+        coupang_mapper = CoupangAttributeMapper()
+        
+        naver_attrs = naver_mapper.map_attributes(extracted_specs, naver_schema) if naver_schema else []
+        coupang_attrs = coupang_mapper.map_attributes(extracted_specs, coupang_schema) if coupang_schema else {"product_attributes": [], "item_attributes": []}
+        
+        mapped_attributes = {
+            "extracted_specs": extracted_specs,
+            "naver_attributes": naver_attrs,
+            "coupang_attributes": coupang_attrs
+        }
+        await redis_client.close()
+        
     if runtime is not None:
         _finish_stage(state, "extracting")
         

@@ -49,3 +49,25 @@ async def test_gemini_refine_product_name_all_fail_fallback():
         # All attempts fail, should return original
         assert result == original
         assert MockModel.return_value.generate_content_async.call_count == 3
+
+@pytest.mark.asyncio
+async def test_gemini_extract_product_attributes_success():
+    with patch("google.generativeai.GenerativeModel") as MockModel:
+        mock_response = MagicMock()
+        mock_response.text = '{"색상": "레드", "사이즈": "L"}'
+        
+        MockModel.return_value.generate_content_async = AsyncMock(return_value=mock_response)
+        
+        client = GeminiClient()
+        client._download_image = AsyncMock(return_value=b"fake_image_bytes")
+        
+        result = await client.extract_product_attributes(
+            refined_name="멋진 티셔츠",
+            image_urls=["http://example.com/img1.jpg"],
+            attributes=[{"name": "색상"}, {"name": "사이즈"}]
+        )
+        
+        assert result == {"색상": "레드", "사이즈": "L"}
+        client._download_image.assert_called_once_with("http://example.com/img1.jpg")
+        MockModel.return_value.generate_content_async.assert_called_once()
+
