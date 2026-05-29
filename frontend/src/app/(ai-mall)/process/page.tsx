@@ -79,7 +79,7 @@ const renderAttributes = (product: Product) => {
   const attrsList: { key: string; value: string }[] = [];
 
   if (coupangMapping?.mapped_attributes) {
-    const coupangAttrs = coupangMapping.mapped_attributes;
+    const coupangAttrs = coupangMapping.mapped_attributes as any;
     const prodAttrs = coupangAttrs.product_attributes || [];
     const itemAttrs = coupangAttrs.item_attributes || [];
 
