@@ -7,6 +7,7 @@ class ProcessRequest(BaseModel):
     file_id: str
     column_mapping: Dict[str, str]
     llm_provider: Optional[str] = "gemini"
+    vision_llm_provider: Optional[str] = "gemini"
     kipris_enabled: Optional[bool] = True
     wholesale_site_id: Optional[UUID] = None
     start_processing: Optional[bool] = True
@@ -98,6 +99,7 @@ class DBProcessRequest(BaseModel):
     product_ids: Optional[List[UUID]] = None
     column_mapping: Dict[str, str]
     llm_provider: Optional[str] = "gemini"
+    vision_llm_provider: Optional[str] = "gemini"
     kipris_enabled: Optional[bool] = True
 
 # --- Wholesale Site Schemas ---
@@ -135,7 +137,7 @@ class MarketplaceSnapshotImages(BaseModel):
 class MarketplaceSnapshotCategory(BaseModel):
     category_id: Optional[str] = None
     category_path: Optional[str] = None
-    mapped_attributes: Optional[Dict[str, Any]] = None
+    mapped_attributes: Optional[Any] = None
 
 
 class MarketplaceSnapshotResponse(BaseModel):

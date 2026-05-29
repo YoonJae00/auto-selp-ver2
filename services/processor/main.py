@@ -249,7 +249,13 @@ async def start_processing(request: ProcessRequest):
         raise HTTPException(status_code=404, detail="File not found.")
     
     file_path = os.path.join(UPLOAD_DIR, files[0])
-    task = process_excel_task.delay(file_path, request.column_mapping, request.llm_provider, request.kipris_enabled)
+    task = process_excel_task.delay(
+        file_path,
+        request.column_mapping,
+        request.llm_provider,
+        request.kipris_enabled,
+        request.vision_llm_provider,
+    )
     return {"task_id": task.id}
 
 
@@ -415,7 +421,9 @@ async def start_db_processing(
         str(import_id),
         col_mapping,
         request.llm_provider,
-        request.kipris_enabled
+        request.kipris_enabled,
+        None,
+        request.vision_llm_provider,
     )
     
     return {
@@ -482,6 +490,7 @@ async def start_selected_products_processing(
         request.llm_provider,
         request.kipris_enabled,
         product_ids or None,
+        request.vision_llm_provider,
     )
 
     return {

@@ -119,7 +119,7 @@
 - Modify: `services/processor/schemas.py`
 - Modify: `services/processor/main.py`
 
-- [ ] **Step 1: Update API Validation Schemas**
+- [x] **Step 1: Update API Validation Schemas**
   Modify `services/processor/schemas.py` to add `vision_llm_provider` to `ProcessRequest` and `DBProcessRequest`:
   ```python
   class ProcessRequest(BaseModel):
@@ -140,7 +140,7 @@
       kipris_enabled: Optional[bool] = True
   ```
 
-- [ ] **Step 2: Update FastAPI routes to forward parameter**
+- [x] **Step 2: Update FastAPI routes to forward parameter**
   Modify `services/processor/main.py` to capture `request.vision_llm_provider` and pass it to the celery delays:
   ```python
   # In start_db_processing (/process-db) around line 301:
@@ -163,12 +163,12 @@
       )
   ```
 
-- [ ] **Step 3: Run snapshot tests**
+- [x] **Step 3: Run snapshot tests**
   Ensure endpoints still boot and snapshot test passes.
   Run: `PYTHONPATH=services/processor pytest services/processor/tests/test_marketplace_snapshot.py`
   Expected: PASS
 
-- [ ] **Step 4: Commit backend endpoints**
+- [x] **Step 4: Commit backend endpoints**
   ```bash
   git add services/processor/schemas.py services/processor/main.py
   git commit -m "feat(processor): add vision_llm_provider schema validation and routing to endpoints"
