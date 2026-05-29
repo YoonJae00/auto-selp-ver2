@@ -202,10 +202,13 @@ async def extract_attributes(
         # Extract detail images from HTML
         image_urls = extract_images_from_detail_content(product.image_detail or "")
         
-        # Setup providers
+        # Setup providers with real API clients
+        from clients.naver_commerce_client import NaverCommerceClient
+        from clients.coupang_client import CoupangClient
+        
         redis_client = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
-        naver_provider = NaverAttributeSchemaProvider(redis_client)
-        coupang_provider = CoupangAttributeSchemaProvider(redis_client)
+        naver_provider = NaverAttributeSchemaProvider(redis_client, NaverCommerceClient())
+        coupang_provider = CoupangAttributeSchemaProvider(redis_client, CoupangClient())
         
         # Retrieve Category target definitions
         naver_cat_id = state.get("naver_category", {}).get("id")
@@ -221,11 +224,16 @@ async def extract_attributes(
         if coupang_schema:
             merged_attributes.extend(coupang_schema.attributes)
             
-        # Call Vision LLM
+        # Call Vision LLM — serialize AttributeDef dataclasses to dicts first
+        import dataclasses
+        attributes_dicts = [
+            dataclasses.asdict(a) if dataclasses.is_dataclass(a) else a
+            for a in merged_attributes
+        ]
         extracted_specs = await vision_client.extract_product_attributes(
             refined_name=state["refined_name"],
             image_urls=image_urls,
-            attributes=merged_attributes
+            attributes=attributes_dicts,
         )
         
         # Map to platform specifications
