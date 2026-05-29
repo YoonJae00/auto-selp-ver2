@@ -19,6 +19,7 @@ class ProductProcessingState(TypedDict, total=False):
     filtered_keywords: list[str]
     naver_category: dict[str, Any]
     coupang_category: str
+    mapped_attributes: dict[str, Any]
     stage_timings: dict[str, dict[str, float | int]]
     processing_time_ms: int
     error: str
@@ -57,13 +58,16 @@ def build_product_processing_graph():
     graph.add_node("refine_name", refine_name)
     graph.add_node("curate_keywords", curate_keywords)
     graph.add_node("map_categories", map_categories)
+    graph.add_node("extract_attributes", extract_attributes)
     graph.add_node("persist_success", persist_success)
+    
     graph.add_edge(START, "load_product_context")
     graph.add_edge("load_product_context", "mark_processing")
     graph.add_edge("mark_processing", "refine_name")
     graph.add_edge("refine_name", "curate_keywords")
     graph.add_edge("curate_keywords", "map_categories")
-    graph.add_edge("map_categories", "persist_success")
+    graph.add_edge("map_categories", "extract_attributes")
+    graph.add_edge("extract_attributes", "persist_success")
     graph.add_edge("persist_success", END)
     return graph.compile()
 
@@ -168,6 +172,28 @@ async def map_categories(
     }
 
 
+async def extract_attributes(
+    state: ProductProcessingState,
+    runtime: Any,  # using Any to prevent Runtime typing mismatch in tests if needed
+) -> ProductProcessingState:
+    """Extract product attributes using Vision LLM and map to target marketplaces."""
+    # Placeholder for actual LLM call. Real implementation will inject llm_client from runtime
+    # and use state["naver_category"]["id"] / state["coupang_category"] for schemas.
+    if runtime is not None:
+        await _start_stage(state, runtime, "extracting")
+        
+    mapped_attributes = {
+        "extracted_specs": {},
+        "naver_attributes": [],
+        "coupang_attributes": {"product_attributes": [], "item_attributes": []}
+    }
+    
+    if runtime is not None:
+        _finish_stage(state, "extracting")
+        
+    return {**state, "mapped_attributes": mapped_attributes}
+
+
 async def _get_or_create_mapping(runtime: Runtime[ProductProcessingContext], platform_name: str):
     from models import ProductPlatformMapping
 
@@ -204,10 +230,14 @@ async def persist_success(
     naver_mapping = await _get_or_create_mapping(runtime, "naver")
     naver_mapping.category_id = str(state["naver_category"].get("id", ""))
     naver_mapping.category_path = state["naver_category"].get("path", "")
+    if "mapped_attributes" in state:
+        naver_mapping.mapped_attributes = state["mapped_attributes"].get("naver_attributes")
 
     coupang_mapping = await _get_or_create_mapping(runtime, "coupang")
     coupang_mapping.category_id = state["coupang_category"]
     coupang_mapping.category_path = state["coupang_category"]
+    if "mapped_attributes" in state:
+        coupang_mapping.mapped_attributes = state["mapped_attributes"].get("coupang_attributes")
 
     if runtime.context.import_run:
         runtime.context.import_run.success_count += 1
@@ -251,6 +281,11 @@ async def persist_success(
                 or state["naver_category"].get("path")
                 or "",
                 "coupang_category": state["coupang_category"],
+            },
+            {
+                "name": "extracting",
+                "ms": state.get("stage_timings", {}).get("extracting", {}).get("ms", 0),
+                "mapped_attributes": state.get("mapped_attributes", {}),
             },
         ],
     }

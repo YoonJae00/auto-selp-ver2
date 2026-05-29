@@ -158,7 +158,7 @@ async def test_process_product_with_graph_success_updates_product_and_trace():
     assert context.completed_rows[0]["stages"][2]["name"] == "categorizing"
     assert context.completed_rows[0]["stages"][2]["naver_category"] == "50000001"
     assert context.all_warnings[0][0]["keyword"] == "브랜드"
-    assert [event[0] for event in progress_events] == ["refining", "keywords", "categorizing"]
+    assert [event[0] for event in progress_events] == ["refining", "keywords", "categorizing", "extracting"]
     marketplace_client.request_draft_generation.assert_awaited_once_with(context.product)
 
 
@@ -252,3 +252,20 @@ async def test_process_product_with_graph_marketplace_failure_adds_warning_witho
         for warning in warnings
     )
     assert context.db.commits == 3
+
+
+@pytest.mark.asyncio
+async def test_extract_attributes_node_noop():
+    from graphs.product_processor import extract_attributes
+    # Verify node signature and basic passthrough when extraction is disabled/fails
+    state = {
+        "naver_category": {"id": "123"},
+        "coupang_category": "456",
+        "refined_name": "Test Product",
+        "product": {"image_detail": "http://img.com"}
+    }
+    
+    # Passing minimal runtime config, expect it to return mapped_attributes key
+    result = await extract_attributes(state, None)
+    
+    assert "mapped_attributes" in result

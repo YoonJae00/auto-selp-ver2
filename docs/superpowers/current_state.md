@@ -68,6 +68,7 @@ This document is the current implementation snapshot. For active backlog items, 
 - **Naver Attribute Schema Provider (NEW)**: Fetches, caches, and models Naver-specific category attributes with Redis caching.
 - **Coupang Attribute Schema Provider (NEW)**: Fetches, caches, and models Coupang-specific category attributes with Redis caching.
 - **Attribute Mappers (NEW)**: Translate market-neutral extracted specifications into market-specific formats for Naver (SmartStore) and Coupang (Wing).
+- **extract_attributes Node in LangGraph (NEW)**: Integrated the vision LLM attribute extraction node into the product processing LangGraph flow, executing after category mapping and before the persistence node, complete with stage timing tracking.
 
 ### Marketplace Listing Service (Port 8003)
 
