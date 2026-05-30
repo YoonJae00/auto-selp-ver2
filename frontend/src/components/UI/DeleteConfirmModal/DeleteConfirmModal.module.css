@@ -1,0 +1,158 @@
+.overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(12px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  animation: fadeIn 0.25s ease-out;
+}
+
+.modalCard {
+  background: rgba(255, 255, 255, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  border-radius: 18px;
+  width: 90%;
+  max-width: 440px;
+  padding: 28px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.15);
+  text-align: center;
+  transform: scale(0.95);
+  animation: popUp 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.iconContainer {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 16px;
+}
+
+.icon {
+  font-size: 38px;
+  width: 72px;
+  height: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+}
+
+.trashIcon {
+  background: rgba(0, 122, 255, 0.08);
+}
+
+.alertIcon {
+  background: rgba(255, 59, 48, 0.08);
+  animation: pulse 2s infinite;
+}
+
+.title {
+  font-size: 20px;
+  font-weight: 600;
+  color: #1c1c1e;
+  margin: 0 0 14px 0;
+}
+
+.content p {
+  font-size: 14.5px;
+  line-height: 1.5;
+  color: #48484a;
+  margin: 0;
+}
+
+.highlight {
+  color: #ff3b30;
+  font-weight: 600;
+}
+
+.errorAlert {
+  background: rgba(255, 59, 48, 0.08);
+  border: 1px solid rgba(255, 59, 48, 0.15);
+  color: #ff3b30;
+  padding: 10px 14px;
+  border-radius: 10px;
+  font-size: 13px;
+  margin-top: 16px;
+  text-align: left;
+}
+
+.actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 24px;
+}
+
+.actions button {
+  flex: 1;
+  height: 44px;
+  border-radius: 12px;
+  font-size: 15px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border: none;
+  outline: none;
+}
+
+.cancelBtn {
+  background: #e5e5ea;
+  color: #1c1c1e;
+}
+
+.cancelBtn:hover {
+  background: #d1d1d6;
+}
+
+.dangerBtn {
+  background: #ff3b30;
+  color: #ffffff;
+}
+
+.dangerBtn:hover {
+  background: #e0352b;
+}
+
+.forceBtn {
+  background: #ff453a;
+  color: #ffffff;
+  font-weight: 600;
+}
+
+.forceBtn:hover {
+  background: #e03d32;
+}
+
+.spinner {
+  display: inline-block;
+  width: 20px;
+  height: 20px;
+  border: 3px solid rgba(255, 255, 255, 0.3);
+  border-radius: 50%;
+  border-top-color: #ffffff;
+  animation: spin 1s ease-in-out infinite;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes popUp {
+  from { transform: scale(0.95); }
+  to { transform: scale(1); }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes pulse {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.05); }
+  100% { transform: scale(1); }
+}
