@@ -154,3 +154,17 @@ class MarketplaceSnapshotResponse(BaseModel):
     images: MarketplaceSnapshotImages
     options: List[Dict[str, Any]] = []
     market_categories: Dict[str, MarketplaceSnapshotCategory] = {}
+
+
+class ProductDeleteRequest(BaseModel):
+    product_ids: Optional[List[UUID]] = None
+    wholesale_site_id: Optional[UUID] = None
+    force: bool = False
+
+
+class ProductDeleteResponse(BaseModel):
+    success: bool
+    deleted_count: int
+    warning_synced_count: int = 0
+    message: str
+
