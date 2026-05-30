@@ -684,6 +684,7 @@ async def export_products(
 @app.post("/products/delete", response_model=ProductDeleteResponse)
 async def delete_products(
     req: ProductDeleteRequest,
+    current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     if not req.product_ids and not req.wholesale_site_id:
@@ -693,8 +694,8 @@ async def delete_products(
             message="삭제 대상(product_ids 또는 wholesale_site_id)을 입력해주세요."
         )
 
-    # 1. Resolve product targets
-    target_stmt = select(Product.id)
+    # 1. Resolve product targets belonging to current user
+    target_stmt = select(Product.id).where(Product.user_id == current_user["id"])
     if req.product_ids:
         target_stmt = target_stmt.where(Product.id.in_(req.product_ids))
     elif req.wholesale_site_id:
@@ -731,7 +732,12 @@ async def delete_products(
         )
 
     # 4. Perform cascade deletion (Postgres cascade configured in relationships)
-    del_stmt = delete(Product).where(Product.id.in_(target_ids))
+    del_stmt = delete(Product).where(
+        and_(
+            Product.id.in_(target_ids),
+            Product.user_id == current_user["id"]
+        )
+    )
     res_del = await db.execute(del_stmt)
     await db.commit()
 
@@ -741,6 +747,7 @@ async def delete_products(
         deleted_count=deleted_count,
         message=f"성공적으로 {deleted_count}개의 상품이 삭제되었습니다."
     )
+
 
 
 @app.get("/imports", response_model=List[ProductImportResponse])

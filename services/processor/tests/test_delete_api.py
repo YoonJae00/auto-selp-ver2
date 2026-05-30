@@ -21,6 +21,8 @@ from models import Product, ProductPlatformMapping, WholesaleSite
 from database import Base, engine
 from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
 
+TEST_USER_ID = uuid.uuid4()
+
 @pytest.fixture(scope="module")
 def anyio_backend():
     return "asyncio"
@@ -34,6 +36,13 @@ async def test_session():
     async_session = async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
     yield async_session
 
+@pytest.fixture(autouse=True)
+def mock_auth():
+    from main import get_current_user
+    app.dependency_overrides[get_current_user] = lambda: {"id": TEST_USER_ID, "username": "test_user", "is_admin": False}
+    yield
+    app.dependency_overrides.clear()
+
 @pytest.mark.anyio
 async def test_delete_endpoint_fails_due_to_sync_warning(test_session):
     async with test_session() as session:
@@ -41,7 +50,7 @@ async def test_delete_endpoint_fails_due_to_sync_warning(test_session):
         site_id = uuid.uuid4()
         site = WholesaleSite(
             id=site_id,
-            user_id=uuid.uuid4(),
+            user_id=TEST_USER_ID,
             name="Test Site Deletion Warning",
             homepage_url="http://test.com",
             column_mapping={}
@@ -100,7 +109,7 @@ async def test_delete_endpoint_success_with_force(test_session):
         site_id = uuid.uuid4()
         site = WholesaleSite(
             id=site_id,
-            user_id=uuid.uuid4(),
+            user_id=TEST_USER_ID,
             name="Test Site Deletion Force Success",
             homepage_url="http://test.com",
             column_mapping={}
