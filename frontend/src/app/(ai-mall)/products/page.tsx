@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { api } from '@/lib/api';
 import PillButton from '@/components/UI/PillButton/PillButton';
 import styles from './products.module.css';
+import DeleteConfirmModal from '@/components/UI/DeleteConfirmModal/DeleteConfirmModal';
 
 interface PlatformMapping {
   id: string;
@@ -168,6 +169,17 @@ export default function ProductsPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isExporting, setIsExporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Deletion states
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [deleteConfig, setDeleteConfig] = useState<{
+    mode: 'selected' | 'wholesale';
+    count: number;
+    wholesaleSiteId?: string;
+  } | null>(null);
+  const [warningSyncedCount, setWarningSyncedCount] = useState(0);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   // Column settings & drag-and-drop states
   const [columnOrder, setColumnOrder] = useState<string[]>(DEFAULT_ORDER);
@@ -353,6 +365,43 @@ export default function ProductsPage() {
     fetchProducts();
   }, [fetchProducts]);
 
+  // API deletion handler
+  const handleDeleteProducts = useCallback(async (force = false) => {
+    if (!deleteConfig) return;
+    setIsDeleting(true);
+    setDeleteError(null);
+
+    try {
+      const payload = {
+        product_ids: deleteConfig.mode === 'selected' ? Array.from(selectedIds) : null,
+        wholesale_site_id: deleteConfig.mode === 'wholesale' ? deleteConfig.wholesaleSiteId : null,
+        force: force
+      };
+
+      const response = await api.post<{
+        success: boolean;
+        deleted_count: number;
+        warning_synced_count: number;
+        message: string;
+      }>('/api/processor/products/delete', payload);
+
+      if (response.success) {
+        setDeleteModalOpen(false);
+        setDeleteConfig(null);
+        setWarningSyncedCount(0);
+        setSelectedIds(new Set());
+        setPage(1); // Go back to page 1 to load updated products
+        fetchProducts();
+      } else {
+        setWarningSyncedCount(response.warning_synced_count);
+      }
+    } catch (err: any) {
+      setDeleteError(err.message || '상품 삭제를 처리하는 중 예외가 발생했습니다.');
+    } finally {
+      setIsDeleting(false);
+    }
+  }, [deleteConfig, selectedIds, fetchProducts]);
+
   // Reset selection when products change
   useEffect(() => {
     setSelectedIds(new Set());
@@ -423,6 +472,7 @@ export default function ProductsPage() {
   // Stats calculation
   const totalPages = Math.ceil(total / size) || 1;
   const isAllSelected = products.length > 0 && selectedIds.size === products.length;
+  const matchedSite = wholesaleSites.find(s => s.id === wholesaleFilter);
   const formatPrice = (value?: number | null) =>
     typeof value === 'number' ? `${value.toLocaleString('ko-KR')}원` : '-';
 
@@ -434,6 +484,38 @@ export default function ProductsPage() {
           <h1 className={styles.title}>상품 관리</h1>
         </div>
         <div className={styles.actionGroup}>
+          {selectedIds.size > 0 && (
+            <button 
+              className={styles.deleteSelectedBtn}
+              onClick={() => {
+                setDeleteConfig({ mode: 'selected', count: selectedIds.size });
+                setWarningSyncedCount(0);
+                setDeleteError(null);
+                setDeleteModalOpen(true);
+              }}
+              type="button"
+            >
+              선택 삭제 ({selectedIds.size})
+            </button>
+          )}
+          {wholesaleFilter && (
+            <button 
+              className={styles.deleteWholesaleBtn}
+              onClick={() => {
+                setDeleteConfig({
+                  mode: 'wholesale',
+                  count: total,
+                  wholesaleSiteId: wholesaleFilter
+                });
+                setWarningSyncedCount(0);
+                setDeleteError(null);
+                setDeleteModalOpen(true);
+              }}
+              type="button"
+            >
+              &quot;{matchedSite?.name || '도매처'}&quot; 상품 전체 삭제
+            </button>
+          )}
           <PillButton 
             variant="secondary" 
             onClick={() => {}} 
@@ -1085,6 +1167,21 @@ export default function ProductsPage() {
           </div>
         )}
       </div>
+
+      <DeleteConfirmModal
+        isOpen={deleteModalOpen}
+        onClose={() => {
+          if (!isDeleting) {
+            setDeleteModalOpen(false);
+            setDeleteConfig(null);
+          }
+        }}
+        onConfirm={handleDeleteProducts}
+        count={deleteConfig?.count || 0}
+        warningSyncedCount={warningSyncedCount}
+        isDeleting={isDeleting}
+        error={deleteError}
+      />
     </div>
   );
 }
