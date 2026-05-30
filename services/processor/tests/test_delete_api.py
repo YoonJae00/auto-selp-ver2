@@ -174,3 +174,54 @@ async def test_delete_endpoint_success_with_force(test_session):
         mapping_res = await session.execute(mapping_stmt)
         mappings = mapping_res.scalars().all()
         assert len(mappings) == 0
+
+
+@pytest.mark.anyio
+async def test_delete_endpoint_prevents_unauthorized_deletion(test_session):
+    other_user_id = uuid.uuid4()
+    async with test_session() as session:
+        # Create a product belonging to a completely different user
+        site_id = uuid.uuid4()
+        site = WholesaleSite(
+            id=site_id,
+            user_id=other_user_id,
+            name="Other User Site",
+            homepage_url="http://other.com",
+            column_mapping={}
+        )
+        session.add(site)
+
+        prod_id = uuid.uuid4()
+        prod = Product(
+            id=prod_id,
+            user_id=other_user_id,
+            wholesale_site_id=site_id,
+            original_name="Other User Product",
+            status="completed"
+        )
+        session.add(prod)
+        await session.commit()
+
+    # Trigger DELETE api for the other user's product under the current mock user context
+    async with AsyncClient(app=app, base_url="http://test") as ac:
+        headers = {"Authorization": "Bearer internal-test-token"}
+        response = await ac.post(
+            "/products/delete",
+            json={"product_ids": [str(prod_id)], "force": True},
+            headers=headers
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["success"] is True
+    assert data["deleted_count"] == 0  # Should be 0 because it belongs to a different user
+    assert data["message"] == "삭제할 상품이 존재하지 않습니다."
+
+    # Verify the product is still safe and NOT deleted in the database
+    async with test_session() as session:
+        prod_stmt = select(Product).where(Product.id == prod_id)
+        prod_res = await session.execute(prod_stmt)
+        prod_in_db = prod_res.scalar_one_or_none()
+        assert prod_in_db is not None
+        assert prod_in_db.original_name == "Other User Product"
+
