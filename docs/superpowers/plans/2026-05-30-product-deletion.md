@@ -54,7 +54,7 @@
 **Files:**
 * Create: `services/processor/tests/test_delete_api.py`
 
-- [ ] **Step 1: Write a failing integration test**
+- [x] **Step 1: Write a failing integration test**
   Create `test_delete_api.py` with mock products and mock market sync records to test both warning gates and successful cascading deletion.
 
   ```python
@@ -161,11 +161,11 @@
       assert data["deleted_count"] >= 2
   ```
 
-- [ ] **Step 2: Run the test to ensure it fails**
+- [x] **Step 2: Run the test to ensure it fails**
   Run: `pytest services/processor/tests/test_delete_api.py -v`
   Expected: **FAIL** or **404 Not Found** (since `/products/delete` endpoint is not defined yet).
 
-- [ ] **Step 3: Commit test file**
+- [x] **Step 3: Commit test file**
   ```bash
   git add services/processor/tests/test_delete_api.py
   git commit -m "test: add failing delete API integration tests"
