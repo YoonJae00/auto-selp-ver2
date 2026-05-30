@@ -70,6 +70,7 @@ This document is the current implementation snapshot. For active backlog items, 
 - **Attribute Mappers (NEW)**: Translate market-neutral extracted specifications into market-specific formats for Naver (SmartStore) and Coupang (Wing).
 - **extract_attributes Node in LangGraph (NEW)**: Integrated the vision LLM attribute extraction node into the product processing LangGraph flow, executing after category mapping and before the persistence node, complete with stage timing tracking.
 - **Vision LLM Routing Celery Task Integration (NEW)**: Dynamic routing and client instantiation of `vision_llm_client` in Celery task pipelines (`process_excel_task`, `_run_pipeline`, `process_db_products_task`, `_run_db_pipeline`) and injection into LangGraph `ProductProcessingContext`.
+- **Secure Product Deletion API (NEW)**: `POST /products/delete` endpoint with strict authentication `Depends(get_current_user)` and user isolation constraints (`Product.user_id == current_user["id"]`), preventing unauthorized cross-tenant product deletions. Employs a pre-delete warning validation check against market-synced mappings (`sync_status == 'synced'`) and supports PostgreSQL-level cascade purge on forced deletes.
 
 ### Marketplace Listing Service (Port 8003)
 
@@ -97,6 +98,7 @@ This document is the current implementation snapshot. For active backlog items, 
 - Stable global polling through `useTaskPolling`, guarded by auth state and using `useTaskStore.getState()` inside the polling interval.
 - Intelligence Capsule mounted in the AI Mall layout with task list, progress state, accordion/detail trace view, shimmer active stage, and completed row stage timing display.
 - **Product Management Page (NEW)**: A premium Apple-inspired dashboard grid supporting multi-checkbox selection, text search debouncing, processing status filters, upload-batch filters, pagination controls, real-time status badges, and customized Excel exports.
+- **Safe Multi-Mode Product Deletion UI (NEW)**: Integrated selection-based bulk delete action buttons and wholesale-filter-based vendor delete buttons in the grid toolbar. Features a premium Apple-style glassmorphic `DeleteConfirmModal` (`backdrop-filter: blur(12px)`) with active market-sync warnings, Escape keyboard key listeners, and strict ARIA accessibility tag compliance (`role="dialog"`, `aria-modal="true"`, `aria-labelledby`, `aria-describedby`).
 - **Wholesale Upload & Visual Column Mapper (NEW, GitHub #46)**: `/upload` supports wholesale-site management, drag-and-drop supplier Excel uploads, supplier-specific field mapping, and product-list filters/badges for wholesale update tracking.
 - **PillButton Upgrade (NEW)**: Added support for `disabled` prop on `PillButton` to control double-form submissions.
 - **Real-Time Product List Syncing (NEW)**: Integrated the local product processing grid (`/process`) with the global Zustand `taskStore`. The UI now dynamically overlays progress (`processing`, `completed`, `failed` statuses, AI refined names, and keywords) in real-time as Celery tasks run in the background (Approach 2), with an automatic DB refetch exactly once when the task finishes.
