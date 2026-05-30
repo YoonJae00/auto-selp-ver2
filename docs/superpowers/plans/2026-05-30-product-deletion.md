@@ -178,7 +178,7 @@
 **Files:**
 * Modify: `services/processor/main.py:650-680` (Near product listings or export routes)
 
-- [ ] **Step 1: Implement the `/products/delete` endpoint**
+- [x] **Step 1: Implement the `/products/delete` endpoint**
   Implement the deletion business logic in `services/processor/main.py`.
 
   ```python
@@ -248,11 +248,11 @@
       )
   ```
 
-- [ ] **Step 2: Run the integration test to ensure it passes**
+- [x] **Step 2: Run the integration test to ensure it passes**
   Run: `pytest services/processor/tests/test_delete_api.py -v`
   Expected: **PASS**
 
-- [ ] **Step 3: Commit implementation**
+- [x] **Step 3: Commit implementation**
   ```bash
   git add services/processor/main.py
   git commit -m "feat: implement product deletion endpoint with safety gate"
