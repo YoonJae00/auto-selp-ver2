@@ -14,5 +14,5 @@ The following skill is available:
 
 ## Documentation
 
-- `docs/solutions/`: Searchable knowledge store of documented solutions.
+- `docs/solutions/`: Searchable knowledge store of documented solutions (bugs, best practices, workflow patterns), organized by category with YAML frontmatter (`module`, `tags`, `problem_type`). Highly relevant when implementing or debugging in documented areas.
 - `docs/superpowers/`: Project-specific plans and specs.
