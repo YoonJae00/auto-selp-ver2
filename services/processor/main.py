@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from typing import Dict, Optional, List
 from celery.result import AsyncResult
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_, func, text
+from sqlalchemy import select, and_, func, text, delete
 from sqlalchemy.orm import selectinload
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
@@ -31,6 +31,8 @@ from schemas import (
     WholesaleSiteUpdate,
     WholesaleSiteResponse,
     MarketplaceSnapshotResponse,
+    ProductDeleteRequest,
+    ProductDeleteResponse,
 )
 from utils.prompt_manager import PromptManager
 from utils.wholesale_upload import parse_wholesale_row, validate_required_mappings
@@ -676,6 +678,68 @@ async def export_products(
         output,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers=headers
+    )
+
+
+@app.post("/products/delete", response_model=ProductDeleteResponse)
+async def delete_products(
+    req: ProductDeleteRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    if not req.product_ids and not req.wholesale_site_id:
+        return ProductDeleteResponse(
+            success=False,
+            deleted_count=0,
+            message="삭제 대상(product_ids 또는 wholesale_site_id)을 입력해주세요."
+        )
+
+    # 1. Resolve product targets
+    target_stmt = select(Product.id)
+    if req.product_ids:
+        target_stmt = target_stmt.where(Product.id.in_(req.product_ids))
+    elif req.wholesale_site_id:
+        target_stmt = target_stmt.where(Product.wholesale_site_id == req.wholesale_site_id)
+
+    res = await db.execute(target_stmt)
+    target_ids = [row[0] for row in res.all()]
+
+    if not target_ids:
+        return ProductDeleteResponse(
+            success=True,
+            deleted_count=0,
+            message="삭제할 상품이 존재하지 않습니다."
+        )
+
+    # 2. Check for synced platform mappings
+    sync_stmt = select(ProductPlatformMapping.product_id).where(
+        and_(
+            ProductPlatformMapping.product_id.in_(target_ids),
+            ProductPlatformMapping.sync_status == "synced"
+        )
+    )
+    sync_res = await db.execute(sync_stmt)
+    synced_ids = [row[0] for row in sync_res.all()]
+    synced_count = len(synced_ids)
+
+    # 3. Warnings intercept if force is False
+    if synced_count > 0 and not req.force:
+        return ProductDeleteResponse(
+            success=False,
+            deleted_count=0,
+            warning_synced_count=synced_count,
+            message="이미 마켓에 연동(동기화) 완료된 상품이 포함되어 있어 삭제를 진행하지 않았습니다."
+        )
+
+    # 4. Perform cascade deletion (Postgres cascade configured in relationships)
+    del_stmt = delete(Product).where(Product.id.in_(target_ids))
+    res_del = await db.execute(del_stmt)
+    await db.commit()
+
+    deleted_count = res_del.rowcount
+    return ProductDeleteResponse(
+        success=True,
+        deleted_count=deleted_count,
+        message=f"성공적으로 {deleted_count}개의 상품이 삭제되었습니다."
     )
 
 
