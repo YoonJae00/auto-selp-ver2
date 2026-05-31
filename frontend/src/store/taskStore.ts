@@ -1,9 +1,12 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 
+export type ProcessingStage = 'refining' | 'keywords' | 'categorizing' | 'extracting';
+
 export interface CompletedRowStage {
-  name: 'refining' | 'keywords' | 'categorizing';
+  name: ProcessingStage;
   ms: number;
+  mapped_attributes?: Record<string, any>;
 }
 
 export interface CompletedRow {
@@ -19,7 +22,7 @@ export interface Task {
   progress: number;
   total?: number;
   status: 'PENDING' | 'PROGRESS' | 'SUCCESS' | 'FAILURE';
-  stage?: 'refining' | 'keywords' | 'categorizing' | 'completed_row';
+  stage?: ProcessingStage | 'completed_row';
   currentName?: string;
   completedRows?: CompletedRow[];
   resultPath?: string;

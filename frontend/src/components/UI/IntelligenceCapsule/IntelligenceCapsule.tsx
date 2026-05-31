@@ -10,9 +10,10 @@ const STAGE_META: Record<string, { label: string; icon: string }> = {
   refining:     { label: '상품명 가공',      icon: '✏️' },
   keywords:     { label: '키워드 생성',      icon: '🔍' },
   categorizing: { label: '카테고리 매핑',    icon: '📂' },
+  extracting:   { label: '속성 추출',        icon: '✨' },
 };
 
-const STAGE_ORDER = ['refining', 'keywords', 'categorizing'];
+const STAGE_ORDER = ['refining', 'keywords', 'categorizing', 'extracting'];
 
 function formatMs(ms: number): string {
   return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`;
@@ -45,6 +46,27 @@ function StageDetail({ stage }: { stage: any }) {
           {stage.coupang_category && <>쿠팡: <strong>{stage.coupang_category}</strong></>}
         </div>
       )}
+      {stage.name === 'extracting' && stage.mapped_attributes && (() => {
+        const naverCount = stage.mapped_attributes.naver_attributes?.length || 0;
+        const coupangProd = stage.mapped_attributes.coupang_attributes?.product_attributes?.length || 0;
+        const coupangItem = stage.mapped_attributes.coupang_attributes?.item_attributes?.length || 0;
+        const coupangCount = coupangProd + coupangItem;
+
+        return (
+          <div className={styles.stageDetail}>
+            {naverCount > 0 && (
+              <>네이버 속성: <strong>{naverCount}개</strong></>
+            )}
+            {naverCount > 0 && coupangCount > 0 && ' · '}
+            {coupangCount > 0 && (
+              <>쿠팡 속성: <strong>{coupangCount}개</strong></>
+            )}
+            {naverCount === 0 && coupangCount === 0 && (
+              <span style={{ color: '#8e8e93' }}>추출된 속성 없음</span>
+            )}
+          </div>
+        );
+      })()}
     </div>
   );
 }

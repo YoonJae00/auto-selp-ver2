@@ -68,43 +68,58 @@ const processingStatusLabel: Record<Product['status'], string> = {
   failed: '실패',
 };
 
-const renderAttributes = (product: Product) => {
-  if (!product.platform_mappings || product.platform_mappings.length === 0) {
-    return <span className={styles.emptyAttributes}>-</span>;
-  }
+// ─── Attribute Parsing Helpers (DRY & Type-Safe) ───────────────────────────────
 
-  const coupangMapping = product.platform_mappings.find((m) => m.platform_name === 'coupang');
-  const naverMapping = product.platform_mappings.find((m) => m.platform_name === 'naver');
-
+const extractAttributesList = (naverAttrs: any = [], coupangAttrs: any = {}) => {
   const attrsList: { key: string; value: string }[] = [];
 
-  if (coupangMapping?.mapped_attributes) {
-    const coupangAttrs = coupangMapping.mapped_attributes as any;
-    const prodAttrs = coupangAttrs.product_attributes || [];
-    const itemAttrs = coupangAttrs.item_attributes || [];
+  const prodAttrs = coupangAttrs.product_attributes || [];
+  const itemAttrs = coupangAttrs.item_attributes || [];
 
-    prodAttrs.forEach((attr: any) => {
-      if (attr.attributeTypeName && attr.attributeValueName) {
+  prodAttrs.forEach((attr: any) => {
+    if (attr?.attributeTypeName && attr?.attributeValueName) {
+      attrsList.push({ key: attr.attributeTypeName, value: attr.attributeValueName });
+    }
+  });
+
+  itemAttrs.forEach((attr: any) => {
+    if (attr?.attributeTypeName && attr?.attributeValueName) {
+      if (!attrsList.some((a) => a.key === attr.attributeTypeName)) {
         attrsList.push({ key: attr.attributeTypeName, value: attr.attributeValueName });
       }
-    });
+    }
+  });
 
-    itemAttrs.forEach((attr: any) => {
-      if (attr.attributeTypeName && attr.attributeValueName) {
-        if (!attrsList.some((a) => a.key === attr.attributeTypeName)) {
-          attrsList.push({ key: attr.attributeTypeName, value: attr.attributeValueName });
-        }
+  if (Array.isArray(naverAttrs)) {
+    naverAttrs.forEach((attr: any) => {
+      if (attr?.attributeRealValue) {
+        attrsList.push({ key: `속성 #${attr.attributeSeq ?? ''}`, value: attr.attributeRealValue });
+      } else if (attr?.attributeValueSeq) {
+        attrsList.push({ key: `속성 #${attr.attributeSeq ?? ''}`, value: `선택값 #${attr.attributeValueSeq}` });
       }
     });
   }
 
-  if (attrsList.length === 0 && Array.isArray(naverMapping?.mapped_attributes)) {
-    const naverAttrs = naverMapping.mapped_attributes;
-    naverAttrs.forEach((attr: any) => {
-      if (attr.attributeRealValue) {
-        attrsList.push({ key: `속성 #${attr.attributeSeq}`, value: attr.attributeRealValue });
-      }
-    });
+  return attrsList;
+};
+
+const renderAttributes = (product: Product, realTimeMappedAttributes?: any) => {
+  let attrsList: { key: string; value: string }[] = [];
+
+  if (realTimeMappedAttributes) {
+    // 1. Real-time parsing from active tasks
+    const naverAttrs = realTimeMappedAttributes.naver_attributes || [];
+    const coupangAttrs = realTimeMappedAttributes.coupang_attributes || {};
+    attrsList = extractAttributesList(naverAttrs, coupangAttrs);
+  } else if (product.platform_mappings && product.platform_mappings.length > 0) {
+    // 2. Database persisted fallback
+    const coupangMapping = product.platform_mappings.find((m) => m.platform_name === 'coupang');
+    const naverMapping = product.platform_mappings.find((m) => m.platform_name === 'naver');
+    
+    attrsList = extractAttributesList(
+      naverMapping?.mapped_attributes || [],
+      coupangMapping?.mapped_attributes || {}
+    );
   }
 
   if (attrsList.length === 0) {
@@ -231,6 +246,7 @@ export default function ProcessPage() {
     const map = new Map<string, {
       refined_name: string | null;
       keywords: string[] | null;
+      mapped_attributes: any | null;
       status: 'completed' | 'failed' | 'processing';
       error?: string;
     }>();
@@ -241,10 +257,12 @@ export default function ProcessPage() {
         task.completedRows.forEach((row) => {
           const refiningStage = row.stages?.find(s => s.name === 'refining') as any;
           const keywordsStage = row.stages?.find(s => s.name === 'keywords') as any;
+          const extractingStage = row.stages?.find(s => s.name === 'extracting') as any;
           
           map.set(row.name, {
             refined_name: refiningStage?.refined_name || null,
             keywords: keywordsStage?.keywords || null,
+            mapped_attributes: extractingStage?.mapped_attributes || null,
             status: row.error ? 'failed' : 'completed',
             error: row.error,
           });
@@ -257,6 +275,7 @@ export default function ProcessPage() {
           map.set(task.currentName, {
             refined_name: null,
             keywords: null,
+            mapped_attributes: null,
             status: 'processing',
           });
         }
@@ -620,7 +639,7 @@ export default function ProcessPage() {
                       </td>
                       <td>{product.product_code || product.wholesale_product_id || '-'}</td>
                       <td className={styles.priceCell}>{formatPrice(product.price_wholesale)}</td>
-                      <td>{renderAttributes(product)}</td>
+                      <td>{renderAttributes(product, realTimeUpdate?.mapped_attributes)}</td>
                       <td>
                         <span className={`${styles.statusBadge} ${styles[`status_${displayStatus}`] || ''}`}>
                           {processingStatusLabel[displayStatus]}
