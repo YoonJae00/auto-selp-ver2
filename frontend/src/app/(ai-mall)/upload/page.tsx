@@ -341,6 +341,49 @@ export default function UploadPage() {
           {/* Visual Column Mapper */}
           {uploadData && (
             <div className={styles.mappingWrapper}>
+              {/* Excel Data Preview Section */}
+              <div className={styles.previewWrapper}>
+                <button 
+                  type="button" 
+                  className={styles.accordionHeader} 
+                  onClick={() => setIsPreviewOpen(!isPreviewOpen)}
+                >
+                  <span className={styles.accordionTitle}>
+                    📊 업로드 파일 데이터 미리보기 (상위 5개 행)
+                  </span>
+                  <span className={styles.accordionIcon}>
+                    {isPreviewOpen ? '🔼 접기' : '🔽 펼치기'}
+                  </span>
+                </button>
+                
+                {isPreviewOpen && (
+                  <div className={styles.previewTableContainer}>
+                    <table className={styles.previewTable}>
+                      <thead>
+                        <tr>
+                          <th className={styles.rowNumber}>No.</th>
+                          {uploadData.columns.map((col) => (
+                            <th key={col}>{col}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {uploadData.preview.map((row, idx) => (
+                          <tr key={idx}>
+                            <td className={styles.rowNumber}>{idx + 1}</td>
+                            {uploadData.columns.map((col) => (
+                              <td key={col} title={row[col] !== undefined ? String(row[col]) : ''}>
+                                {row[col] !== undefined ? String(row[col]) : ''}
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
               <div className={styles.sectionHeader}>
                 <h2>Visual Column Mapper (컬럼 매핑 대입)</h2>
                 <p>도매처 엑셀 열 항목과 시스템의 표준 저장 필드를 시각적으로 연결합니다. 처음 한번만 설정하면 저장되어 계속 재사용 가능합니다.</p>
