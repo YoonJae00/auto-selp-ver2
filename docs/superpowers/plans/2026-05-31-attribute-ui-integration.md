@@ -151,7 +151,7 @@ Extend frontend store definitions to support the `'extracting'` stage. Update th
 - Modify: `frontend/src/app/(ai-mall)/process/page.tsx`
 - Verification: Perform overall build verification.
 
-- [ ] **Step 1: Update `completedRowsMap` useMemo**
+- [x] **Step 1: Update `completedRowsMap` useMemo**
   Retrieve `extractingStage?.mapped_attributes` reactively so real-time attribute updates are saved to the completed row state.
 
   Modify `/Users/yoonjae/Desktop/auto-selp-ver2/frontend/src/app/(ai-mall)/process/page.tsx` around lines 230-267:
@@ -200,7 +200,7 @@ Extend frontend store definitions to support the `'extracting'` stage. Update th
   }, [tasks]);
   ```
 
-- [ ] **Step 2: Unify `renderAttributes` parsing logic**
+- [x] **Step 2: Unify `renderAttributes` parsing logic**
   Rewrite `renderAttributes` to support dual-input: `product` + optional `realTimeMappedAttributes`. Parse both input-based and select-based Naver attributes.
 
   Modify `/Users/yoonjae/Desktop/auto-selp-ver2/frontend/src/app/(ai-mall)/process/page.tsx` around lines 71-123:
@@ -293,7 +293,7 @@ Extend frontend store definitions to support the `'extracting'` stage. Update th
   };
   ```
 
-- [ ] **Step 3: Update Table rendering row parameter**
+- [x] **Step 3: Update Table rendering row parameter**
   Update the table row attributes cell to pass the real-time attribute map result.
 
   Modify `/Users/yoonjae/Desktop/auto-selp-ver2/frontend/src/app/(ai-mall)/process/page.tsx` around line 623:
@@ -301,11 +301,11 @@ Extend frontend store definitions to support the `'extracting'` stage. Update th
   <td>{renderAttributes(product, realTimeUpdate?.mapped_attributes)}</td>
   ```
 
-- [ ] **Step 4: Verify complete build**
+- [x] **Step 4: Verify complete build**
   Run: `npm run build` in `/Users/yoonjae/Desktop/auto-selp-ver2/frontend/` to guarantee no errors.
   Expected: Successful compilation of the entire application.
 
-- [ ] **Step 5: Commit table updates**
+- [x] **Step 5: Commit table updates**
   Run:
   ```bash
   git add frontend/src/app/\(ai-mall\)/process/page.tsx
