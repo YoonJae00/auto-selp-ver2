@@ -278,30 +278,35 @@ export default function IntelligenceCapsule() {
           </div>
         )}
 
-        {/* Capsule */}
-        <button
-          className={styles.capsule}
-          onClick={handleCapsuleClick}
-          aria-label="작업 현황 열기"
-        >
+        {/* Capsule Wrapper */}
+        <div className={styles.capsuleWrapper}>
           {isActive && <div className={styles.glowRing} />}
-          <div className={styles.capsuleContent}>
-            {isActive ? (
-              <>
-                <span className={styles.capsuleIcon}>⚡</span>
-                <span>가공 중... ({displayTask.progress}%)</span>
-                <div className={styles.miniBar}>
-                  <div className={styles.miniBarFill} style={{ width: `${displayTask.progress}%` }} />
-                </div>
-              </>
-            ) : (
-              <>
-                <span className={styles.capsuleIcon}>✅</span>
-                <span>가공 완료</span>
-              </>
-            )}
-          </div>
-        </button>
+          <button
+            className={`${styles.capsule} ${isActive ? styles.loading : ''}`}
+            onClick={handleCapsuleClick}
+            aria-label="작업 현황 열기"
+          >
+            {isActive && <div className={styles.rainbowBorder} />}
+            <div className={styles.capsuleInner}>
+              <div className={styles.capsuleContent}>
+                {isActive ? (
+                  <>
+                    <span className={styles.capsuleIcon}>⚡</span>
+                    <span>가공 중... ({displayTask.progress}%)</span>
+                    <div className={styles.miniBar}>
+                      <div className={styles.miniBarFill} style={{ width: `${displayTask.progress}%` }} />
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <span className={styles.capsuleIcon}>✅</span>
+                    <span>가공 완료</span>
+                  </>
+                )}
+              </div>
+            </div>
+          </button>
+        </div>
       </div>
     </>
   );
