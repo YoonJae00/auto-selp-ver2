@@ -54,6 +54,7 @@ Note: older files under `docs/superpowers/plans/` are historical implementation 
 - [x] **모달 스크롤 수정**: `min-height: 0` + 명시적 height 설정
 - [x] **Docker 이미지 리빌드**: `docker compose build worker` 워크플로우 확립
 - [x] **Sidebar Clickability, Layout Alignment, & Automatic Collapsing Fix**: Resolved sidebar unclickability and icon misalignment issues on dense pages (such as `/process`) by adding a stacking context (`z-index: 100`) to `.sidebar` and setting `display: none` on `.sidebarCollapsed .navLabel`. Also resolved the ultimate root cause of UI unresponsiveness: fixed a critical React infinite rendering loop in `ProcessPage`'s task synchronization hook by replacing a state-driven previous task tracker with `useRef`. Additionally, fixed the automatic sidebar collapse regression for dense workspaces (`/process`, `/products`, `/upload`) by implementing workspace-aware separate localStorage preferences (`autoselp.sidebarCollapsed.dense` and `autoselp.sidebarCollapsed.normal`) to prevent a global user toggle preference from permanently disabling the automatic page-specific collapse behavior.
+- [x] **Real-time Smartstore & Coupang Attribute UI Integration**: Connected LangGraph's extracted attribute outputs reactively to the frontend floating capsule drawer and spreadsheet list table, showing live progress shimmers and instantly binding extracted tags.
 
 
 ## Phase 5: Continuous Improvement & Knowledge Compounding (Completed)
