@@ -70,6 +70,7 @@ export default function UploadPage() {
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isPreviewOpen, setIsPreviewOpen] = useState(true); // Added for accordion toggle
   
   // Feedback
   const [error, setError] = useState<string | null>(null);
@@ -253,7 +254,7 @@ export default function UploadPage() {
   return (
     <div className={styles.container}>
       <div className={styles.header}>
-        <h1 className={styles.title}>도매처 & 업로드 설정</h1>
+        <h1 className={styles.title}>도매처 상품 업로드</h1>
         <PillButton 
           variant="primary" 
           onClick={() => setShowCreateModal(true)}
