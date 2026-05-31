@@ -39,6 +39,7 @@ This document is the current implementation snapshot. For active backlog items, 
 
 8. Wholesale Product Upload Rename & Excel Preview (In Progress)
    - [x] Task 1: Rename Sidebar Label (Rename '도매처 & 업로드 설정' to '도매처 상품 업로드' in layout.tsx)
+   - [x] Task 2: Rename Page Header & Setup Toggle State (Modify page header and initialize isPreviewOpen state in upload/page.tsx)
 
 ## 2. Implemented Backend
 

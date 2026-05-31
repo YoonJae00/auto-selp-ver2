@@ -108,4 +108,4 @@ Note: older files under `docs/superpowers/plans/` are historical implementation 
 ## Phase 8: Wholesale Product Upload Rename & Excel Preview (In Progress)
 - [ ] **Wholesale Product Upload Rename & Excel Preview**:
   - [x] **Task 1: Rename Sidebar Label**: Rename the main navigation label in the App Layout to "도매처 상품 업로드".
-
+  - [x] **Task 2: Rename Page Header & Setup Toggle State**: Modify page header and initialize isPreviewOpen state in upload/page.tsx.
