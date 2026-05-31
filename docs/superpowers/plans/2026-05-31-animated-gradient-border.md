@@ -137,7 +137,7 @@ git commit -m "style: add rotating gradient border and wrapper container for Int
 **Files:**
 - Modify: `frontend/src/components/UI/IntelligenceCapsule/IntelligenceCapsule.tsx`
 
-- [ ] **Step 1: Modify the TSX structure of the capsule button**
+- [x] **Step 1: Modify the TSX structure of the capsule button**
 
 Update the returned TSX in `IntelligenceCapsule` function (lines 282-304) to use the new `.capsuleWrapper`, `.capsuleInner`, and `.rainbowBorder` elements.
 
@@ -173,7 +173,7 @@ Update the returned TSX in `IntelligenceCapsule` function (lines 282-304) to use
         </div>
 ```
 
-- [ ] **Step 2: Commit TSX Changes**
+- [x] **Step 2: Commit TSX Changes**
 
 ```bash
 git add frontend/src/components/UI/IntelligenceCapsule/IntelligenceCapsule.tsx
