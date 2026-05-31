@@ -63,7 +63,7 @@ Extend frontend store definitions to support the `'extracting'` stage. Update th
 - Modify: `frontend/src/components/UI/IntelligenceCapsule/IntelligenceCapsule.tsx`
 - Verification: Ensure capsule compiles without issues.
 
-- [ ] **Step 1: Modify Capsule metadata and rendering logic**
+- [x] **Step 1: Modify Capsule metadata and rendering logic**
   Add `'extracting'` to both `STAGE_META` and `STAGE_ORDER`. Expand `StageDetail` component to summarize naver and coupang attribute counts upon extraction.
 
   Modify `/Users/yoonjae/Desktop/auto-selp-ver2/frontend/src/components/UI/IntelligenceCapsule/IntelligenceCapsule.tsx` around lines 9-16:
@@ -132,11 +132,11 @@ Extend frontend store definitions to support the `'extracting'` stage. Update th
   }
   ```
 
-- [ ] **Step 2: Verify compilation**
+- [x] **Step 2: Verify compilation**
   Run: `npm run build` in `/Users/yoonjae/Desktop/auto-selp-ver2/frontend/` to ensure no syntax errors.
   Expected: Successful compilation.
 
-- [ ] **Step 3: Commit capsule updates**
+- [x] **Step 3: Commit capsule updates**
   Run:
   ```bash
   git add frontend/src/components/UI/IntelligenceCapsule/IntelligenceCapsule.tsx
