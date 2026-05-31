@@ -37,6 +37,9 @@ This document is the current implementation snapshot. For active backlog items, 
    - 네이버/쿠팡 노출 가이드(글자수 제한, 상표권/금지어 필터링, 검색 태그 추출)에 맞춤화된 AI 가공 프롬프트 및 파이프라인 추가
    - 상품 목록 Dashboard에서 네이버/쿠팡 전용 엑셀 다운로드 UI 통합
 
+8. Wholesale Product Upload Rename & Excel Preview (In Progress)
+   - [x] Task 1: Rename Sidebar Label (Rename '도매처 & 업로드 설정' to '도매처 상품 업로드' in layout.tsx)
+
 ## 2. Implemented Backend
 
 ### Auth Service (Port 8001)

@@ -104,3 +104,8 @@ Note: older files under `docs/superpowers/plans/` are historical implementation 
 - [x] **Consume mapped_attributes in Adapters**: Smart Store and Coupang adapters now consume mapped category attributes during draft generation (Task 6).
 - [ ] Recipe extensions for SEO titles and category-specific attributes.
 - [ ] Margin calculator UI, bulk price-policy application, and per-product price-override preview.
+
+## Phase 8: Wholesale Product Upload Rename & Excel Preview (In Progress)
+- [ ] **Wholesale Product Upload Rename & Excel Preview**:
+  - [x] **Task 1: Rename Sidebar Label**: Rename the main navigation label in the App Layout to "도매처 상품 업로드".
+
