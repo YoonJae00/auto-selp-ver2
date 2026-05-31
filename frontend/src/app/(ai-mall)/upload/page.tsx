@@ -362,8 +362,8 @@ export default function UploadPage() {
                       <thead>
                         <tr>
                           <th className={styles.rowNumber}>No.</th>
-                          {uploadData.columns.map((col) => (
-                            <th key={col}>{col}</th>
+                          {uploadData.columns.map((col, idx) => (
+                            <th key={`${col}-${idx}`}>{col}</th>
                           ))}
                         </tr>
                       </thead>
@@ -371,9 +371,9 @@ export default function UploadPage() {
                         {uploadData.preview.map((row, idx) => (
                           <tr key={idx}>
                             <td className={styles.rowNumber}>{idx + 1}</td>
-                            {uploadData.columns.map((col) => (
-                              <td key={col} title={row[col] !== undefined ? String(row[col]) : ''}>
-                                {row[col] !== undefined ? String(row[col]) : ''}
+                            {uploadData.columns.map((col, colIdx) => (
+                              <td key={`${col}-${colIdx}`} title={row[col] != null ? String(row[col]) : ''}>
+                                {row[col] != null ? String(row[col]) : ''}
                               </td>
                             ))}
                           </tr>
