@@ -11,6 +11,14 @@
   gap: 10px;
 }
 
+/* ── Capsule Wrapper (To contain outer glow without clipping) ───────────── */
+.capsuleWrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
 /* ── Capsule ─────────────────────────────────────────────────────────────── */
 
 .capsule {
@@ -18,7 +26,7 @@
   display: flex;
   align-items: center;
   height: 44px;
-  padding: 0 20px;
+  padding: 0; /* Padding is 0 so capsuleInner handles inner padding */
   border: none;
   border-radius: 22px;
   background: rgba(255, 255, 255, 0.85);
@@ -30,7 +38,8 @@
   cursor: pointer;
   transition: transform 0.2s ease, box-shadow 0.2s ease;
   outline: none;
-  z-index: 1;
+  z-index: 2; /* Sits above the glowRing */
+  overflow: hidden; /* Clips the rotating conic gradient to the rounded capsule shape */
 }
 
 .capsule:hover {
@@ -38,12 +47,45 @@
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.12);
 }
 
-/* ── Apple Watch ambient glow: soft orbiting spot ────────────────────────── */
-/*
-  Approach: a thin pseudo-div behind the capsule holds a conic-gradient
-  with a narrow bright arc (~40 deg) surrounded by transparency.
-  Heavy blur (16px) makes it look like a soft travelling glow, not a bar.
-*/
+.capsule.loading {
+  padding: 1.5px; /* Creates the 1.5px gap for the rainbow border */
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+}
+
+/* ── Inner Content (Apple glassmorphism) ── */
+.capsuleInner {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 100%;
+  padding: 0 20px;
+  border-radius: 21px; /* Fits inside the 22px capsule with 1.5px gap */
+  background: rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  z-index: 3;
+}
+
+/* ── Rainbow Border Layer ── */
+.rainbowBorder {
+  position: absolute;
+  inset: -50%; /* Large enough to cover the rotation area */
+  background: conic-gradient(
+    from 0deg,
+    #ff3b30, #ff9500, #34c759, #007aff, #af52de, #ff3b30
+  );
+  animation: spinRainbow 3s linear infinite;
+  z-index: 1;
+  pointer-events: none;
+}
+
+@keyframes spinRainbow {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
 
 .glowRing {
   position: absolute;
@@ -61,7 +103,7 @@
   );
   filter: blur(14px);
   animation: orbitGlow 4.5s linear infinite;
-  z-index: -1;
+  z-index: 1; /* Renders behind button (which has z-index 2) */
   pointer-events: none;
 }
 
@@ -69,6 +111,7 @@
   from { transform: rotate(0deg); }
   to   { transform: rotate(360deg); }
 }
+
 
 /* ── Capsule content ─────────────────────────────────────────────────────── */
 
