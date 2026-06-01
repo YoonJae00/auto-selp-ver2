@@ -9,6 +9,11 @@ from utils.wholesale_upload import (
     parse_wholesale_row,
     validate_required_mappings,
 )
+from utils.standard_product_schema import (
+    REQUIRED_STANDARD_PRODUCT_FIELDS,
+    build_option_display_name,
+    derive_option_price_delta,
+)
 
 
 def test_validate_required_mappings_reports_missing_required_fields():
@@ -280,3 +285,34 @@ def test_merge_product_warnings_keeps_supplier_warnings_when_processing_has_none
         "warnings": [supplier_warning],
         "supplier_warnings": [supplier_warning],
     }
+
+
+def test_standard_required_fields_include_origin_and_supplier_identity():
+    assert REQUIRED_STANDARD_PRODUCT_FIELDS == [
+        "supplier_name",
+        "supplier_product_id",
+        "supplier_product_code",
+        "supplier_status",
+        "raw_product_name",
+        "origin",
+        "supply_price",
+        "main_image_url",
+        "detail_content",
+    ]
+
+
+def test_build_option_display_name_joins_non_blank_values():
+    option = {
+        "option_value_1": "블랙",
+        "option_value_2": "L",
+        "option_value_3": "",
+    }
+
+    assert build_option_display_name(option) == "블랙 / L"
+
+
+def test_derive_option_price_delta_uses_option_supply_price_as_source():
+    assert derive_option_price_delta(option_supply_price=13000, base_supply_price=12000) == 1000
+    assert derive_option_price_delta(option_supply_price=12000, base_supply_price=12000) == 0
+    assert derive_option_price_delta(option_supply_price=None, base_supply_price=12000) is None
+    assert derive_option_price_delta(option_supply_price=13000, base_supply_price=None) is None
