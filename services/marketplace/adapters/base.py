@@ -116,6 +116,16 @@ class MarketplaceAdapter(ABC):
             return []
         return [deepcopy(dict(option)) for option in options if isinstance(option, Mapping)]
 
+    def _extract_standard_options(self, source_snapshot: Mapping[str, Any]) -> list[dict[str, Any]]:
+        standard_options = source_snapshot.get("standard_options")
+        if not isinstance(standard_options, list):
+            return []
+        return [
+            deepcopy(dict(option))
+            for option in standard_options
+            if isinstance(option, Mapping) and option.get("option_usable", True) is not False
+        ]
+
     def _extract_cost_price(self, source_snapshot: Mapping[str, Any]) -> int | None:
         price = source_snapshot.get("price")
         if not isinstance(price, Mapping):
