@@ -351,6 +351,7 @@ async def start_db_processing(
             existing_product.options = product_data["option_values_raw"]
             existing_product.option_values_raw = product_data["option_values_raw"]
             existing_product.option_variants = product_data["option_variants"]
+            existing_product.standard_options = product_data["standard_options"]
             existing_product.images_list = product_data["images_list"]
             existing_product.image_detail = product_data["image_detail"]
             existing_product.wholesale_status = product_data["wholesale_status"]
@@ -396,6 +397,7 @@ async def start_db_processing(
                 options=product_data["option_values_raw"],
                 option_values_raw=product_data["option_values_raw"],
                 option_variants=product_data["option_variants"],
+                standard_options=product_data["standard_options"],
                 images_list=product_data["images_list"],
                 image_detail=product_data["image_detail"],
                 wholesale_status=product_data["wholesale_status"],
@@ -610,6 +612,7 @@ async def get_marketplace_snapshot(
             "detail_content": product.image_detail,
         },
         "options": product.option_variants or [],
+        "standard_options": product.standard_options or [],
         "market_categories": market_categories,
     }
 

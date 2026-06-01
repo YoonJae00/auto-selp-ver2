@@ -104,3 +104,10 @@ Note: older files under `docs/superpowers/plans/` are historical implementation 
 - [x] **Consume mapped_attributes in Adapters**: Smart Store and Coupang adapters now consume mapped category attributes during draft generation (Task 6).
 - [ ] Recipe extensions for SEO titles and category-specific attributes.
 - [ ] Margin calculator UI, bulk price-policy application, and per-product price-override preview.
+
+## Phase 8: Wholesale Product Upload Rename & Excel Preview (Completed)
+- [x] **Wholesale Product Upload Rename & Excel Preview**:
+  - [x] **Task 1: Rename Sidebar Label**: Rename the main navigation label in the App Layout to "도매처 상품 업로드".
+  - [x] **Task 2: Rename Page Header & Setup Toggle State**: Modify page header and initialize isPreviewOpen state in upload/page.tsx.
+  - [x] **Task 3: Implement Collapsible Excel Data Preview Component**: Embed interactive accordion and spreadsheet preview rendering logic in upload/page.tsx.
+  - [x] **Task 4: Add Premium Collapsible CSS Styling**: Add premium responsive accordion and table styles in upload.module.css with null-safety and React key robustness.

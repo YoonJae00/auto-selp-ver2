@@ -18,12 +18,24 @@ interface PlatformMapping {
   stock_changed?: boolean;
 }
 
+type StandardOption = {
+  option_sku: string | null;
+  option_display_name: string;
+  option_supply_price: number | null;
+  option_price_delta: number | null;
+  option_stock_quantity: number | null;
+  option_status: string | null;
+  option_main_image_url: string | null;
+  option_position: number;
+};
+
 interface Product {
   id: string;
   original_name: string;
   refined_name: string | null;
   option_values_raw?: string | null;
   option_variants?: { name: string; price_wholesale: number | null; position: number }[] | null;
+  standard_options?: StandardOption[] | null;
   keywords: string[] | null;
   status: 'pending' | 'processing' | 'completed' | 'failed';
   warnings: any;
@@ -475,6 +487,27 @@ export default function ProductsPage() {
   const matchedSite = wholesaleSites.find(s => s.id === wholesaleFilter);
   const formatPrice = (value?: number | null) =>
     typeof value === 'number' ? `${value.toLocaleString('ko-KR')}원` : '-';
+  const renderStandardOptions = (product: Product) => {
+    if (!product.standard_options || product.standard_options.length === 0) {
+      return <span className={styles.emptyInline}>옵션 없음</span>;
+    }
+
+    const first = product.standard_options[0];
+    const firstLabel = first.option_display_name || first.option_sku || '-';
+
+    return (
+      <div className={styles.standardOptionPreview}>
+        {first.option_main_image_url ? (
+          <img src={first.option_main_image_url} alt="" className={styles.standardOptionImage} />
+        ) : null}
+        <div className={styles.standardOptionText}>
+          <span className={styles.optionCount}>옵션 {product.standard_options.length}개</span>
+          <span>{firstLabel}</span>
+          <span>{formatPrice(first.option_supply_price)}</span>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div className={styles.container}>
@@ -832,7 +865,9 @@ export default function ProductsPage() {
                           case 'option_variants':
                             return (
                               <td key="option_variants">
-                                {p.option_variants && p.option_variants.length > 0 ? (
+                                {p.standard_options && p.standard_options.length > 0 ? (
+                                  renderStandardOptions(p)
+                                ) : p.option_variants && p.option_variants.length > 0 ? (
                                   <details className={styles.optionDetails}>
                                     <summary className={styles.optionSummary}>
                                       <span className={styles.optionCount}>옵션 {p.option_variants.length}개</span>
@@ -849,10 +884,8 @@ export default function ProductsPage() {
                                       ))}
                                     </ul>
                                   </details>
-                                ) : p.option_values_raw ? (
-                                  <div className={styles.optionFallback}>{p.option_values_raw}</div>
                                 ) : (
-                                  <span className={styles.optionEmpty}>없음</span>
+                                  <span className={styles.emptyInline}>옵션 없음</span>
                                 )}
                               </td>
                             );

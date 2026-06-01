@@ -61,6 +61,7 @@ class Product(Base):
     origin: Mapped[str | None] = mapped_column(String, nullable=True)
     options: Mapped[str | None] = mapped_column(Text, nullable=True)
     option_variants: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    standard_options: Mapped[list | None] = mapped_column(JSON, nullable=True)
     images_list: Mapped[list | None] = mapped_column(JSON, nullable=True)
     image_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
     wholesale_status: Mapped[str | None] = mapped_column(String, nullable=True)

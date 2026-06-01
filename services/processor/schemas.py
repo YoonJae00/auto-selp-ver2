@@ -60,6 +60,7 @@ class ProductResponse(BaseModel):
     origin: Optional[str] = None
     options: Optional[str] = None
     option_variants: Optional[List] = None
+    standard_options: Optional[List[Dict[str, Any]]] = None
     images_list: Optional[List] = None
     image_detail: Optional[str] = None
     wholesale_status: Optional[str] = None
@@ -153,6 +154,7 @@ class MarketplaceSnapshotResponse(BaseModel):
     price: MarketplaceSnapshotPrice
     images: MarketplaceSnapshotImages
     options: List[Dict[str, Any]] = []
+    standard_options: List[Dict[str, Any]] = []
     market_categories: Dict[str, MarketplaceSnapshotCategory] = {}
 
 
@@ -167,4 +169,3 @@ class ProductDeleteResponse(BaseModel):
     deleted_count: int
     warning_synced_count: int = 0
     message: str
-

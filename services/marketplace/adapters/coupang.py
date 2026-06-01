@@ -24,7 +24,8 @@ class CoupangAdapter(MarketplaceAdapter):
         optional_images = self._extract_optional_images(source_snapshot)
         detail_content = self._extract_detail_content(source_snapshot)
         origin = self._extract_origin(source_snapshot)
-        options = self._extract_options(source_snapshot)
+        standard_options = self._extract_standard_options(source_snapshot)
+        options = standard_options or self._extract_options(source_snapshot)
         cost_price = self._extract_cost_price(source_snapshot)
         listing_defaults = self._extract_listing_defaults(account_settings)
 
@@ -74,19 +75,34 @@ class CoupangAdapter(MarketplaceAdapter):
         option_items = options or [{"name": title}]
         items = []
         for option in option_items:
-            item_name = self._clean_str(option.get("name")) if isinstance(option, Mapping) else title
+            item_name = self._option_item_name(option) if isinstance(option, Mapping) else title
             if not item_name:
                 item_name = title
+            item_images = (
+                self._build_standard_option_images(option, image_payload_template)
+                if standard_options and isinstance(option, Mapping)
+                else deepcopy(image_payload_template)
+            )
+            item_attributes = (
+                self._build_standard_option_attributes(option)
+                if standard_options and isinstance(option, Mapping)
+                else ([{"attributeTypeName": "옵션", "attributeValueName": item_name}] if options else [])
+            )
             item = {
                 "itemName": item_name,
-                "salePrice": sale_price,
-                "images": deepcopy(image_payload_template),
-                "attributes": (
-                    [{"attributeTypeName": "옵션", "attributeValueName": item_name}] if options else []
-                ),
+                "salePrice": self._option_sale_price(option, sale_price) if isinstance(option, Mapping) else sale_price,
+                "images": item_images,
+                "attributes": item_attributes,
                 "contents": deepcopy(content_payload_template),
                 "origin": origin,
             }
+            if standard_options and isinstance(option, Mapping):
+                option_sku = self._clean_str(option.get("option_sku"))
+                if option_sku:
+                    item["externalVendorSku"] = option_sku
+                option_stock_quantity = option.get("option_stock_quantity")
+                if isinstance(option_stock_quantity, int):
+                    item["maximumBuyCount"] = option_stock_quantity
             items.append(item)
 
         payload = {
@@ -160,3 +176,64 @@ class CoupangAdapter(MarketplaceAdapter):
             adapter_version=self.adapter_version,
             recipe_versions={"title": self.title_recipe_version},
         )
+
+    def _option_item_name(self, option: Mapping[str, Any]) -> str:
+        standard_name = self._clean_str(option.get("option_display_name"))
+        if standard_name:
+            return standard_name
+        legacy_name = self._clean_str(option.get("name"))
+        if legacy_name:
+            return legacy_name
+        option_sku = self._clean_str(option.get("option_sku"))
+        return option_sku
+
+    def _option_sale_price(self, option: Mapping[str, Any], fallback_sale_price: int | None) -> int | None:
+        option_sale_price = option.get("option_sale_price")
+        if isinstance(option_sale_price, int) and option_sale_price > 0:
+            return option_sale_price
+        return fallback_sale_price
+
+    def _build_standard_option_images(
+        self,
+        option: Mapping[str, Any],
+        fallback_images: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        option_images: list[dict[str, Any]] = []
+        main_image = self._clean_str(option.get("option_main_image_url"))
+        if main_image:
+            option_images.append(
+                {
+                    "imageType": "REPRESENTATION",
+                    "vendorPath": main_image,
+                    "imageOrder": 0,
+                }
+            )
+
+        extra_images = option.get("option_extra_image_urls")
+        if isinstance(extra_images, list):
+            for index, image_url_value in enumerate(extra_images, start=len(option_images)):
+                image_url = self._clean_str(image_url_value)
+                if image_url:
+                    option_images.append(
+                        {
+                            "imageType": "DETAIL",
+                            "vendorPath": image_url,
+                            "imageOrder": index,
+                        }
+                    )
+
+        return option_images or deepcopy(fallback_images)
+
+    def _build_standard_option_attributes(self, option: Mapping[str, Any]) -> list[dict[str, str]]:
+        attributes: list[dict[str, str]] = []
+        for index in range(1, 4):
+            group_name = self._clean_str(option.get(f"option_group_{index}"))
+            option_value = self._clean_str(option.get(f"option_value_{index}"))
+            if group_name and option_value:
+                attributes.append(
+                    {
+                        "attributeTypeName": group_name,
+                        "attributeValueName": option_value,
+                    }
+                )
+        return attributes

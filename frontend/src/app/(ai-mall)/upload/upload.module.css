@@ -270,6 +270,19 @@
   gap: 24px;
 }
 
+.mapperGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.mapperGroupTitle {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
 .mapperGrid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
@@ -330,4 +343,102 @@
   border-radius: 12px;
   font-size: 14px;
   margin-bottom: 24px;
+}
+
+/* --- Preview Accordion UI Styles --- */
+.previewWrapper {
+  margin-top: 32px;
+  background: var(--canvas);
+  border: 1px solid var(--hairline);
+  border-radius: 20px;
+  overflow: hidden;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.01);
+}
+
+.accordionHeader {
+  width: 100%;
+  padding: 18px 24px;
+  background: var(--canvas-parchment, rgba(0, 0, 0, 0.02));
+  border: none;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+  outline: none;
+  transition: background 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  color: var(--ink);
+}
+
+.accordionHeader:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.accordionTitle {
+  font-size: 15px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.accordionIcon {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-muted-48);
+  background: var(--canvas);
+  padding: 4px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--hairline);
+  transition: all 0.2s;
+}
+
+.previewTableContainer {
+  padding: 0;
+  overflow-x: auto;
+  border-top: 1px solid var(--hairline);
+  max-width: 100%;
+}
+
+.previewTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  text-align: left;
+}
+
+.previewTable th {
+  background: var(--canvas);
+  color: var(--ink-muted-80);
+  font-weight: 600;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--hairline);
+  white-space: nowrap;
+  position: sticky;
+  top: 0;
+}
+
+.previewTable td {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--hairline);
+  color: var(--ink);
+  white-space: nowrap;
+  max-width: 250px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.previewTable tr:last-child td {
+  border-bottom: none;
+}
+
+.previewTable tr:hover {
+  background: rgba(var(--primary-rgb), 0.01);
+}
+
+.rowNumber {
+  font-weight: 600;
+  color: var(--primary);
+  text-align: center;
+  width: 60px;
+  background: var(--canvas-parchment, rgba(0, 0, 0, 0.01));
 }
