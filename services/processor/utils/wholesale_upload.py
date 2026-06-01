@@ -404,6 +404,18 @@ def parse_wholesale_row(row: pd.Series, mapping: dict[str, str]) -> dict[str, An
         mapped_values["price_wholesale_raw"],
     )
     warnings = list(option_result["warnings"])
+    standard_options = (
+        []
+        if option_result["warnings"]
+        else build_standard_options(
+            product_code=mapped_values["product_code"],
+            wholesale_status=mapped_values["wholesale_status"],
+            option_values_raw=mapped_values["option_values_raw"],
+            price_wholesale_raw=mapped_values["price_wholesale_raw"],
+            option_image_urls_raw=mapped_values["option_image_urls_raw"],
+            base_supply_price=option_result["price_wholesale"],
+        )
+    )
 
     for required_field in REQUIRED_WHOLESALE_FIELDS:
         if is_blank(mapped_values.get(required_field)):
@@ -423,14 +435,7 @@ def parse_wholesale_row(row: pd.Series, mapping: dict[str, str]) -> dict[str, An
         "price_wholesale_raw": clean_text(mapped_values["price_wholesale_raw"]),
         "price_wholesale": option_result["price_wholesale"],
         "option_variants": option_result["option_variants"],
-        "standard_options": build_standard_options(
-            product_code=mapped_values["product_code"],
-            wholesale_status=mapped_values["wholesale_status"],
-            option_values_raw=mapped_values["option_values_raw"],
-            price_wholesale_raw=mapped_values["price_wholesale_raw"],
-            option_image_urls_raw=mapped_values["option_image_urls_raw"],
-            base_supply_price=option_result["price_wholesale"],
-        ),
+        "standard_options": standard_options,
         "price_retail": parse_int_price(mapped_values["price_retail"]),
         "price_min_selling": parse_int_price(mapped_values["price_min_selling"]),
         "origin": clean_text(mapped_values["origin"]),

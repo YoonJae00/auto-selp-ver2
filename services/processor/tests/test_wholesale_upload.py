@@ -412,6 +412,63 @@ def test_parse_wholesale_row_standard_options_uses_simple_split_fallback_for_rep
     assert [option["option_price_delta"] for option in standard_options] == [0, 0]
 
 
+def test_parse_wholesale_row_suppresses_standard_options_when_option_counts_mismatch():
+    row = pd.Series(
+        {
+            "상태": "정상",
+            "제품번호": "12345",
+            "상품코드": "ABC-001",
+            "상품명": "테스트 상품",
+            "옵션값": "블랙,L",
+            "가격": "12000",
+            "원산지": "국내",
+            "목록이미지1": "https://img.example/1.jpg",
+            "상세이미지": "https://img.example/detail.jpg",
+        }
+    )
+
+    parsed = parse_wholesale_row(row, {})
+
+    assert parsed["product_data"]["option_variants"] == []
+    assert parsed["product_data"]["standard_options"] == []
+    assert parsed["warnings"] == [
+        {
+            "field": "option_variants",
+            "message": "Option count and price count differ.",
+            "option_count": 2,
+            "price_count": 1,
+        }
+    ]
+
+
+def test_parse_wholesale_row_suppresses_standard_options_when_option_price_is_invalid():
+    row = pd.Series(
+        {
+            "상태": "정상",
+            "제품번호": "12345",
+            "상품코드": "ABC-001",
+            "상품명": "테스트 상품",
+            "옵션값": "블랙,L",
+            "가격": "bad,13000",
+            "원산지": "국내",
+            "목록이미지1": "https://img.example/1.jpg",
+            "상세이미지": "https://img.example/detail.jpg",
+        }
+    )
+
+    parsed = parse_wholesale_row(row, {})
+
+    assert parsed["product_data"]["option_variants"] == []
+    assert parsed["product_data"]["standard_options"] == []
+    assert parsed["warnings"] == [
+        {
+            "field": "price_wholesale_raw",
+            "message": "One or more option prices could not be parsed.",
+            "raw_value": "bad,13000",
+        }
+    ]
+
+
 def test_merge_product_warnings_preserves_supplier_warnings_and_adds_processing_warnings():
     supplier_warning = {"field": "price_wholesale_raw", "message": "Required value is blank."}
     processing_warning = {"keyword": "브랜드", "reason": "trademark"}
