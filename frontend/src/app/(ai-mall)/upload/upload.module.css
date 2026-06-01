@@ -270,6 +270,19 @@
   gap: 24px;
 }
 
+.mapperGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.mapperGroupTitle {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
 .mapperGrid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));

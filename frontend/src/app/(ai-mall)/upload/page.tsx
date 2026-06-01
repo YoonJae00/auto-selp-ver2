@@ -19,24 +19,42 @@ interface UploadResponse {
   preview: any[];
 }
 
-const SYSTEM_FIELDS = [
-  { key: 'wholesale_status', label: '상태 (필수)', required: true, defaultFallbacks: ['상태', '품절상태', '품절여부', '판매상태'] },
-  { key: 'wholesale_product_id', label: '제품번호 (필수)', required: true, defaultFallbacks: ['제품번호', '제품ID', '상품ID'] },
-  { key: 'product_code', label: '상품코드 (필수)', required: true, defaultFallbacks: ['상품코드', '도매코드', '자체상품코드', '코드'] },
-  { key: 'original_name', label: '상품명 (필수)', required: true, defaultFallbacks: ['상품명', '원본상품명', '제품명'] },
-  { key: 'option_values_raw', label: '옵션값', required: false, defaultFallbacks: ['옵션값', '옵션', '선택사항', '옵션명'] },
-  { key: 'price_wholesale_raw', label: '가격 (필수)', required: true, defaultFallbacks: ['공급가', '도매가', '공급가격', '도매가격', '가격'] },
-  { key: 'price_retail', label: '소비자가', required: false, defaultFallbacks: ['소비자가', '소매가', '소매가격'] },
-  { key: 'price_min_selling', label: '판매준수가', required: false, defaultFallbacks: ['판매준수가', '최소판매가', '최저가'] },
-  { key: 'origin', label: '원산지 (필수)', required: true, defaultFallbacks: ['원산지', '제조국', '제조국가'] },
-  { key: 'image_list_1', label: '목록이미지1 (필수)', required: true, defaultFallbacks: ['목록이미지1', '대표이미지', '상품이미지', '이미지'] },
-  { key: 'image_list_2', label: '목록이미지2', required: false, defaultFallbacks: ['목록이미지2'] },
-  { key: 'image_list_3', label: '목록이미지3', required: false, defaultFallbacks: ['목록이미지3'] },
-  { key: 'image_list_4', label: '목록이미지4', required: false, defaultFallbacks: ['목록이미지4'] },
-  { key: 'image_list_5', label: '목록이미지5', required: false, defaultFallbacks: ['목록이미지5'] },
-  { key: 'image_detail', label: '상세이미지 (필수)', required: true, defaultFallbacks: ['상세이미지', '상세설명이미지'] },
-  { key: 'wholesale_registered_at', label: '등록일', required: false, defaultFallbacks: ['등록일', '상품등록일'] }
-];
+const SYSTEM_FIELD_GROUPS = [
+  {
+    title: '필수 상품 필드',
+    fields: [
+      { key: 'wholesale_status', label: '판매 상태 (필수)', required: true, standardKey: 'wholesale_status', defaultFallbacks: ['상태', '품절상태', '품절여부', '판매상태'] },
+      { key: 'wholesale_product_id', label: '도매처 상품 번호 (필수)', required: true, standardKey: 'wholesale_product_id', defaultFallbacks: ['제품번호', '제품id', '상품id'] },
+      { key: 'product_code', label: '도매처 상품 코드 (필수)', required: true, standardKey: 'product_code', defaultFallbacks: ['상품코드', '도매코드', '자체상품코드', '코드'] },
+      { key: 'original_name', label: '원본 상품명 (필수)', required: true, standardKey: 'original_name', defaultFallbacks: ['상품명', '원본상품명', '제품명'] },
+      { key: 'origin', label: '원산지 (필수)', required: true, standardKey: 'origin', defaultFallbacks: ['원산지', '제조국', '제조국가'] },
+      { key: 'price_wholesale_raw', label: '기본 공급가 (필수)', required: true, standardKey: 'price_wholesale_raw', defaultFallbacks: ['공급가', '도매가', '공급가격', '도매가격', '가격'] },
+      { key: 'image_list_1', label: '대표 이미지 (필수)', required: true, standardKey: 'image_list_1', defaultFallbacks: ['목록이미지1', '대표이미지', '상품이미지', '이미지'] },
+      { key: 'image_detail', label: '상세 설명 이미지 (필수)', required: true, standardKey: 'image_detail', defaultFallbacks: ['상세이미지', '상세설명이미지'] }
+    ]
+  },
+  {
+    title: '선택 상품 필드',
+    fields: [
+      { key: 'price_retail', label: '권장 소비자가', required: false, standardKey: 'price_retail', defaultFallbacks: ['소비자가', '소매가', '소매가격'] },
+      { key: 'price_min_selling', label: '최소 판매가', required: false, standardKey: 'price_min_selling', defaultFallbacks: ['판매준수가', '최소판매가', '최저가'] },
+      { key: 'image_list_2', label: '추가 이미지 2', required: false, standardKey: 'image_list_2', defaultFallbacks: ['목록이미지2'] },
+      { key: 'image_list_3', label: '추가 이미지 3', required: false, standardKey: 'image_list_3', defaultFallbacks: ['목록이미지3'] },
+      { key: 'image_list_4', label: '추가 이미지 4', required: false, standardKey: 'image_list_4', defaultFallbacks: ['목록이미지4'] },
+      { key: 'image_list_5', label: '추가 이미지 5', required: false, standardKey: 'image_list_5', defaultFallbacks: ['목록이미지5'] },
+      { key: 'wholesale_registered_at', label: '도매처 등록일', required: false, standardKey: 'wholesale_registered_at', defaultFallbacks: ['등록일', '상품등록일'] }
+    ]
+  },
+  {
+    title: '옵션 필드',
+    fields: [
+      { key: 'option_values_raw', label: '옵션 값 목록', required: false, standardKey: 'option_values_raw', defaultFallbacks: ['옵션값', '옵션', '선택사항', '옵션명'] },
+      { key: 'option_image_urls_raw', label: '옵션별 이미지 URL', required: false, standardKey: 'option_image_urls_raw', defaultFallbacks: ['옵션이미지', '옵션 이미지', '옵션이미지url', '옵션이미지주소'] }
+    ]
+  }
+] as const;
+
+const SYSTEM_FIELDS = SYSTEM_FIELD_GROUPS.flatMap(group => group.fields);
 
 const normalizeHeader = (value: string) => value.trim().replace(/\s+/g, '').toLowerCase();
 
@@ -389,28 +407,33 @@ export default function UploadPage() {
                 <p>도매처 엑셀 열 항목과 시스템의 표준 저장 필드를 시각적으로 연결합니다. 처음 한번만 설정하면 저장되어 계속 재사용 가능합니다.</p>
               </div>
 
-              <div className={styles.mapperGrid}>
-                {SYSTEM_FIELDS.map((field) => {
-                  return (
-                    <div key={field.key} className={styles.mappingField}>
-                      <span className={styles.fieldLabel}>{field.label}</span>
-                      <select 
-                        className={styles.select}
-                        value={columnMapping[field.key] || ''}
-                        onChange={(e) => setColumnMapping({
-                          ...columnMapping,
-                          [field.key]: e.target.value
-                        })}
-                      >
-                        <option value="">-- 선택 안함 --</option>
-                        {uploadData.columns.map(col => (
-                          <option key={col} value={col}>{col}</option>
-                        ))}
-                      </select>
-                    </div>
-                  );
-                })}
-              </div>
+              {SYSTEM_FIELD_GROUPS.map((group) => (
+                <div key={group.title} className={styles.mapperGroup}>
+                  <h3 className={styles.mapperGroupTitle}>{group.title}</h3>
+                  <div className={styles.mapperGrid}>
+                    {group.fields.map((field) => {
+                      return (
+                        <div key={field.key} className={styles.mappingField}>
+                          <span className={styles.fieldLabel}>{field.label}</span>
+                          <select
+                            className={styles.select}
+                            value={columnMapping[field.key] || ''}
+                            onChange={(e) => setColumnMapping({
+                              ...columnMapping,
+                              [field.key]: e.target.value
+                            })}
+                          >
+                            <option value="">-- 선택 안함 --</option>
+                            {uploadData.columns.map(col => (
+                              <option key={col} value={col}>{col}</option>
+                            ))}
+                          </select>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
 
               <div className={styles.mapperActions}>
                 <PillButton 

@@ -73,6 +73,31 @@ def build_product(product_id: uuid.UUID, user_id: uuid.UUID):
             {"name": "L자형", "price_wholesale": 12000, "position": 1},
             {"name": "V자형", "price_wholesale": 13000, "position": 2},
         ],
+        standard_options=[
+            {
+                "supplier_product_code": "P-100",
+                "option_sku": "P-100-1",
+                "option_type": "combination",
+                "option_group_1": "옵션",
+                "option_value_1": "L자형",
+                "option_group_2": None,
+                "option_value_2": None,
+                "option_group_3": None,
+                "option_value_3": None,
+                "option_display_name": "L자형",
+                "option_supply_price": 12000,
+                "option_sale_price": None,
+                "option_price_delta": 0,
+                "option_stock_quantity": None,
+                "option_status": "판매중",
+                "option_usable": True,
+                "option_main_image_url": "https://img.example/option-l.jpg",
+                "option_extra_image_urls": [],
+                "option_position": 1,
+                "raw_option_text": "L자형",
+                "raw_option_metadata": {"source": "fixture"},
+            }
+        ],
         platform_mappings=[
             SimpleNamespace(
                 platform_name="naver",
@@ -145,6 +170,31 @@ def test_marketplace_snapshot_success(monkeypatch):
     assert body["options"] == [
         {"name": "L자형", "price_wholesale": 12000, "position": 1},
         {"name": "V자형", "price_wholesale": 13000, "position": 2},
+    ]
+    assert body["standard_options"] == [
+        {
+            "supplier_product_code": "P-100",
+            "option_sku": "P-100-1",
+            "option_type": "combination",
+            "option_group_1": "옵션",
+            "option_value_1": "L자형",
+            "option_group_2": None,
+            "option_value_2": None,
+            "option_group_3": None,
+            "option_value_3": None,
+            "option_display_name": "L자형",
+            "option_supply_price": 12000,
+            "option_sale_price": None,
+            "option_price_delta": 0,
+            "option_stock_quantity": None,
+            "option_status": "판매중",
+            "option_usable": True,
+            "option_main_image_url": "https://img.example/option-l.jpg",
+            "option_extra_image_urls": [],
+            "option_position": 1,
+            "raw_option_text": "L자형",
+            "raw_option_metadata": {"source": "fixture"},
+        }
     ]
     assert body["market_categories"] == {
         "smartstore": {

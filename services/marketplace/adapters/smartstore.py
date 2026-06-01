@@ -23,7 +23,12 @@ class SmartstoreAdapter(MarketplaceAdapter):
         optional_images = self._extract_optional_images(source_snapshot)
         detail_content = self._extract_detail_content(source_snapshot)
         origin = self._extract_origin(source_snapshot)
-        options = self._extract_options(source_snapshot)
+        standard_options = self._extract_standard_options(source_snapshot)
+        option_info = (
+            self._build_standard_option_info(standard_options)
+            if standard_options
+            else {"optionCombinations": self._extract_options(source_snapshot)}
+        )
         cost_price = self._extract_cost_price(source_snapshot)
         listing_defaults = self._extract_listing_defaults(account_settings)
 
@@ -52,7 +57,7 @@ class SmartstoreAdapter(MarketplaceAdapter):
         
         detail_attribute = {
             "originAreaInfo": {"rawOrigin": origin},
-            "optionInfo": {"optionCombinations": options},
+            "optionInfo": option_info,
         }
         if mapped_attrs and mapped_attrs.get("naver_attributes"):
             detail_attribute["productAttributes"] = mapped_attrs["naver_attributes"]
@@ -131,3 +136,41 @@ class SmartstoreAdapter(MarketplaceAdapter):
             adapter_version=self.adapter_version,
             recipe_versions={"title": self.title_recipe_version},
         )
+
+    def _build_standard_option_info(self, standard_options: list[dict[str, Any]]) -> dict[str, Any]:
+        group_names: list[str] = []
+        combinations: list[dict[str, Any]] = []
+
+        for option in standard_options:
+            for index in range(1, 4):
+                group_name = self._clean_str(option.get(f"option_group_{index}"))
+                option_value = self._clean_str(option.get(f"option_value_{index}"))
+                if group_name and option_value and group_name not in group_names:
+                    group_names.append(group_name)
+
+            combination: dict[str, Any] = {}
+            for index in range(1, 4):
+                option_value = self._clean_str(option.get(f"option_value_{index}"))
+                if option_value:
+                    combination[f"optionName{index}"] = option_value
+
+            option_stock_quantity = option.get("option_stock_quantity")
+            if isinstance(option_stock_quantity, int):
+                combination["stockQuantity"] = option_stock_quantity
+
+            option_price_delta = option.get("option_price_delta")
+            if isinstance(option_price_delta, int):
+                combination["price"] = option_price_delta
+
+            combination["usable"] = option.get("option_usable", True) is not False
+
+            option_sku = self._clean_str(option.get("option_sku"))
+            if option_sku:
+                combination["sellerManagerCode"] = option_sku
+
+            combinations.append(combination)
+
+        option_info: dict[str, Any] = {"optionCombinations": combinations}
+        if group_names:
+            option_info["optionCombinationGroupNames"] = group_names
+        return option_info

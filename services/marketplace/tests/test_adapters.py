@@ -57,6 +57,60 @@ def _source_snapshot():
     }
 
 
+def _source_snapshot_with_standard_options():
+    snapshot = _source_snapshot()
+    snapshot["options"] = []
+    snapshot["standard_options"] = [
+        {
+            "supplier_product_code": "P-100",
+            "option_sku": "P-100-1",
+            "option_type": "combination",
+            "option_group_1": "색상",
+            "option_value_1": "블랙",
+            "option_group_2": "사이즈",
+            "option_value_2": "L",
+            "option_group_3": None,
+            "option_value_3": None,
+            "option_display_name": "블랙 / L",
+            "option_supply_price": 8000,
+            "option_sale_price": None,
+            "option_price_delta": 0,
+            "option_stock_quantity": 12,
+            "option_status": "정상",
+            "option_usable": True,
+            "option_main_image_url": "https://img.example/black-l.jpg",
+            "option_extra_image_urls": ["https://img.example/black-l-detail.jpg"],
+            "option_position": 1,
+            "raw_option_text": "블랙/L",
+            "raw_option_metadata": {"source": "fixture"},
+        },
+        {
+            "supplier_product_code": "P-100",
+            "option_sku": "P-100-2",
+            "option_type": "combination",
+            "option_group_1": "색상",
+            "option_value_1": "화이트",
+            "option_group_2": "사이즈",
+            "option_value_2": "M",
+            "option_group_3": None,
+            "option_value_3": None,
+            "option_display_name": "화이트 / M",
+            "option_supply_price": 9000,
+            "option_sale_price": None,
+            "option_price_delta": 1000,
+            "option_stock_quantity": 5,
+            "option_status": "정상",
+            "option_usable": True,
+            "option_main_image_url": None,
+            "option_extra_image_urls": [],
+            "option_position": 2,
+            "raw_option_text": "화이트/M",
+            "raw_option_metadata": {"source": "fixture"},
+        },
+    ]
+    return snapshot
+
+
 def _smartstore_settings(*, listing_defaults=None, pricing_policy=None):
     if listing_defaults is None:
         listing_defaults = {"sellerManagementCode": "MAIN-SMART"}
@@ -168,6 +222,65 @@ def test_coupang_adapter_falls_back_to_single_item_when_source_has_no_options():
     assert len(result.generated_payload["items"]) == 1
     assert result.generated_payload["items"][0]["itemName"] == "브랜드 무선 선풍기 저소음"
     assert result.generated_payload["items"][0]["attributes"] == []
+
+
+def test_smartstore_adapter_prefers_standard_options_for_option_info():
+    result = SmartstoreAdapter().generate_draft(
+        _source_snapshot_with_standard_options(), _smartstore_settings()
+    )
+
+    option_info = result.generated_payload["originProduct"]["detailAttribute"]["optionInfo"]
+
+    assert option_info["optionCombinationGroupNames"] == ["색상", "사이즈"]
+    assert option_info["optionCombinations"] == [
+        {
+            "optionName1": "블랙",
+            "optionName2": "L",
+            "stockQuantity": 12,
+            "price": 0,
+            "usable": True,
+            "sellerManagerCode": "P-100-1",
+        },
+        {
+            "optionName1": "화이트",
+            "optionName2": "M",
+            "stockQuantity": 5,
+            "price": 1000,
+            "usable": True,
+            "sellerManagerCode": "P-100-2",
+        },
+    ]
+
+
+def test_coupang_adapter_prefers_standard_options_for_items_and_images():
+    result = CoupangAdapter().generate_draft(
+        _source_snapshot_with_standard_options(), _coupang_settings()
+    )
+
+    first_item = result.generated_payload["items"][0]
+    second_item = result.generated_payload["items"][1]
+
+    assert first_item["itemName"] == "블랙 / L"
+    assert first_item["externalVendorSku"] == "P-100-1"
+    assert first_item["maximumBuyCount"] == 12
+    assert first_item["images"] == [
+        {
+            "imageType": "REPRESENTATION",
+            "vendorPath": "https://img.example/black-l.jpg",
+            "imageOrder": 0,
+        },
+        {
+            "imageType": "DETAIL",
+            "vendorPath": "https://img.example/black-l-detail.jpg",
+            "imageOrder": 1,
+        },
+    ]
+    assert first_item["attributes"] == [
+        {"attributeTypeName": "색상", "attributeValueName": "블랙"},
+        {"attributeTypeName": "사이즈", "attributeValueName": "L"},
+    ]
+    assert second_item["itemName"] == "화이트 / M"
+    assert second_item["images"][0]["vendorPath"] == "https://img.example/1.jpg"
 
 
 def test_missing_category_and_image_are_blocking_for_both_adapters():

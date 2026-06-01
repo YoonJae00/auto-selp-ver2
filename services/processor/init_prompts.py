@@ -39,6 +39,7 @@ async def seed_prompts():
         await conn.execute(text("ALTER TABLE products ADD COLUMN IF NOT EXISTS origin VARCHAR"))
         await conn.execute(text("ALTER TABLE products ADD COLUMN IF NOT EXISTS options TEXT"))
         await conn.execute(text("ALTER TABLE products ADD COLUMN IF NOT EXISTS option_variants JSON"))
+        await conn.execute(text("ALTER TABLE products ADD COLUMN IF NOT EXISTS standard_options JSON"))
         await conn.execute(text("ALTER TABLE products ADD COLUMN IF NOT EXISTS images_list JSON"))
         await conn.execute(text("ALTER TABLE products ADD COLUMN IF NOT EXISTS image_detail TEXT"))
         await conn.execute(text("ALTER TABLE products ADD COLUMN IF NOT EXISTS wholesale_status VARCHAR"))
