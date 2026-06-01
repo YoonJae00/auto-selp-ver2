@@ -292,16 +292,26 @@ def build_standard_options(
         }
         standard_options.append(
             {
+                "supplier_product_code": product_code_text,
                 "option_sku": f"{product_code_text}-{index + 1}",
+                "option_type": "combination",
                 "option_group_1": option["option_group_1"],
                 "option_value_1": option["option_value_1"],
+                "option_group_2": None,
                 "option_value_2": option["option_value_2"],
+                "option_group_3": None,
                 "option_value_3": option["option_value_3"],
                 "option_display_name": build_option_display_name(option),
                 "option_supply_price": option_supply_price,
+                "option_sale_price": None,
                 "option_price_delta": derive_option_price_delta(option_supply_price, base_supply_price),
+                "option_stock_quantity": None,
+                "option_status": status_text or None,
                 "option_main_image_url": option_main_image_url,
+                "option_extra_image_urls": [],
+                "option_position": index + 1,
                 "option_usable": option_usable,
+                "raw_option_text": option_name,
                 "raw_option_metadata": {
                     "option_values_raw": clean_text(option_values_raw),
                     "price_wholesale_raw": clean_text(price_wholesale_raw),
