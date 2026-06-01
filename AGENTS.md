@@ -16,3 +16,13 @@ The following skill is available:
 
 - `docs/solutions/`: Searchable knowledge store of documented solutions (bugs, best practices, workflow patterns), organized by category with YAML frontmatter (`module`, `tags`, `problem_type`). Highly relevant when implementing or debugging in documented areas.
 - `docs/superpowers/`: Project-specific plans and specs.
+
+## Worktree Environment
+
+When running inside a Codex-created worktree for this repository, before running tests, Docker Compose, LangGraph, or dev servers:
+
+1. If `.env` is missing at the repository root, run `scripts/link-worktree-env.sh`.
+2. Never copy or commit `.env`; it must remain ignored.
+3. Prefer a symlink to the main checkout env file at `/Users/yoonjae/Desktop/auto-selp-ver2/.env`.
+
+The script only links the env file path. It must not print, copy, or commit secret values.
