@@ -12,3 +12,12 @@
 ## Cleanup Rules
 - **Temporary Files Cleanup:** When you finish your development work, if and only if temporary files (e.g., test screenshots, debugging scripts, etc.) were actually generated during the session, you MUST ask the user: "작업이 종료되었습니다. 생성된 임시 파일(예: 테스트 스크린샷, 디버그용 스크립트 등)을 삭제할까요?" (The work is finished. Should I delete the generated temporary files (e.g. test screenshots, debugging scripts, etc.)?) before wrapping up. If no temporary files were generated, do NOT ask this question.
 
+## Worktree Environment
+
+When running inside an Antigravity-created or Codex-created worktree for this repository, before running tests, Docker Compose, LangGraph, or dev servers:
+
+1. If `.env` is missing at the repository root, run `scripts/link-worktree-env.sh`.
+2. Never copy or commit `.env`; it must remain ignored.
+3. Prefer a symlink to the main checkout env file at `/Users/yoonjae/Desktop/auto-selp-ver2/.env`.
+
+The script only links the env file path. It must not print, copy, or commit secret values.
