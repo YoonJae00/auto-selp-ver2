@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Any
 
 import pandas as pd
+from utils.standard_product_schema import build_option_display_name, derive_option_price_delta
 
 
 REQUIRED_WHOLESALE_FIELDS = [
@@ -31,6 +32,7 @@ FIELD_FALLBACKS = {
     "product_code": ["상품코드", "도매코드", "자체상품코드", "코드"],
     "original_name": ["상품명", "원본상품명", "제품명"],
     "option_values_raw": ["옵션값", "옵션", "선택사항", "옵션명"],
+    "option_image_urls_raw": ["옵션이미지", "옵션 이미지", "옵션별이미지", "옵션별 이미지"],
     "price_wholesale_raw": ["가격", "공급가", "도매가", "공급가격", "도매가격"],
     "price_retail": ["소비자가", "소매가", "소매가격"],
     "price_min_selling": ["판매준수가", "최소판매가", "최저가"],
@@ -258,6 +260,59 @@ def parse_option_variants(option_values_raw: Any, price_wholesale_raw: Any) -> d
     }
 
 
+def build_standard_options(
+    *,
+    product_code: Any,
+    wholesale_status: Any,
+    option_values_raw: Any,
+    price_wholesale_raw: Any,
+    option_image_urls_raw: Any,
+    base_supply_price: int | None,
+) -> list[dict[str, Any]]:
+    option_names = split_csv_text(option_values_raw)
+    if not option_names:
+        return []
+
+    option_price_tokens = split_option_price_text(price_wholesale_raw)
+    option_price_values = [parse_int_price(token) for token in option_price_tokens]
+    option_image_urls = split_csv_text(option_image_urls_raw)
+    product_code_text = clean_text(product_code) or ""
+    status_text = clean_text(wholesale_status) or ""
+    option_usable = status_text not in {"품절", "판매중지", "중지"}
+
+    standard_options: list[dict[str, Any]] = []
+    for index, option_name in enumerate(option_names):
+        option_supply_price = option_price_values[index] if index < len(option_price_values) else None
+        option_main_image_url = option_image_urls[index] if index < len(option_image_urls) else None
+        option = {
+            "option_group_1": "옵션",
+            "option_value_1": option_name,
+            "option_value_2": None,
+            "option_value_3": None,
+        }
+        standard_options.append(
+            {
+                "option_sku": f"{product_code_text}-{index + 1}",
+                "option_group_1": option["option_group_1"],
+                "option_value_1": option["option_value_1"],
+                "option_value_2": option["option_value_2"],
+                "option_value_3": option["option_value_3"],
+                "option_display_name": build_option_display_name(option),
+                "option_supply_price": option_supply_price,
+                "option_price_delta": derive_option_price_delta(option_supply_price, base_supply_price),
+                "option_main_image_url": option_main_image_url,
+                "option_usable": option_usable,
+                "raw_option_metadata": {
+                    "option_values_raw": clean_text(option_values_raw),
+                    "price_wholesale_raw": clean_text(price_wholesale_raw),
+                    "option_image_urls_raw": clean_text(option_image_urls_raw),
+                },
+            }
+        )
+
+    return standard_options
+
+
 def build_images_list(values: dict[str, Any]) -> list[str]:
     images: list[str] = []
     for key in IMAGE_FIELD_KEYS:
@@ -318,6 +373,7 @@ def parse_wholesale_row(row: pd.Series, mapping: dict[str, str]) -> dict[str, An
         "product_code": get_mapped_value(row, mapping, "product_code"),
         "original_name": get_mapped_value(row, mapping, "original_name"),
         "option_values_raw": get_mapped_value(row, mapping, "option_values_raw"),
+        "option_image_urls_raw": get_mapped_value(row, mapping, "option_image_urls_raw"),
         "price_wholesale_raw": get_mapped_value(row, mapping, "price_wholesale_raw"),
         "price_retail": get_mapped_value(row, mapping, "price_retail"),
         "price_min_selling": get_mapped_value(row, mapping, "price_min_selling"),
@@ -354,6 +410,14 @@ def parse_wholesale_row(row: pd.Series, mapping: dict[str, str]) -> dict[str, An
         "price_wholesale_raw": clean_text(mapped_values["price_wholesale_raw"]),
         "price_wholesale": option_result["price_wholesale"],
         "option_variants": option_result["option_variants"],
+        "standard_options": build_standard_options(
+            product_code=mapped_values["product_code"],
+            wholesale_status=mapped_values["wholesale_status"],
+            option_values_raw=mapped_values["option_values_raw"],
+            price_wholesale_raw=mapped_values["price_wholesale_raw"],
+            option_image_urls_raw=mapped_values["option_image_urls_raw"],
+            base_supply_price=option_result["price_wholesale"],
+        ),
         "price_retail": parse_int_price(mapped_values["price_retail"]),
         "price_min_selling": parse_int_price(mapped_values["price_min_selling"]),
         "origin": clean_text(mapped_values["origin"]),

@@ -260,6 +260,105 @@ def test_parse_wholesale_row_uses_legacy_mapping_keys_for_supplier_fields():
     assert parsed["warnings"] == []
 
 
+def test_parse_wholesale_row_emits_standard_options_with_images_and_price_deltas():
+    row = pd.Series(
+        {
+            "상태": "정상",
+            "제품번호": "12345",
+            "상품코드": "ABC-001",
+            "상품명": "테스트 상품",
+            "옵션값": "블랙,L",
+            "가격": "12000,13000",
+            "옵션이미지": "https://img.example/black.jpg,https://img.example/large.jpg",
+            "원산지": "국내",
+            "목록이미지1": "https://img.example/1.jpg",
+            "상세이미지": "https://img.example/detail.jpg",
+        }
+    )
+    mapping = {
+        "wholesale_status": "상태",
+        "wholesale_product_id": "제품번호",
+        "product_code": "상품코드",
+        "original_name": "상품명",
+        "option_values_raw": "옵션값",
+        "price_wholesale_raw": "가격",
+        "option_image_urls_raw": "옵션이미지",
+        "origin": "원산지",
+        "image_list_1": "목록이미지1",
+        "image_detail": "상세이미지",
+    }
+
+    parsed = parse_wholesale_row(row, mapping)
+
+    assert parsed["product_data"]["standard_options"] == [
+        {
+            "option_sku": "ABC-001-1",
+            "option_group_1": "옵션",
+            "option_value_1": "블랙",
+            "option_value_2": None,
+            "option_value_3": None,
+            "option_display_name": "블랙",
+            "option_supply_price": 12000,
+            "option_price_delta": 0,
+            "option_main_image_url": "https://img.example/black.jpg",
+            "option_usable": True,
+            "raw_option_metadata": {
+                "option_values_raw": "블랙,L",
+                "price_wholesale_raw": "12000,13000",
+                "option_image_urls_raw": "https://img.example/black.jpg,https://img.example/large.jpg",
+            },
+        },
+        {
+            "option_sku": "ABC-001-2",
+            "option_group_1": "옵션",
+            "option_value_1": "L",
+            "option_value_2": None,
+            "option_value_3": None,
+            "option_display_name": "L",
+            "option_supply_price": 13000,
+            "option_price_delta": 1000,
+            "option_main_image_url": "https://img.example/large.jpg",
+            "option_usable": True,
+            "raw_option_metadata": {
+                "option_values_raw": "블랙,L",
+                "price_wholesale_raw": "12000,13000",
+                "option_image_urls_raw": "https://img.example/black.jpg,https://img.example/large.jpg",
+            },
+        },
+    ]
+
+
+def test_parse_wholesale_row_without_options_emits_empty_option_sets_and_keeps_price():
+    row = pd.Series(
+        {
+            "상태": "정상",
+            "제품번호": "12345",
+            "상품코드": "ABC-001",
+            "상품명": "테스트 상품",
+            "가격": "12000",
+            "원산지": "국내",
+            "목록이미지1": "https://img.example/1.jpg",
+            "상세이미지": "https://img.example/detail.jpg",
+        }
+    )
+    mapping = {
+        "wholesale_status": "상태",
+        "wholesale_product_id": "제품번호",
+        "product_code": "상품코드",
+        "original_name": "상품명",
+        "price_wholesale_raw": "가격",
+        "origin": "원산지",
+        "image_list_1": "목록이미지1",
+        "image_detail": "상세이미지",
+    }
+
+    parsed = parse_wholesale_row(row, mapping)
+
+    assert parsed["product_data"]["price_wholesale"] == 12000
+    assert parsed["product_data"]["option_variants"] == []
+    assert parsed["product_data"]["standard_options"] == []
+
+
 def test_merge_product_warnings_preserves_supplier_warnings_and_adds_processing_warnings():
     supplier_warning = {"field": "price_wholesale_raw", "message": "Required value is blank."}
     processing_warning = {"keyword": "브랜드", "reason": "trademark"}
