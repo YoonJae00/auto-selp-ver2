@@ -311,6 +311,16 @@ def test_build_option_display_name_joins_non_blank_values():
     assert build_option_display_name(option) == "블랙 / L"
 
 
+def test_build_option_display_name_ignores_nan_values():
+    option = {
+        "option_value_1": "블랙",
+        "option_value_2": float("nan"),
+        "option_value_3": None,
+    }
+
+    assert build_option_display_name(option) == "블랙"
+
+
 def test_derive_option_price_delta_uses_option_supply_price_as_source():
     assert derive_option_price_delta(option_supply_price=13000, base_supply_price=12000) == 1000
     assert derive_option_price_delta(option_supply_price=12000, base_supply_price=12000) == 0

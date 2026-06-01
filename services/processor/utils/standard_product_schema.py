@@ -1,3 +1,4 @@
+import math
 from typing import Any
 
 
@@ -19,6 +20,11 @@ OPTION_TYPES = {"single", "combination", "custom", "standard"}
 def clean_standard_text(value: Any) -> str | None:
     if value is None:
         return None
+    try:
+        if isinstance(value, (int, float)) and math.isnan(value):
+            return None
+    except TypeError:
+        pass
     text = str(value).strip()
     return text or None
 
