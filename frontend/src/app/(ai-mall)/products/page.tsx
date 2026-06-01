@@ -884,8 +884,6 @@ export default function ProductsPage() {
                                       ))}
                                     </ul>
                                   </details>
-                                ) : p.option_values_raw ? (
-                                  <div className={styles.optionFallback}>{p.option_values_raw}</div>
                                 ) : (
                                   <span className={styles.emptyInline}>옵션 없음</span>
                                 )}
