@@ -274,6 +274,9 @@ def build_standard_options(
         return []
 
     option_price_tokens = split_option_price_text(price_wholesale_raw)
+    simple_price_tokens = split_csv_text(price_wholesale_raw)
+    if len(option_price_tokens) != len(option_names) and len(simple_price_tokens) == len(option_names):
+        option_price_tokens = simple_price_tokens
     option_price_values = [parse_int_price(token) for token in option_price_tokens]
     option_image_urls = split_csv_text(option_image_urls_raw)
     product_code_text = clean_text(product_code) or ""

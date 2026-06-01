@@ -379,6 +379,39 @@ def test_parse_wholesale_row_without_options_emits_empty_option_sets_and_keeps_p
     assert parsed["product_data"]["standard_options"] == []
 
 
+def test_parse_wholesale_row_standard_options_uses_simple_split_fallback_for_repeated_prices():
+    row = pd.Series(
+        {
+            "상태": "정상",
+            "제품번호": "12345",
+            "상품코드": "ABC-001",
+            "상품명": "테스트 상품",
+            "옵션값": "대(8P),소(32P)",
+            "가격": "740,740",
+            "원산지": "국내",
+            "목록이미지1": "https://img.example/1.jpg",
+            "상세이미지": "https://img.example/detail.jpg",
+        }
+    )
+    mapping = {
+        "wholesale_status": "상태",
+        "wholesale_product_id": "제품번호",
+        "product_code": "상품코드",
+        "original_name": "상품명",
+        "option_values_raw": "옵션값",
+        "price_wholesale_raw": "가격",
+        "origin": "원산지",
+        "image_list_1": "목록이미지1",
+        "image_detail": "상세이미지",
+    }
+
+    parsed = parse_wholesale_row(row, mapping)
+    standard_options = parsed["product_data"]["standard_options"]
+
+    assert [option["option_supply_price"] for option in standard_options] == [740, 740]
+    assert [option["option_price_delta"] for option in standard_options] == [0, 0]
+
+
 def test_merge_product_warnings_preserves_supplier_warnings_and_adds_processing_warnings():
     supplier_warning = {"field": "price_wholesale_raw", "message": "Required value is blank."}
     processing_warning = {"keyword": "브랜드", "reason": "trademark"}
