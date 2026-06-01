@@ -1,6 +1,8 @@
 ---
+title: Standard Product Option Schema Across Uploads And Marketplace Drafts
 module: wholesale-and-marketplace-options
 date: 2026-06-01
+category: docs/solutions/architecture-patterns
 problem_type: architecture_pattern
 component: service_object
 severity: medium
@@ -17,8 +19,12 @@ tags:
   - "option-images"
 related_components:
   - "services/processor/utils/wholesale_upload.py"
+  - "services/processor/models.py"
+  - "services/processor/main.py"
+  - "services/processor/schemas.py"
   - "services/marketplace/adapters"
-  - "frontend upload mapper"
+  - "frontend/src/app/(ai-mall)/upload/page.tsx"
+  - "frontend/src/app/(ai-mall)/products/page.tsx"
 ---
 
 # Standard Product Option Schema Across Uploads And Marketplace Drafts
@@ -71,6 +77,16 @@ For SmartStore, map standard options into `optionCombinationGroupNames` and `opt
 If the upload parser and marketplace adapters do not share the same option contract, data can look available in product management but silently disappear at draft generation time. The biggest failure mode is partial option data: a parser warning may clear legacy `option_variants`, but a separately parsed `standard_options` list can still leak malformed option rows downstream.
 
 Keeping the same accept/reject boundary for both option shapes makes the compatibility phase safe. It also lets product management and marketplace generation start using option images and structured option groups before a dedicated `product_options` SQL table exists.
+
+## Implementation Pitfalls Found During Review
+
+The first standard option implementation had three important gaps:
+
+1. The standard option row was initially incomplete. It needed supplier identity, option type, all group/value slots, sale price, stock quantity, option status, extra images, display position, and raw option text so adapters could consume one stable shape instead of inferring missing fields later.
+
+2. Price parsing must stay identical to legacy parsing. A case like `대(8P),소(32P)` with prices `740,740` can confuse delimiter-aware parsing, so `standard_options` uses the same simple split fallback as `option_variants` when token counts otherwise differ.
+
+3. A legacy option warning must suppress `standard_options`. Count mismatches and invalid option prices mean the option set is not trustworthy. Persisting standard options in that state creates malformed marketplace draft input even though legacy options were correctly cleared.
 
 ## When to Apply
 
@@ -128,4 +144,5 @@ assert first_item["images"][0]["vendorPath"] == "https://img.example/black-l.jpg
 - Do not let `standard_options` parse prices differently from `option_variants`.
 - Do not persist partial standard option rows when legacy parsing emits warnings.
 - Do not stop at processor snapshots; add marketplace adapter tests for any new snapshot contract.
+- Add regression tests for every review-discovered mismatch between `option_variants` and `standard_options`, especially parser warning cases and repeated unformatted option prices.
 - Keep legacy `options`/`option_variants` fallback until all downstream consumers are migrated.
