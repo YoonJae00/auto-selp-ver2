@@ -48,8 +48,40 @@ const SYSTEM_FIELD_GROUPS = [
   {
     title: '옵션 필드',
     fields: [
-      { key: 'option_values_raw', label: '옵션 값 목록', required: false, standardKey: 'option_values_raw', defaultFallbacks: ['옵션값', '옵션', '선택사항', '옵션명'], helpText: '옵션이 있는 상품의 옵션명 또는 조합 옵션 목록입니다. 옵션이 없는 상품은 비워둘 수 있습니다.', format: '콤마 구분 단일 옵션 또는 속성:값 조합 옵션', sample: '블랙, 화이트, 그레이 / 색상:블랙|사이즈:M, 색상:화이트|사이즈:L' },
-      { key: 'option_image_urls_raw', label: '옵션별 이미지 URL', required: false, standardKey: 'option_image_urls_raw', defaultFallbacks: ['옵션이미지', '옵션 이미지', '옵션이미지url', '옵션이미지주소'], helpText: '옵션별 대표 이미지를 연결하는 URL 목록입니다. 옵션 이미지가 없으면 비워둘 수 있습니다.', format: '옵션명=이미지URL 목록', sample: '블랙=https://example.com/black.jpg, 화이트=https://example.com/white.jpg' }
+      {
+        key: 'option_values_raw',
+        label: '옵션 값 목록',
+        required: false,
+        standardKey: 'option_values_raw',
+        defaultFallbacks: ['옵션값', '옵션', '선택사항', '옵션명'],
+        helpText: '옵션이 있는 상품의 옵션명 또는 조합 옵션 목록입니다. 옵션이 없는 상품은 비워둘 수 있습니다.',
+        format: '콤마(,)는 옵션 행 구분, 파이프(|)는 조합 속성 구분, 콜론(:)은 속성명과 값을 구분합니다.',
+        sample: '색상:블랙|사이즈:M, 색상:블랙|사이즈:L',
+        examples: [
+          '단일 옵션: 블랙, 화이트, 그레이',
+          '조합 옵션: 색상:블랙|사이즈:M, 색상:블랙|사이즈:L',
+          '가격 포함: 색상:블랙|사이즈:M|공급가:12900',
+          '옵션 없음: 컬럼을 선택하지 않거나 값을 비워둡니다.'
+        ],
+        note: '나중에 네이버/쿠팡 등록용 조합 옵션으로 변환하기 쉽도록 속성명은 색상, 사이즈처럼 일관되게 쓰는 것이 좋습니다.'
+      },
+      {
+        key: 'option_image_urls_raw',
+        label: '옵션별 이미지 URL',
+        required: false,
+        standardKey: 'option_image_urls_raw',
+        defaultFallbacks: ['옵션이미지', '옵션 이미지', '옵션이미지url', '옵션이미지주소'],
+        helpText: '옵션별 대표 이미지를 연결하는 URL 목록입니다. 옵션 이미지가 없으면 비워둘 수 있습니다.',
+        format: '왼쪽 옵션명은 옵션 값 목록의 옵션명 또는 조합 옵션명과 최대한 동일하게 맞춥니다.',
+        sample: '색상:블랙|사이즈:M=https://example.com/black-m.jpg',
+        examples: [
+          '단일 옵션 이미지: 블랙=https://example.com/black.jpg',
+          '조합 옵션 이미지: 색상:블랙|사이즈:M=https://example.com/black-m.jpg',
+          '여러 옵션 이미지: 블랙=https://example.com/black.jpg, 화이트=https://example.com/white.jpg',
+          '이미지 없음: 컬럼을 선택하지 않거나 값을 비워둡니다.'
+        ],
+        note: '옵션명 매칭이 다르면 이미지가 해당 옵션에 붙지 않을 수 있습니다.'
+      }
     ]
   }
 ] as const;
@@ -424,10 +456,24 @@ export default function UploadPage() {
                               >
                                 ?
                               </button>
-                              <span className={styles.helpTooltip} role="tooltip">
+                              <span
+                                className={`${styles.helpTooltip} ${'examples' in field ? styles.optionHelpTooltip : ''}`}
+                                role="tooltip"
+                              >
                                 <strong>{field.helpText}</strong>
                                 <span>형식: {field.format}</span>
                                 <span>샘플: {field.sample}</span>
+                                {'examples' in field && (
+                                  <>
+                                    <span className={styles.exampleTitle}>자세한 예시</span>
+                                    <span className={styles.exampleList}>
+                                      {field.examples.map((example) => (
+                                        <span key={example} className={styles.exampleItem}>{example}</span>
+                                      ))}
+                                    </span>
+                                    <span className={styles.optionHelpNote}>{field.note}</span>
+                                  </>
+                                )}
                               </span>
                             </span>
                           </span>
