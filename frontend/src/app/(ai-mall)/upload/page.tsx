@@ -465,10 +465,13 @@ export default function UploadPage() {
                                 <span>샘플: {field.sample}</span>
                                 {'examples' in field && (
                                   <>
-                                    <span className={styles.exampleTitle}>자세한 예시</span>
-                                    <span className={styles.exampleList}>
+                                    <span className={styles.exampleTitle}>옵션 예시</span>
+                                    <span className={styles.exampleTable}>
                                       {field.examples.map((example) => (
-                                        <span key={example} className={styles.exampleItem}>{example}</span>
+                                        <span key={example} className={styles.exampleRow}>
+                                          <span className={styles.exampleType}>{example.split(': ')[0]}</span>
+                                          <code className={styles.exampleCode}>{example.split(': ').slice(1).join(': ')}</code>
+                                        </span>
                                       ))}
                                     </span>
                                     <span className={styles.optionHelpNote}>{field.note}</span>
