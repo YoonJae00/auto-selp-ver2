@@ -348,10 +348,10 @@
 
 .helpTooltip {
   position: absolute;
-  left: 50%;
+  left: 0;
   bottom: calc(100% + 8px);
-  transform: translateX(-50%);
-  z-index: 30;
+  transform: translateY(2px);
+  z-index: 120;
   width: min(320px, calc(100vw - 40px));
   background: var(--canvas);
   color: var(--ink-muted-80);
@@ -374,9 +374,8 @@
 .helpTooltip::after {
   content: '';
   position: absolute;
-  left: 50%;
+  left: 9px;
   top: 100%;
-  transform: translateX(-50%);
   border: 6px solid transparent;
   border-top-color: var(--canvas);
   filter: drop-shadow(0 1px 0 var(--hairline));
@@ -391,7 +390,7 @@
 .helpWrap:hover .helpTooltip,
 .helpWrap:focus-within .helpTooltip {
   opacity: 1;
-  transform: translateX(-50%) translateY(-4px);
+  transform: translateY(-4px);
   visibility: visible;
 }
 
