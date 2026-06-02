@@ -303,6 +303,83 @@
   font-size: 13px;
   font-weight: 600;
   color: var(--ink-muted-80);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  position: relative;
+}
+
+.helpWrap {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+.helpTrigger {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1px solid var(--hairline);
+  background: var(--canvas-elevated);
+  color: var(--ink-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: help;
+}
+
+.helpTrigger:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.helpTooltip {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 8px);
+  transform: translateX(-50%);
+  z-index: 30;
+  width: min(320px, calc(100vw - 40px));
+  background: var(--ink);
+  color: var(--canvas);
+  border-radius: 8px;
+  padding: 10px 12px;
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.18);
+  display: grid;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.45;
+  opacity: 0;
+  pointer-events: none;
+  visibility: hidden;
+  white-space: normal;
+}
+
+.helpTooltip::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 100%;
+  transform: translateX(-50%);
+  border: 6px solid transparent;
+  border-top-color: var(--ink);
+}
+
+.helpTooltip strong {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.helpWrap:hover .helpTooltip,
+.helpWrap:focus-within .helpTooltip {
+  opacity: 1;
+  visibility: visible;
 }
 
 .select {
