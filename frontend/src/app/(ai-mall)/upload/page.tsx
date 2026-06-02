@@ -23,33 +23,33 @@ const SYSTEM_FIELD_GROUPS = [
   {
     title: '필수 상품 필드',
     fields: [
-      { key: 'wholesale_status', label: '판매 상태 (필수)', required: true, standardKey: 'wholesale_status', defaultFallbacks: ['상태', '품절상태', '품절여부', '판매상태'] },
-      { key: 'wholesale_product_id', label: '도매처 상품 번호 (필수)', required: true, standardKey: 'wholesale_product_id', defaultFallbacks: ['제품번호', '제품id', '상품id'] },
-      { key: 'product_code', label: '도매처 상품 코드 (필수)', required: true, standardKey: 'product_code', defaultFallbacks: ['상품코드', '도매코드', '자체상품코드', '코드'] },
-      { key: 'original_name', label: '원본 상품명 (필수)', required: true, standardKey: 'original_name', defaultFallbacks: ['상품명', '원본상품명', '제품명'] },
-      { key: 'origin', label: '원산지 (필수)', required: true, standardKey: 'origin', defaultFallbacks: ['원산지', '제조국', '제조국가'] },
-      { key: 'price_wholesale_raw', label: '기본 공급가 (필수)', required: true, standardKey: 'price_wholesale_raw', defaultFallbacks: ['공급가', '도매가', '공급가격', '도매가격', '가격'] },
-      { key: 'image_list_1', label: '대표 이미지 (필수)', required: true, standardKey: 'image_list_1', defaultFallbacks: ['목록이미지1', '대표이미지', '상품이미지', '이미지'] },
-      { key: 'image_detail', label: '상세 설명 이미지 (필수)', required: true, standardKey: 'image_detail', defaultFallbacks: ['상세이미지', '상세설명이미지'] }
+      { key: 'wholesale_status', label: '판매 상태 (필수)', required: true, standardKey: 'wholesale_status', defaultFallbacks: ['상태', '품절상태', '품절여부', '판매상태'], helpText: '도매처에서 제공하는 현재 판매 가능 상태입니다.', format: '텍스트 상태값 또는 품절 여부', sample: '판매중 / 정상 / 품절 / 일시품절' },
+      { key: 'wholesale_product_id', label: '도매처 상품 번호 (필수)', required: true, standardKey: 'wholesale_product_id', defaultFallbacks: ['제품번호', '제품id', '상품id'], helpText: '도매처 DB에서 상품을 고유하게 식별하는 번호입니다.', format: '숫자 또는 문자 ID', sample: '12345678 / WS-2026-001' },
+      { key: 'product_code', label: '도매처 상품 코드 (필수)', required: true, standardKey: 'product_code', defaultFallbacks: ['상품코드', '도매코드', '자체상품코드', '코드'], helpText: '도매처가 관리하는 상품 코드 또는 자체 상품 코드입니다.', format: '문자, 숫자, 하이픈 조합', sample: 'A1009-BK / P-000348' },
+      { key: 'original_name', label: '원본 상품명 (필수)', required: true, standardKey: 'original_name', defaultFallbacks: ['상품명', '원본상품명', '제품명'], helpText: '도매처 엑셀에 있는 원본 상품명입니다. 가공 전 기준 이름으로 저장됩니다.', format: '상품명 텍스트', sample: '여성 루즈핏 코튼 셔츠' },
+      { key: 'origin', label: '원산지 (필수)', required: true, standardKey: 'origin', defaultFallbacks: ['원산지', '제조국', '제조국가'], helpText: '상품 제조 국가 또는 원산지입니다. 마켓 등록 시 필수로 쓰입니다.', format: '국가명 또는 국내 지역명', sample: '대한민국 / 중국 / 베트남' },
+      { key: 'price_wholesale_raw', label: '기본 공급가 (필수)', required: true, standardKey: 'price_wholesale_raw', defaultFallbacks: ['공급가', '도매가', '공급가격', '도매가격', '가격'], helpText: '옵션이 없거나 기본 옵션에 적용되는 도매 공급가입니다.', format: '숫자, 콤마, 원 표시 허용', sample: '12900 / 12,900 / 12900원' },
+      { key: 'image_list_1', label: '대표 이미지 (필수)', required: true, standardKey: 'image_list_1', defaultFallbacks: ['목록이미지1', '대표이미지', '상품이미지', '이미지'], helpText: '상품 목록과 대표 이미지로 사용할 첫 번째 이미지입니다.', format: '이미지 URL', sample: 'https://example.com/item-main.jpg' },
+      { key: 'image_detail', label: '상세 설명 이미지 (필수)', required: true, standardKey: 'image_detail', defaultFallbacks: ['상세이미지', '상세설명이미지'], helpText: '상세페이지 본문에 들어갈 설명 이미지입니다.', format: '단일 URL 또는 여러 URL 목록', sample: 'https://example.com/detail-1.jpg, https://example.com/detail-2.jpg' }
     ]
   },
   {
     title: '선택 상품 필드',
     fields: [
-      { key: 'price_retail', label: '권장 소비자가', required: false, standardKey: 'price_retail', defaultFallbacks: ['소비자가', '소매가', '소매가격'] },
-      { key: 'price_min_selling', label: '최소 판매가', required: false, standardKey: 'price_min_selling', defaultFallbacks: ['판매준수가', '최소판매가', '최저가'] },
-      { key: 'image_list_2', label: '추가 이미지 2', required: false, standardKey: 'image_list_2', defaultFallbacks: ['목록이미지2'] },
-      { key: 'image_list_3', label: '추가 이미지 3', required: false, standardKey: 'image_list_3', defaultFallbacks: ['목록이미지3'] },
-      { key: 'image_list_4', label: '추가 이미지 4', required: false, standardKey: 'image_list_4', defaultFallbacks: ['목록이미지4'] },
-      { key: 'image_list_5', label: '추가 이미지 5', required: false, standardKey: 'image_list_5', defaultFallbacks: ['목록이미지5'] },
-      { key: 'wholesale_registered_at', label: '도매처 등록일', required: false, standardKey: 'wholesale_registered_at', defaultFallbacks: ['등록일', '상품등록일'] }
+      { key: 'price_retail', label: '권장 소비자가', required: false, standardKey: 'price_retail', defaultFallbacks: ['소비자가', '소매가', '소매가격'], helpText: '도매처가 제안하는 소비자가 또는 정가입니다.', format: '숫자, 콤마, 원 표시 허용', sample: '29900 / 29,900원' },
+      { key: 'price_min_selling', label: '최소 판매가', required: false, standardKey: 'price_min_selling', defaultFallbacks: ['판매준수가', '최소판매가', '최저가'], helpText: '마켓에서 이 가격보다 낮게 팔지 않아야 하는 기준가입니다.', format: '숫자, 콤마, 원 표시 허용', sample: '19900 / 19,900원' },
+      { key: 'image_list_2', label: '추가 이미지 2', required: false, standardKey: 'image_list_2', defaultFallbacks: ['목록이미지2'], helpText: '대표 이미지 외 추가 상품 이미지입니다.', format: '이미지 URL', sample: 'https://example.com/item-sub-2.jpg' },
+      { key: 'image_list_3', label: '추가 이미지 3', required: false, standardKey: 'image_list_3', defaultFallbacks: ['목록이미지3'], helpText: '대표 이미지 외 추가 상품 이미지입니다.', format: '이미지 URL', sample: 'https://example.com/item-sub-3.jpg' },
+      { key: 'image_list_4', label: '추가 이미지 4', required: false, standardKey: 'image_list_4', defaultFallbacks: ['목록이미지4'], helpText: '대표 이미지 외 추가 상품 이미지입니다.', format: '이미지 URL', sample: 'https://example.com/item-sub-4.jpg' },
+      { key: 'image_list_5', label: '추가 이미지 5', required: false, standardKey: 'image_list_5', defaultFallbacks: ['목록이미지5'], helpText: '대표 이미지 외 추가 상품 이미지입니다.', format: '이미지 URL', sample: 'https://example.com/item-sub-5.jpg' },
+      { key: 'wholesale_registered_at', label: '도매처 등록일', required: false, standardKey: 'wholesale_registered_at', defaultFallbacks: ['등록일', '상품등록일'], helpText: '도매처에 상품이 등록된 날짜입니다.', format: '날짜 텍스트. YYYY-MM-DD 권장', sample: '2026-06-02 / 2026.06.02' }
     ]
   },
   {
     title: '옵션 필드',
     fields: [
-      { key: 'option_values_raw', label: '옵션 값 목록', required: false, standardKey: 'option_values_raw', defaultFallbacks: ['옵션값', '옵션', '선택사항', '옵션명'] },
-      { key: 'option_image_urls_raw', label: '옵션별 이미지 URL', required: false, standardKey: 'option_image_urls_raw', defaultFallbacks: ['옵션이미지', '옵션 이미지', '옵션이미지url', '옵션이미지주소'] }
+      { key: 'option_values_raw', label: '옵션 값 목록', required: false, standardKey: 'option_values_raw', defaultFallbacks: ['옵션값', '옵션', '선택사항', '옵션명'], helpText: '옵션이 있는 상품의 옵션명 또는 조합 옵션 목록입니다. 옵션이 없는 상품은 비워둘 수 있습니다.', format: '콤마 구분 단일 옵션 또는 속성:값 조합 옵션', sample: '블랙, 화이트, 그레이 / 색상:블랙|사이즈:M, 색상:화이트|사이즈:L' },
+      { key: 'option_image_urls_raw', label: '옵션별 이미지 URL', required: false, standardKey: 'option_image_urls_raw', defaultFallbacks: ['옵션이미지', '옵션 이미지', '옵션이미지url', '옵션이미지주소'], helpText: '옵션별 대표 이미지를 연결하는 URL 목록입니다. 옵션 이미지가 없으면 비워둘 수 있습니다.', format: '옵션명=이미지URL 목록', sample: '블랙=https://example.com/black.jpg, 화이트=https://example.com/white.jpg' }
     ]
   }
 ] as const;
@@ -414,7 +414,23 @@ export default function UploadPage() {
                     {group.fields.map((field) => {
                       return (
                         <div key={field.key} className={styles.mappingField}>
-                          <span className={styles.fieldLabel}>{field.label}</span>
+                          <span className={styles.fieldLabel}>
+                            {field.label}
+                            <span className={styles.helpWrap}>
+                              <button
+                                type="button"
+                                className={styles.helpTrigger}
+                                aria-label={`${field.label} 형식 도움말`}
+                              >
+                                ?
+                              </button>
+                              <span className={styles.helpTooltip} role="tooltip">
+                                <strong>{field.helpText}</strong>
+                                <span>형식: {field.format}</span>
+                                <span>샘플: {field.sample}</span>
+                              </span>
+                            </span>
+                          </span>
                           <select
                             className={styles.select}
                             value={columnMapping[field.key] || ''}
