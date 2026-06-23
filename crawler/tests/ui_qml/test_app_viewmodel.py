@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import pytest
 from PySide6.QtCore import QModelIndex, Qt
 
 from app.ui_qml.models.list_model import ListModel
 from app.ui_qml.models.task import TaskState
+from app.ui_qml.viewmodels.base import sanitize_diagnostic
 from app.ui_qml.viewmodels.app import AppViewModel
 
 
@@ -54,6 +56,23 @@ def test_failure_diagnostic_is_sanitized() -> None:
     assert "secret-token" not in vm.activeTask.errorMessage
     assert "hunter2" not in vm.activeTask.errorMessage
     assert "[REDACTED]" in vm.activeTask.errorMessage
+
+
+@pytest.mark.parametrize(
+    ("diagnostic", "secret"),
+    [
+        ('{"api_key":"secret"}', "secret"),
+        ('{"token": "secret"}', "secret"),
+        ('{"password":"secret"}', "secret"),
+    ],
+)
+def test_quoted_json_diagnostic_secrets_are_sanitized(
+    diagnostic: str, secret: str
+) -> None:
+    sanitized = sanitize_diagnostic(diagnostic)
+
+    assert secret not in sanitized
+    assert "[REDACTED]" in sanitized
 
 
 def test_task_update_sanitizes_logs_and_exposes_a_copy() -> None:

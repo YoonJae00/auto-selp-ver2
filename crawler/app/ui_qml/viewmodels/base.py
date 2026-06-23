@@ -11,8 +11,8 @@ _AUTHORIZATION = re.compile(
 )
 _BEARER = re.compile(r"(?i)(\bbearer\s+)[^\s,;]+")
 _CREDENTIAL = re.compile(
-    r"(?i)(\b(?:api[_ -]?key|access[_ -]?token|token|password|passwd|secret)\b\s*[:=]\s*)"
-    r"(?:\"[^\"]*\"|'[^']*'|[^\s,;]+)"
+    r"(?i)(\b(?:api[_ -]?key|access[_ -]?token|token|password|passwd|secret)"
+    r"\b[\"']?\s*[:=]\s*)(\"[^\"]*\"|'[^']*'|[^\s,;}]+)"
 )
 
 
@@ -21,7 +21,13 @@ def sanitize_diagnostic(value: object) -> str:
     text = str(value)
     text = _AUTHORIZATION.sub(r"\1[REDACTED]", text)
     text = _BEARER.sub(r"\1[REDACTED]", text)
-    return _CREDENTIAL.sub(r"\1[REDACTED]", text)
+
+    def redact_credential(match: re.Match[str]) -> str:
+        credential = match.group(2)
+        quote = credential[0] if credential[:1] in {'"', "'"} else ""
+        return f"{match.group(1)}{quote}[REDACTED]{quote}"
+
+    return _CREDENTIAL.sub(redact_credential, text)
 
 
 class BaseViewModel(QObject):
