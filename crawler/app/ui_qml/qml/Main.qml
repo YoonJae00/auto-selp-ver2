@@ -1,7 +1,10 @@
 import QtQuick
-import QtQuick.Controls
+import QtQuick.Controls.Basic
+import "." as Ui
+import "components"
 
 ApplicationWindow {
+    id: window
     objectName: "appWindow"
     width: 1180
     height: 800
@@ -9,4 +12,10 @@ ApplicationWindow {
     minimumHeight: 620
     visible: true
     title: "Auto-Selp Crawler"
+    color: Ui.Theme.canvas
+
+    AppShell {
+        anchors.fill: parent
+        viewModel: AppVM
+    }
 }
