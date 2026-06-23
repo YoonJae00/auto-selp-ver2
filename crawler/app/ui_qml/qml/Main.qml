@@ -16,6 +16,8 @@ ApplicationWindow {
 
     AppShell {
         anchors.fill: parent
+        // qmllint disable unqualified
         viewModel: AppVM
+        // qmllint enable unqualified
     }
 }

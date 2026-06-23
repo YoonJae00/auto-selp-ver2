@@ -9,6 +9,10 @@ Rectangle {
                                            : severity === "warning" ? Ui.Theme.warning
                                            : severity === "danger" ? Ui.Theme.danger
                                            : Ui.Theme.accent
+    readonly property color foregroundColor: severity === "success" ? Ui.Theme.successForeground
+                                             : severity === "warning" ? Ui.Theme.warningForeground
+                                             : severity === "danger" ? Ui.Theme.dangerForeground
+                                             : semanticColor
 
     implicitHeight: message.implicitHeight + 20
     radius: Ui.Theme.radiusSmall
@@ -21,7 +25,7 @@ Rectangle {
         anchors.fill: parent
         anchors.margins: 10
         text: root.text
-        color: root.semanticColor
+        color: root.foregroundColor
         font.pixelSize: 12
         wrapMode: Text.Wrap
         verticalAlignment: Text.AlignVCenter

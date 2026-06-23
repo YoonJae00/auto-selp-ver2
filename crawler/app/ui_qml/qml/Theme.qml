@@ -1,7 +1,6 @@
 pragma Singleton
 
 import QtQuick
-import QtQuick.Controls
 
 QtObject {
     readonly property bool dark: Application.styleHints.colorScheme === Qt.ColorScheme.Dark
@@ -16,6 +15,15 @@ QtObject {
     readonly property color success: "#3FB98B"
     readonly property color warning: "#E6A84A"
     readonly property color danger: "#E56B6F"
+    readonly property color successForegroundDark: "#3FB98B"
+    readonly property color warningForegroundDark: "#E6A84A"
+    readonly property color dangerForegroundDark: "#E56B6F"
+    readonly property color successForegroundLight: "#117A55"
+    readonly property color warningForegroundLight: "#805000"
+    readonly property color dangerForegroundLight: "#A52F37"
+    readonly property color successForeground: dark ? successForegroundDark : successForegroundLight
+    readonly property color warningForeground: dark ? warningForegroundDark : warningForegroundLight
+    readonly property color dangerForeground: dark ? dangerForegroundDark : dangerForegroundLight
 
     readonly property int radiusSmall: 8
     readonly property int radiusMedium: 10

@@ -1,3 +1,5 @@
+pragma ComponentBehavior: Bound
+
 import QtQuick
 import ".." as Ui
 
@@ -20,9 +22,11 @@ GlassPanel {
         id: fallbackDelegate
         Rectangle {
             required property var modelData
+            required property int index
+            objectName: "dataTableRow_" + index
             width: ListView.view.width
             height: 36
-            color: "transparent"
+            color: ListView.isCurrentItem ? Qt.alpha(Ui.Theme.accent, 0.12) : "transparent"
             border.color: Ui.Theme.border
             border.width: 1
             Text {
@@ -34,11 +38,16 @@ GlassPanel {
                 verticalAlignment: Text.AlignVCenter
                 font.pixelSize: 12
             }
+            MouseArea {
+                anchors.fill: parent
+                onClicked: view.currentIndex = parent.index
+            }
         }
     }
 
     ListView {
         id: view
+        objectName: "dataTableView"
         anchors.fill: parent
         anchors.margins: 1
         model: root.model
@@ -47,6 +56,13 @@ GlassPanel {
         boundsBehavior: Flickable.StopAtBounds
         reuseItems: true
         focus: true
+        highlight: Rectangle {
+            color: "transparent"
+            border.color: Ui.Theme.accent
+            border.width: 1
+            radius: Ui.Theme.radiusSmall
+        }
+        highlightMoveDuration: Ui.Theme.motionEnabled ? Ui.Theme.motionFast : 0
     }
 
     EmptyState {

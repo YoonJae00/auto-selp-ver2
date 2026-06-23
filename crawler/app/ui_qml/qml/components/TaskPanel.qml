@@ -76,11 +76,13 @@ GlassPanel {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 TextArea {
+                    objectName: "taskLogView"
                     text: root.task.logs.join("\n")
                     color: Ui.Theme.textMuted
                     readOnly: true
                     font.pixelSize: 11
                     background: null
+                    onTextChanged: cursorPosition = length
                 }
             }
         }

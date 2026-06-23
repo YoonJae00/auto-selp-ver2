@@ -10,6 +10,10 @@ Rectangle {
                                            : variant === "danger" ? Ui.Theme.danger
                                            : variant === "accent" ? Ui.Theme.accent
                                            : Ui.Theme.textMuted
+    readonly property color foregroundColor: variant === "success" ? Ui.Theme.successForeground
+                                             : variant === "warning" ? Ui.Theme.warningForeground
+                                             : variant === "danger" ? Ui.Theme.dangerForeground
+                                             : semanticColor
 
     implicitWidth: label.implicitWidth + 16
     implicitHeight: 24
@@ -22,7 +26,7 @@ Rectangle {
         id: label
         anchors.centerIn: parent
         text: root.text
-        color: root.semanticColor
+        color: root.foregroundColor
         font.pixelSize: 11
         font.weight: Font.DemiBold
     }
