@@ -491,16 +491,20 @@ def test_editor_visibility_clears_password_but_not_url(qt_app) -> None:
     qt_app.processEvents()
     editor = root.findChild(QObject, "supplierEditor")
     url_field = root.findChild(QObject, "supplierUrlField")
+    username_field = root.findChild(QObject, "supplierUsernameField")
     password_field = root.findChild(QObject, "supplierPasswordField")
 
     assert editor is not None
     assert url_field is not None
+    assert username_field is not None
     assert password_field is not None
+    username_field.setProperty("text", "keep-user")
     password_field.setProperty("text", "clear-me")
     editor.setProperty("visible", False)
     qt_app.processEvents()
 
     assert url_field.property("text") == "https://keep.example"
+    assert username_field.property("text") == "keep-user"
     assert password_field.property("text") == ""
 
 

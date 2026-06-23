@@ -95,8 +95,8 @@ FocusScope {
                 onToggled: root.viewModel.setDraft({"needsLogin": checked})
             }
             AppTextField {
-                id: passwordField
-                objectName: "supplierPasswordField"
+                id: usernameField
+                objectName: "supplierUsernameField"
                 Layout.fillWidth: true
                 visible: Boolean(root.viewModel.draft.needsLogin)
                 text: root.viewModel.draft.username || ""
@@ -111,6 +111,8 @@ FocusScope {
                 font.pixelSize: 11
             }
             AppTextField {
+                id: passwordField
+                objectName: "supplierPasswordField"
                 Layout.fillWidth: true
                 visible: Boolean(root.viewModel.draft.needsLogin)
                 echoMode: TextInput.Password
