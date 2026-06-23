@@ -11,7 +11,6 @@ from sqlalchemy.orm import Session
 
 from app.credentials.store import (
     delete_supplier_credentials,
-    load_supplier_credentials,
     save_supplier_credentials,
 )
 from app.crawlers.registry import adapter_exists, list_adapters
@@ -26,6 +25,7 @@ _ROW_ROLES = (
     "name",
     "baseUrl",
     "needsLogin",
+    "credentialsConfigured",
     "adapterFile",
     "adapterReady",
     "monitorEnabled",
@@ -100,6 +100,7 @@ class SuppliersViewModel(BaseViewModel):
             "name": supplier.name,
             "baseUrl": supplier.base_url,
             "needsLogin": supplier.needs_login,
+            "credentialsConfigured": bool(supplier.credential_key),
             "adapterFile": supplier.adapter_file or "",
             "adapterReady": bool(
                 supplier.adapter_file and adapter_exists(supplier.adapter_file)
@@ -194,22 +195,17 @@ class SuppliersViewModel(BaseViewModel):
             supplier = session.get(Supplier, self._selected_id)
             if supplier is None:
                 return
-            credentials = (
-                load_supplier_credentials(supplier.credential_key)
-                if supplier.credential_key
-                else None
-            )
             self._draft = {
                 "name": supplier.name,
                 "baseUrl": supplier.base_url,
                 "needsLogin": supplier.needs_login,
-                "username": credentials[0] if credentials else "",
+                "username": "",
                 "password": "",
                 "adapterFile": supplier.adapter_file or "",
                 "delaySeconds": supplier.default_delay_seconds or 0,
                 "monitorEnabled": supplier.monitor_enabled,
                 "monitorIntervalHours": supplier.monitor_interval_hours,
-                "credentialsConfigured": bool(credentials),
+                "credentialsConfigured": bool(supplier.credential_key),
             }
         self._field_errors = {}
         self._is_editing = True
@@ -237,16 +233,33 @@ class SuppliersViewModel(BaseViewModel):
             errors["name"] = "도매처명을 입력하세요."
         if not base_url:
             errors["baseUrl"] = "URL을 입력하세요."
-        elif urlparse(base_url).scheme not in {"http", "https"}:
-            errors["baseUrl"] = "URL은 http:// 또는 https://로 시작해야 합니다."
+        else:
+            parsed_url = urlparse(base_url)
+            if parsed_url.scheme not in {"http", "https"}:
+                errors["baseUrl"] = "URL은 http:// 또는 https://로 시작해야 합니다."
+            elif not parsed_url.hostname:
+                errors["baseUrl"] = "올바른 http 또는 https URL을 입력하세요."
 
         if bool(self._draft.get("needsLogin")):
-            if not str(self._draft.get("username", "")).strip():
-                errors["username"] = "로그인 아이디를 입력하세요."
-            has_new_password = bool(str(self._draft.get("password", "")))
-            has_stored_password = bool(self._draft.get("credentialsConfigured"))
-            if not has_new_password and not (self._is_editing and has_stored_password):
-                errors["password"] = "로그인 비밀번호를 입력하세요."
+            has_username = bool(str(self._draft.get("username", "")).strip())
+            has_password = bool(str(self._draft.get("password", "")))
+            has_stored_credentials = bool(self._draft.get("credentialsConfigured"))
+            replacement_started = has_username or has_password
+            if replacement_started or not (self._is_editing and has_stored_credentials):
+                if not has_username:
+                    errors["username"] = "로그인 아이디를 입력하세요."
+                if not has_password:
+                    errors["password"] = "로그인 비밀번호를 입력하세요."
+
+        delay_raw = self._draft.get("delaySeconds", 0)
+        try:
+            if not isinstance(delay_raw, int) or isinstance(delay_raw, bool):
+                raise ValueError
+            delay = delay_raw
+        except (TypeError, ValueError):
+            delay = -1
+        if not 0 <= delay <= 60:
+            errors["delaySeconds"] = "수집 대기 시간은 0~60초 정수여야 합니다."
 
         try:
             interval = int(self._draft.get("monitorIntervalHours", 12))
@@ -274,6 +287,8 @@ class SuppliersViewModel(BaseViewModel):
         delay = int(self._draft.get("delaySeconds", 0) or 0)
         interval = int(self._draft.get("monitorIntervalHours", 12))
         slug = _slugify(name)
+        new_credential_saved = False
+        old_credential_key: str | None = None
 
         with self._session_factory() as session:
             supplier = (
@@ -285,11 +300,21 @@ class SuppliersViewModel(BaseViewModel):
             if supplier is None:
                 supplier = Supplier(name=name, base_url=base_url)
                 session.add(supplier)
+            old_credential_key = supplier.credential_key
 
             if needs_login and password:
-                save_supplier_credentials(slug, username, password)
+                try:
+                    save_supplier_credentials(slug, username, password)
+                except Exception:
+                    self.set_field_errors(
+                        {"form": "로그인 정보를 안전하게 저장하지 못했습니다."}
+                    )
+                    return False
+                new_credential_saved = True
                 credential_key = slug
             elif needs_login and self._is_editing:
+                # A rename without replacement keeps the opaque key. Migrating it
+                # would require reading and exposing the stored password.
                 credential_key = supplier.credential_key
             elif needs_login:
                 credential_key = slug
@@ -304,8 +329,21 @@ class SuppliersViewModel(BaseViewModel):
             supplier.monitor_enabled = bool(self._draft.get("monitorEnabled"))
             supplier.monitor_interval_hours = interval
             supplier.credential_key = credential_key
-            session.commit()
+            try:
+                session.commit()
+            except Exception:
+                session.rollback()
+                if new_credential_saved and credential_key != old_credential_key:
+                    delete_supplier_credentials(credential_key)
+                self.set_field_errors({"form": "도매처 정보를 저장하지 못했습니다."})
+                return False
             saved_id = supplier.id
+
+        if old_credential_key and (
+            not needs_login
+            or (new_credential_saved and old_credential_key != credential_key)
+        ):
+            delete_supplier_credentials(old_credential_key)
 
         self._selected_id = saved_id
         self._clear_transient()

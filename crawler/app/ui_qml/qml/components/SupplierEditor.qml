@@ -72,7 +72,8 @@ FocusScope {
 
             Text { text: "웹사이트 URL"; color: Ui.Theme.text; font.pixelSize: 12 }
             AppTextField {
-                id: passwordField
+                id: urlField
+                objectName: "supplierUrlField"
                 Layout.fillWidth: true
                 text: root.viewModel.draft.baseUrl || ""
                 placeholderText: "https://www.example.com"
@@ -94,6 +95,8 @@ FocusScope {
                 onToggled: root.viewModel.setDraft({"needsLogin": checked})
             }
             AppTextField {
+                id: passwordField
+                objectName: "supplierPasswordField"
                 Layout.fillWidth: true
                 visible: Boolean(root.viewModel.draft.needsLogin)
                 text: root.viewModel.draft.username || ""

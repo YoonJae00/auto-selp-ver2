@@ -56,6 +56,11 @@ Item {
                         required property string id
                         required property string name
                         required property string baseUrl
+                        required property bool needsLogin
+                        required property bool credentialsConfigured
+                        required property bool adapterReady
+                        required property bool monitorEnabled
+                        required property string lastCrawlAt
                         width: ListView.view.width
                         height: supplierDelegate.implicitHeight
                         ItemDelegate {
@@ -77,6 +82,36 @@ Item {
                                     color: Ui.Theme.textMuted
                                     elide: Text.ElideRight
                                     font.pixelSize: 11
+                                }
+                                Flow {
+                                    width: parent.width
+                                    spacing: 4
+                                    Components.StatusBadge {
+                                        objectName: "supplierLoginStatus"
+                                        text: !supplierRow.needsLogin ? "로그인 불필요"
+                                              : supplierRow.credentialsConfigured ? "로그인 저장됨"
+                                              : "로그인 미설정"
+                                        variant: supplierRow.needsLogin
+                                                 && !supplierRow.credentialsConfigured
+                                                 ? "warning" : "neutral"
+                                    }
+                                    Components.StatusBadge {
+                                        objectName: "supplierAdapterStatus"
+                                        text: supplierRow.adapterReady ? "어댑터 준비됨" : "어댑터 없음"
+                                        variant: supplierRow.adapterReady ? "success" : "warning"
+                                    }
+                                    Components.StatusBadge {
+                                        objectName: "supplierMonitorStatus"
+                                        text: supplierRow.monitorEnabled ? "모니터링 사용" : "모니터링 미사용"
+                                        variant: supplierRow.monitorEnabled ? "success" : "neutral"
+                                    }
+                                    Components.StatusBadge {
+                                        objectName: "supplierLastCrawlStatus"
+                                        text: supplierRow.lastCrawlAt
+                                              ? "최근 수집 " + supplierRow.lastCrawlAt
+                                              : "수집 기록 없음"
+                                        variant: "neutral"
+                                    }
                                 }
                             }
                         }

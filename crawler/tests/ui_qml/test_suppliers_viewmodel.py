@@ -6,7 +6,9 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
-from PySide6.QtCore import QObject
+from PySide6.QtCore import QObject, QUrl
+from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent
+from PySide6.QtQuick import QQuickItem
 
 from app.db.models import Base, CrawlRun, Supplier
 
@@ -109,7 +111,7 @@ def test_create_login_supplier_saves_credentials_without_exposing_secret(
     assert "password" not in vm.selectedSupplier
 
 
-def test_edit_with_existing_credentials_and_blank_password_preserves_secret(
+def test_edit_with_existing_credentials_never_loads_secret_and_blank_replacement_preserves_key(
     session_factory, monkeypatch
 ) -> None:
     with session_factory() as session:
@@ -131,7 +133,8 @@ def test_edit_with_existing_credentials_and_blank_password_preserves_secret(
     monkeypatch.setattr(
         suppliers_module,
         "load_supplier_credentials",
-        lambda key: ("stored-user", "stored-secret") if key == "existing" else None,
+        lambda _key: pytest.fail("stored credentials must never be loaded"),
+        raising=False,
     )
     monkeypatch.setattr(
         suppliers_module,
@@ -142,12 +145,148 @@ def test_edit_with_existing_credentials_and_blank_password_preserves_secret(
     vm.selectSupplier(supplier_id)
     vm.beginEdit()
 
-    assert vm.draft["username"] == "stored-user"
+    assert vm.draft["username"] == ""
     assert vm.draft["password"] == ""
     vm.setDraft({"name": "Existing renamed", "password": ""})
 
     assert vm.saveDraft() is True
     assert saved == []
+    with session_factory() as session:
+        assert session.get(Supplier, supplier_id).credential_key == "existing"
+
+
+@pytest.mark.parametrize(
+    ("username", "password", "error_field"),
+    [("replacement-user", "", "password"), ("", "replacement-secret", "username")],
+)
+def test_partial_credential_replacement_requires_both_fields(
+    session_factory, monkeypatch, username, password, error_field
+) -> None:
+    with session_factory() as session:
+        supplier = Supplier(
+            name="Existing",
+            base_url="https://existing.example",
+            needs_login=True,
+            credential_key="existing",
+        )
+        session.add(supplier)
+        session.commit()
+        supplier_id = supplier.id
+    import app.ui_qml.viewmodels.suppliers as suppliers_module
+
+    monkeypatch.setattr(suppliers_module, "list_adapters", lambda: [])
+    vm = suppliers_module.SuppliersViewModel(session_factory=session_factory)
+    vm.selectSupplier(supplier_id)
+    vm.beginEdit()
+    vm.setDraft({"username": username, "password": password})
+
+    assert vm.saveDraft() is False
+    assert error_field in vm.fieldErrors
+
+
+def test_replacement_saves_new_key_then_deletes_old_key(session_factory, monkeypatch) -> None:
+    with session_factory() as session:
+        supplier = Supplier(
+            name="Old Shop",
+            base_url="https://old.example",
+            needs_login=True,
+            credential_key="old-shop",
+        )
+        session.add(supplier)
+        session.commit()
+        supplier_id = supplier.id
+    import app.ui_qml.viewmodels.suppliers as suppliers_module
+
+    events = []
+    monkeypatch.setattr(suppliers_module, "list_adapters", lambda: [])
+    monkeypatch.setattr(
+        suppliers_module,
+        "save_supplier_credentials",
+        lambda key, user, password: events.append(("save", key, user, password)),
+    )
+    monkeypatch.setattr(
+        suppliers_module,
+        "delete_supplier_credentials",
+        lambda key: events.append(("delete", key)),
+    )
+    vm = suppliers_module.SuppliersViewModel(session_factory=session_factory)
+    vm.selectSupplier(supplier_id)
+    vm.beginEdit()
+    vm.setDraft(
+        {
+            "name": "New Shop",
+            "username": "new-user",
+            "password": "new-secret",
+        }
+    )
+
+    assert vm.saveDraft() is True
+    assert events == [
+        ("save", "new-shop", "new-user", "new-secret"),
+        ("delete", "old-shop"),
+    ]
+    with session_factory() as session:
+        assert session.get(Supplier, supplier_id).credential_key == "new-shop"
+
+
+def test_disabling_login_deletes_old_credentials(session_factory, monkeypatch) -> None:
+    with session_factory() as session:
+        supplier = Supplier(
+            name="Login Shop",
+            base_url="https://login.example",
+            needs_login=True,
+            credential_key="login-shop",
+        )
+        session.add(supplier)
+        session.commit()
+        supplier_id = supplier.id
+    import app.ui_qml.viewmodels.suppliers as suppliers_module
+
+    deleted = []
+    monkeypatch.setattr(suppliers_module, "list_adapters", lambda: [])
+    monkeypatch.setattr(suppliers_module, "delete_supplier_credentials", deleted.append)
+    vm = suppliers_module.SuppliersViewModel(session_factory=session_factory)
+    vm.selectSupplier(supplier_id)
+    vm.beginEdit()
+    vm.setDraft({"needsLogin": False})
+
+    assert vm.saveDraft() is True
+    assert deleted == ["login-shop"]
+    with session_factory() as session:
+        assert session.get(Supplier, supplier_id).credential_key is None
+
+
+def test_failed_replacement_save_preserves_existing_credentials(
+    session_factory, monkeypatch
+) -> None:
+    with session_factory() as session:
+        supplier = Supplier(
+            name="Existing",
+            base_url="https://existing.example",
+            needs_login=True,
+            credential_key="existing",
+        )
+        session.add(supplier)
+        session.commit()
+        supplier_id = supplier.id
+    import app.ui_qml.viewmodels.suppliers as suppliers_module
+
+    deleted = []
+    monkeypatch.setattr(suppliers_module, "list_adapters", lambda: [])
+    monkeypatch.setattr(
+        suppliers_module,
+        "save_supplier_credentials",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("keyring unavailable")),
+    )
+    monkeypatch.setattr(suppliers_module, "delete_supplier_credentials", deleted.append)
+    vm = suppliers_module.SuppliersViewModel(session_factory=session_factory)
+    vm.selectSupplier(supplier_id)
+    vm.beginEdit()
+    vm.setDraft({"username": "new-user", "password": "new-secret"})
+
+    assert vm.saveDraft() is False
+    assert deleted == []
+    assert "new-secret" not in repr(vm.fieldErrors)
     with session_factory() as session:
         assert session.get(Supplier, supplier_id).credential_key == "existing"
 
@@ -171,11 +310,6 @@ def test_delete_calls_credential_delete_and_clears_state(
     deleted = []
     monkeypatch.setattr(suppliers_module, "list_adapters", lambda: [])
     monkeypatch.setattr(suppliers_module, "adapter_exists", lambda _slug: False)
-    monkeypatch.setattr(
-        suppliers_module,
-        "load_supplier_credentials",
-        lambda _key: ("delete-user", "stored-secret"),
-    )
     monkeypatch.setattr(
         suppliers_module,
         "delete_supplier_credentials",
@@ -239,6 +373,7 @@ def test_rows_are_ordered_include_status_and_selection_detail(
 
     assert [row["name"] for row in rows] == ["Alpha", "Zulu"]
     assert rows[0]["adapterReady"] is True
+    assert rows[0]["credentialsConfigured"] is False
     assert rows[1]["adapterReady"] is False
     assert rows[0]["lastCrawlAt"].startswith("2026-06-20")
 
@@ -247,6 +382,47 @@ def test_rows_are_ordered_include_status_and_selection_detail(
     assert vm.selectedSupplier["name"] == "Alpha"
     assert vm.selectedSupplier["monitorIntervalHours"] == 6
     assert vm.selectedSupplier["lastCrawlAt"].startswith("2026-06-20")
+
+
+@pytest.mark.parametrize(
+    "url", ["http:", "https:///path", "http://", "https://", "https://@"]
+)
+def test_url_requires_http_scheme_and_host(vm, url) -> None:
+    vm.beginCreate()
+    vm.setDraft({"name": "도매처", "baseUrl": url})
+
+    assert vm.saveDraft() is False
+    assert vm.fieldErrors["baseUrl"] == "올바른 http 또는 https URL을 입력하세요."
+
+
+@pytest.mark.parametrize("delay", [-1, 61, 1.5, "not-a-number", None])
+def test_delay_must_be_integer_between_zero_and_sixty(vm, delay) -> None:
+    vm.beginCreate()
+    vm.setDraft(
+        {
+            "name": "도매처",
+            "baseUrl": "https://example.com",
+            "delaySeconds": delay,
+        }
+    )
+
+    assert vm.saveDraft() is False
+    assert vm.fieldErrors["delaySeconds"] == "수집 대기 시간은 0~60초 정수여야 합니다."
+
+
+def test_zero_delay_persists_as_none(vm, session_factory) -> None:
+    vm.beginCreate()
+    vm.setDraft(
+        {
+            "name": "Zero Delay",
+            "baseUrl": "https://example.com",
+            "delaySeconds": 0,
+        }
+    )
+
+    assert vm.saveDraft() is True
+    with session_factory() as session:
+        assert session.query(Supplier).one().default_delay_seconds is None
 
 
 def test_cancel_clears_transient_secret(vm) -> None:
@@ -297,3 +473,93 @@ def test_supplier_editor_opens_and_shows_inline_name_error(qt_app) -> None:
     assert editor.property("visible") is True
     assert name_error is not None
     assert name_error.property("text") == "도매처명을 입력하세요."
+
+
+def test_editor_visibility_clears_password_but_not_url(qt_app) -> None:
+    from app.ui_qml.application import create_engine
+
+    engine = create_engine()
+    root = engine.rootObjects()[0]
+    suppliers_vm = engine.property("suppliersViewModel")
+    suppliers_vm.beginCreate()
+    suppliers_vm.setDraft(
+        {
+            "baseUrl": "https://keep.example",
+            "needsLogin": True,
+        }
+    )
+    qt_app.processEvents()
+    editor = root.findChild(QObject, "supplierEditor")
+    url_field = root.findChild(QObject, "supplierUrlField")
+    password_field = root.findChild(QObject, "supplierPasswordField")
+
+    assert editor is not None
+    assert url_field is not None
+    assert password_field is not None
+    password_field.setProperty("text", "clear-me")
+    editor.setProperty("visible", False)
+    qt_app.processEvents()
+
+    assert url_field.property("text") == "https://keep.example"
+    assert password_field.property("text") == ""
+
+
+def test_supplier_list_delegate_exposes_text_statuses(
+    qt_app, session_factory, monkeypatch
+) -> None:
+    with session_factory() as session:
+        session.add(
+            Supplier(
+                name="Status Shop",
+                base_url="https://status.example",
+                needs_login=True,
+                credential_key="status-shop",
+                adapter_file="ready-adapter",
+                monitor_enabled=True,
+            )
+        )
+        session.commit()
+    import app.ui_qml.viewmodels.suppliers as suppliers_module
+    from app.ui_qml.application import QML_DIRECTORY
+
+    monkeypatch.setattr(suppliers_module, "list_adapters", lambda: ["ready-adapter"])
+    monkeypatch.setattr(suppliers_module, "adapter_exists", lambda _slug: True)
+    injected_vm = suppliers_module.SuppliersViewModel(session_factory=session_factory)
+    engine = QQmlApplicationEngine()
+    engine.addImportPath(str(QML_DIRECTORY))
+    engine.rootContext().setContextProperty("InjectedSuppliersVM", injected_vm)
+    component = QQmlComponent(engine)
+    component.setData(
+        b'import QtQuick\nimport QtQuick.Controls.Basic\nimport "screens" as Screens\n'
+        b'ApplicationWindow { visible: true; width: 1100; height: 700; Screens.SuppliersScreen {'
+        b' anchors.fill: parent; viewModel: InjectedSuppliersVM } }',
+        QUrl.fromLocalFile(str(QML_DIRECTORY / "SupplierStatusProbe.qml")),
+    )
+    probe = component.create(engine.rootContext())
+    qt_app.processEvents()
+    from PySide6.QtTest import QTest
+
+    QTest.qWait(50)
+    qt_app.processEvents()
+
+    assert not component.errors()
+    assert probe is not None
+    supplier_list = probe.findChild(QQuickItem, "supplierList")
+
+    def visual_item(object_name):
+        pending = list(supplier_list.childItems())
+        while pending:
+            item = pending.pop()
+            if item.objectName() == object_name:
+                return item
+            pending.extend(item.childItems())
+        return None
+    for object_name in (
+        "supplierLoginStatus",
+        "supplierAdapterStatus",
+        "supplierMonitorStatus",
+        "supplierLastCrawlStatus",
+    ):
+        status = visual_item(object_name)
+        assert status is not None
+        assert status.property("text")
