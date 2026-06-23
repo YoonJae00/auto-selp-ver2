@@ -387,12 +387,18 @@ def test_failed_replacement_save_preserves_existing_credentials(
         supplier_id = supplier.id
     import app.ui_qml.viewmodels.suppliers as suppliers_module
 
+    partially_written = []
     deleted = []
+
+    def partial_save(key, *_args):
+        partially_written.append(key)
+        raise RuntimeError("keyring unavailable")
+
     monkeypatch.setattr(suppliers_module, "list_adapters", lambda: [])
     monkeypatch.setattr(
         suppliers_module,
         "save_supplier_credentials",
-        lambda *_args: (_ for _ in ()).throw(RuntimeError("keyring unavailable")),
+        partial_save,
     )
     monkeypatch.setattr(suppliers_module, "delete_supplier_credentials", deleted.append)
     vm = suppliers_module.SuppliersViewModel(session_factory=session_factory)
@@ -401,7 +407,8 @@ def test_failed_replacement_save_preserves_existing_credentials(
     vm.setDraft({"username": "new-user", "password": "new-secret"})
 
     assert vm.saveDraft() is False
-    assert deleted == []
+    assert len(partially_written) == 1
+    assert deleted == partially_written
     assert "new-secret" not in repr(vm.fieldErrors)
     with session_factory() as session:
         assert session.get(Supplier, supplier_id).credential_key == "existing"
@@ -448,7 +455,7 @@ def test_delete_calls_credential_delete_and_clears_state(
 
 
 def test_delete_db_failure_keeps_state_and_does_not_delete_credentials(
-    session_factory, monkeypatch
+    qt_app, session_factory, monkeypatch
 ) -> None:
     with session_factory() as session:
         supplier = Supplier(
@@ -490,6 +497,32 @@ def test_delete_db_failure_keeps_state_and_does_not_delete_credentials(
     assert vm.fieldErrors["form"] == "도매처를 삭제하지 못했습니다."
     with session_factory() as session:
         assert session.get(Supplier, supplier_id) is not None
+
+    from app.ui_qml.application import QML_DIRECTORY
+
+    engine = QQmlApplicationEngine()
+    engine.addImportPath(str(QML_DIRECTORY))
+    engine.rootContext().setContextProperty("InjectedSuppliersVM", vm)
+    component = QQmlComponent(engine)
+    component.setData(
+        b'import QtQuick\nimport QtQuick.Controls.Basic\nimport "screens" as Screens\n'
+        b'ApplicationWindow { visible: true; width: 1100; height: 700; Screens.SuppliersScreen {'
+        b' anchors.fill: parent; viewModel: InjectedSuppliersVM } }',
+        QUrl.fromLocalFile(str(QML_DIRECTORY / "SupplierDeleteFailureProbe.qml")),
+    )
+    probe = component.create(engine.rootContext())
+    qt_app.processEvents()
+
+    assert not component.errors()
+    assert probe is not None
+    assert vm.editorOpen is False
+    banner = probe.findChild(QObject, "supplierScreenFormError")
+    assert banner is not None
+    assert banner.property("visible") is True
+    assert banner.property("text") == "도매처를 삭제하지 못했습니다."
+    interface = QAccessible.queryAccessibleInterface(banner)
+    assert interface is not None
+    assert interface.text(QAccessible.Text.Name) == banner.property("text")
 
 
 def test_delete_uses_bounded_bulk_statements_and_removes_nested_rows(

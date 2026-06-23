@@ -341,6 +341,7 @@ class SuppliersViewModel(BaseViewModel):
                 try:
                     save_supplier_credentials(new_credential_key, username, password)
                 except Exception:
+                    _best_effort_delete_credentials(new_credential_key)
                     self.set_field_errors(
                         {"form": "로그인 정보를 안전하게 저장하지 못했습니다."}
                     )

@@ -12,6 +12,19 @@ Item {
     readonly property bool wideEditor: Window.window ? Window.window.width >= 1040 : width >= 1040
     focus: true
 
+    Components.InlineBanner {
+        objectName: "supplierScreenFormError"
+        anchors.top: parent.top
+        anchors.horizontalCenter: parent.horizontalCenter
+        width: Math.min(parent.width - 32, 640)
+        visible: text.length > 0 && !root.viewModel.editorOpen
+        text: root.viewModel.fieldErrors.form || ""
+        severity: "danger"
+        Accessible.name: text
+        Accessible.description: text
+        z: 8
+    }
+
     RowLayout {
         anchors.fill: parent
         spacing: 14
