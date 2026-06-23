@@ -43,9 +43,9 @@ from app.analyzer.site_probe import probe_site, ProbeResult
 from app.analyzer.validation_summary import ValidationSummary, build_validation_summary, get_save_gate_decision
 from app.config import load_config
 from app.credentials.store import save_supplier_credentials
-from app.crawlers.yaml_adapter import _status_from_maxq_value
 from app.crawlers.registry import load_adapter_from_text, save_adapter
 from app.ui.tabs.base_tab import BaseTab
+from app.workers.adapter import PickerWorker, TestWorker
 
 
 # ====== Signal classes ======
@@ -69,38 +69,6 @@ class GenerateSignals(QObject):
     progress = Signal(str)
 
 
-class PickerWorker(QThread):
-    finished = Signal(object, str)
-    error = Signal(str)
-
-    def __init__(self, field_path: str, target_url: str, login_url: str | None, username: str | None, password: str | None, login_config: dict[str, str] | None = None) -> None:
-        super().__init__()
-        self.field_path = field_path
-        self.target_url = target_url
-        self.login_url = login_url
-        self.username = username
-        self.password = password
-        self.login_config = login_config
-
-    def run(self) -> None:
-        loop = asyncio.new_event_loop()
-        try:
-            picked = loop.run_until_complete(
-                pick_element(
-                    self.target_url,
-                    login_url=self.login_url,
-                    username=self.username,
-                    password=self.password,
-                    login_config=self.login_config,
-                )
-            )
-            self.finished.emit(picked, self.field_path)
-        except Exception as exc:
-            self.error.emit(str(exc))
-        finally:
-            loop.close()
-
-
 HINT_FIELD_CHOICES = [
     ("상품명", "adapter.product.raw_product_name"),
     ("상품코드", "adapter.product.supplier_product_code"),
@@ -115,175 +83,6 @@ HINT_FIELD_CHOICES = [
 
 
 # ====== Worker threads ======
-
-
-class TestWorker(QThread):
-    finished = Signal(dict)
-    error = Signal(str)
-    progress = Signal(str)
-
-    def __init__(
-        self,
-        adapter_yaml: str,
-        test_url: str | list[str],
-        tested_yaml_hash: str,
-        login_url: str | None,
-        username: str | None,
-        password: str | None,
-    ) -> None:
-        super().__init__()
-        self.adapter_yaml = adapter_yaml
-        self.test_urls = [test_url] if isinstance(test_url, str) else test_url
-        self.tested_yaml_hash = tested_yaml_hash
-        self.login_url = login_url
-        self.username = username
-        self.password = password
-        self.raw_results: dict[str, list[dict]] = {}
-
-    def run(self) -> None:
-        loop = asyncio.new_event_loop()
-        try:
-            result = loop.run_until_complete(self._run_test())
-            self.finished.emit(result)
-        except Exception as exc:
-            self.error.emit(str(exc))
-        finally:
-            loop.close()
-
-    async def _run_test(self) -> dict:
-        from app.crawlers.engine import create_engine
-        from app.crawlers.registry import load_adapter_from_text
-
-        adapter = load_adapter_from_text(self.adapter_yaml)
-        results: dict = {}
-
-        async with create_engine(headless=True) as engine:
-            page = await engine.new_page()
-
-            # Login if needed
-            if self.login_url and self.username and self.password:
-                self.progress.emit("로그인 중...")
-                await page.goto(self.login_url, wait_until="domcontentloaded", timeout=15000)
-                await page.wait_for_timeout(1500)
-                try:
-                    pw = await page.query_selector("input[type='password']")
-                    if pw:
-                        id_input = await page.query_selector(
-                            "input[type='text'], input[type='email'], input[name*='id']"
-                        )
-                        if id_input:
-                            await id_input.fill(self.username)
-                            await pw.fill(self.password)
-                            for sel in [
-                                "button[type='submit']",
-                                "input[type='submit']",
-                                "input[type='image']",
-                            ]:
-                                btn = await page.query_selector(sel)
-                                if btn:
-                                    await btn.click()
-                                    break
-                            await page.wait_for_timeout(3000)
-                except Exception:
-                    pass
-
-            product = adapter.adapter.product
-            field_names = [
-                "supplier_product_id",
-                "supplier_product_code",
-                "raw_product_name",
-                "supplier_status",
-                "supply_price",
-                "origin",
-                "main_image_url",
-                "detail_content",
-                "extra_image_urls",
-                "brand_name",
-            ]
-            aggregate: dict[str, list[dict]] = {name: [] for name in field_names}
-
-            for url in self.test_urls:
-                self.progress.emit(f"테스트 페이지 접속: {url}")
-                await page.goto(url, wait_until="domcontentloaded", timeout=15000)
-                await page.wait_for_timeout(1500)
-                for field_name in field_names:
-                    extractor = getattr(product, field_name, None)
-                    value = None
-                    error = None
-                    if extractor:
-                        self.progress.emit(f"테스트 중: {field_name}")
-                        try:
-                            value = await self._extract_test_field(page, extractor)
-                        except Exception as exc:
-                            error = str(exc)
-                            value = None
-                    aggregate[field_name].append({"url": url, "value": value, "ok": bool(value), "error": error})
-
-            self.raw_results = aggregate
-            results["__raw_results__"] = aggregate
-            for field_name, entries in aggregate.items():
-                values = [entry["value"] for entry in entries]
-                hits = [v for v in values if v]
-                if len(self.test_urls) == 1:
-                    results[field_name] = hits[0] if hits else None
-                else:
-                    sample = str(hits[0])[:60] if hits else "실패"
-                    results[field_name] = f"{len(hits)}/{len(values)} 성공 · {sample}"
-
-            await page.close()
-
-        return results
-
-    async def _extract_test_field(self, page, extractor) -> str | None:
-        if extractor.selector:
-            if extractor.multiple:
-                elements = await page.query_selector_all(extractor.selector)
-                values = []
-                for el in elements[:5]:
-                    values.append(await self._read_test_element(el, extractor) or "")
-                val = ", ".join(v[:50] for v in values if v) or None
-                if val:
-                    return val
-            else:
-                el = await page.query_selector(extractor.selector)
-                if el:
-                    val = await self._read_test_element(el, extractor)
-                    if val:
-                        if extractor.transform == "extract_number":
-                            match = re.search(r"-?\d[\d,]*", val)
-                            val = match.group().replace(",", "") if match else val
-                        return (val or "").strip()[:100]
-
-        fallback_value = await self._extract_test_fallback_from(page, extractor)
-        if fallback_value is not None:
-            return fallback_value
-        val = extractor.fallback or None
-        if val and extractor.transform == "extract_number":
-            match = re.search(r"-?\d[\d,]*", val)
-            val = match.group().replace(",", "") if match else val
-        return (val or "").strip()[:100] if val else None
-
-    async def _read_test_element(self, el, extractor) -> str | None:
-        if extractor.html:
-            return await el.inner_html()
-        if extractor.attribute:
-            val = await el.get_attribute(extractor.attribute)
-            if not val and extractor.fallback_attribute:
-                val = await el.get_attribute(extractor.fallback_attribute)
-            return val
-        return await el.inner_text()
-
-    async def _extract_test_fallback_from(self, page, extractor) -> str | None:
-        if extractor.fallback_from == "maxq":
-            maxq = await page.query_selector("input[name='maxq']")
-            return _status_from_maxq_value(await maxq.get_attribute("value")) if maxq else None
-        if extractor.fallback_from == "cart_button":
-            soldout = await page.query_selector("img[src*='soldout'], img[src*='sold_out'], img[alt*='품절'], img[alt*='soldout'], :text('품절'), :text('soldout'), :text('완판')")
-            if soldout:
-                return "sold_out"
-            cart = await page.query_selector("button:has-text('장바구니'), button:has-text('구매'), button:has-text('주문'), input[type='image'][src*='cart'], input[type='image'][src*='buy'], img[src*='cart'], img[src*='buy'], img[src*='order'], img[src*='purchase']")
-            return "available" if cart else None
-        return None
 
 
 # ====== Module-level helpers ======
@@ -1608,7 +1407,6 @@ class AdapterBuilderTab(BaseTab):
         worker.progress.connect(lambda msg: self.log_text.appendPlainText(msg))
         worker.start()
         self._test_worker = worker
-
     def _on_test_all(self) -> None:
         """Test all fields."""
         test_url = self._get_test_url()

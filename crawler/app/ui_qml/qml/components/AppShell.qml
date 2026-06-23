@@ -62,7 +62,12 @@ Item {
                     viewModel: SuppliersVM
                     // qmllint enable unqualified
                 }
-                PlaceholderScreen { title: "어댑터" }
+                Screens.AdapterStudioScreen {
+                    objectName: "adapterStudioScreen"
+                    // qmllint disable unqualified
+                    viewModel: AdapterStudioVM
+                    // qmllint enable unqualified
+                }
                 PlaceholderScreen { title: "수집" }
                 PlaceholderScreen { title: "모니터" }
                 PlaceholderScreen { title: "내보내기" }
