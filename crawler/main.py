@@ -24,19 +24,18 @@ def main() -> None:
     _ensure_utf8()
     _suppress_macos_noise()
 
-    from PySide6.QtWidgets import QApplication
+    from PySide6.QtGui import QGuiApplication
 
     from app.db.session import init_db
-    from app.ui.main_window import MainWindow
+    from app.ui_qml.application import create_engine
 
     init_db()
-    app = QApplication(sys.argv)
+    app = QGuiApplication(sys.argv)
     app.setApplicationName("Auto-Selp Crawler")
     app.setApplicationDisplayName("Auto-Selp Crawler")
     app.setOrganizationName("Auto-Selp")
 
-    window = MainWindow()
-    window.show()
+    engine = create_engine()
 
     sys.exit(app.exec())
 
