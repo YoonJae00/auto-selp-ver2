@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from copy import deepcopy
 from typing import Any
 
 from PySide6.QtCore import QAbstractListModel, QModelIndex, Qt
@@ -26,7 +27,7 @@ class ListModel(QAbstractListModel):
 
     @staticmethod
     def _copy_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        return [dict(row) for row in rows]
+        return deepcopy(rows)
 
     def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:  # noqa: N802
         return 0 if parent.isValid() else len(self._rows)
@@ -37,7 +38,7 @@ class ListModel(QAbstractListModel):
         key = self._role_keys.get(role)
         if key is None:
             return None
-        return self._rows[index.row()].get(key)
+        return deepcopy(self._rows[index.row()].get(key))
 
     def roleNames(self) -> dict[int, bytes]:  # noqa: N802
         return dict(self._roles)

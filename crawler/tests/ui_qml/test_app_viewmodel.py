@@ -75,6 +75,30 @@ def test_quoted_json_diagnostic_secrets_are_sanitized(
     assert "[REDACTED]" in sanitized
 
 
+@pytest.mark.parametrize(
+    ("diagnostic", "secret", "expected"),
+    [
+        (
+            'Authorization: "Bearer secret-token"',
+            "secret-token",
+            'Authorization: "[REDACTED]"',
+        ),
+        (
+            '{"password":"abc\\\"def"}',
+            "def",
+            '{"password":"[REDACTED]"}',
+        ),
+    ],
+)
+def test_escaped_or_quoted_diagnostic_secrets_are_fully_sanitized(
+    diagnostic: str, secret: str, expected: str
+) -> None:
+    sanitized = sanitize_diagnostic(diagnostic)
+
+    assert secret not in sanitized
+    assert sanitized == expected
+
+
 def test_task_update_sanitizes_logs_and_exposes_a_copy() -> None:
     vm = AppViewModel()
     vm.start_task("crawl", "상품 수집")
@@ -115,3 +139,15 @@ def test_list_model_reset_rows_and_defensive_copy() -> None:
 
     assert model.rowCount() == 2
     assert model.data(model.index(0, 0), int(Qt.ItemDataRole.UserRole) + 1) == "Beta"
+
+
+def test_list_model_defensively_copies_nested_input_and_output() -> None:
+    role = int(Qt.ItemDataRole.UserRole) + 1
+    original = [{"details": {"tags": ["safe"]}}]
+    model = ListModel(["details"], original)
+
+    original[0]["details"]["tags"].append("ingress mutation")
+    exposed = model.data(model.index(0, 0), role)
+    exposed["tags"].append("egress mutation")
+
+    assert model.data(model.index(0, 0), role) == {"tags": ["safe"]}
