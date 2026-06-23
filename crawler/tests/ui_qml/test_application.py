@@ -220,6 +220,30 @@ def test_overlay_detail_drawer_close_button_closes_it(qt_app) -> None:
     assert view_model.property("detailPanelOpen") is False
 
 
+def test_modal_detail_drawer_traps_tab_and_backtab_focus(qt_app) -> None:
+    engine = create_engine()
+    root = engine.rootObjects()[0]
+    root.setWidth(900)
+    view_model = engine.property("appViewModel")
+    overlay_drawer = root.findChild(QObject, "detailDrawerOverlay")
+    close_button = overlay_drawer.findChild(QObject, "drawerCloseButton")
+
+    view_model.set_detail_panel_open(True)
+    qt_app.processEvents()
+    QTest.qWait(10)
+    qt_app.processEvents()
+
+    assert close_button.property("activeFocus") is True
+
+    QTest.keyClick(root, Qt.Key_Tab)
+    qt_app.processEvents()
+    assert overlay_drawer.property("activeFocus") is True
+
+    QTest.keyClick(root, Qt.Key_Backtab)
+    qt_app.processEvents()
+    assert overlay_drawer.property("activeFocus") is True
+
+
 def test_data_table_fallback_rows_are_pointer_selectable(qt_app) -> None:
     engine = create_engine()
     component = QQmlComponent(engine)

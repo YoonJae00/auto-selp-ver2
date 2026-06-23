@@ -57,6 +57,9 @@ FocusScope {
                 text: "닫기"
                 ToolTip.text: "상세 패널 닫기"
                 Accessible.name: ToolTip.text
+                KeyNavigation.priority: KeyNavigation.BeforeItem
+                KeyNavigation.tab: root.modal ? closeButton : null
+                KeyNavigation.backtab: root.modal ? closeButton : null
                 onClicked: root.closeRequested()
             }
         }
