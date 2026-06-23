@@ -7,10 +7,19 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 from PySide6.QtCore import QObject, QUrl
+from PySide6.QtGui import QAccessible
 from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent
 from PySide6.QtQuick import QQuickItem
 
-from app.db.models import Base, CrawlRun, Supplier
+from app.db.models import (
+    Base,
+    CrawlRun,
+    Product,
+    ProductOption,
+    StockChange,
+    StockSnapshot,
+    Supplier,
+)
 
 
 @pytest.fixture()
@@ -97,14 +106,18 @@ def test_create_login_supplier_saves_credentials_without_exposing_secret(
     )
 
     assert vm.saveDraft() is True
-    assert saved == [("my-shop", "buyer", "super-secret")]
+    assert len(saved) == 1
+    saved_key, saved_username, saved_password = saved[0]
+    assert saved_key.startswith(f"supplier:{vm.selectedId}:")
+    assert saved_username == "buyer"
+    assert saved_password == "super-secret"
     assert "super-secret" not in repr(vm.draft)
     assert "super-secret" not in repr(vm.fieldErrors)
     assert "super-secret" not in repr(model_rows(vm.model))
 
     with session_factory() as session:
         supplier = session.query(Supplier).one()
-        assert supplier.credential_key == "my-shop"
+        assert supplier.credential_key == saved_key
 
     vm.selectSupplier(vm.selectedId)
     assert vm.selectedSupplier["credentialsConfigured"] is True
@@ -221,12 +234,115 @@ def test_replacement_saves_new_key_then_deletes_old_key(session_factory, monkeyp
     )
 
     assert vm.saveDraft() is True
+    assert events[0][0] == "save"
+    replacement_key = events[0][1]
+    assert replacement_key.startswith(f"supplier:{supplier_id}:")
     assert events == [
-        ("save", "new-shop", "new-user", "new-secret"),
+        ("save", replacement_key, "new-user", "new-secret"),
         ("delete", "old-shop"),
     ]
     with session_factory() as session:
-        assert session.get(Supplier, supplier_id).credential_key == "new-shop"
+        assert session.get(Supplier, supplier_id).credential_key == replacement_key
+
+
+def test_new_suppliers_with_korean_and_colliding_slugs_get_distinct_keys(
+    session_factory, monkeypatch
+) -> None:
+    import app.ui_qml.viewmodels.suppliers as suppliers_module
+
+    saved = []
+    deleted = []
+    monkeypatch.setattr(suppliers_module, "list_adapters", lambda: [])
+    monkeypatch.setattr(
+        suppliers_module,
+        "save_supplier_credentials",
+        lambda key, user, password: saved.append((key, user, password)),
+    )
+    monkeypatch.setattr(suppliers_module, "delete_supplier_credentials", deleted.append)
+    vm = suppliers_module.SuppliersViewModel(session_factory=session_factory)
+
+    for name in ("한국 도매처", "A B", "a-b"):
+        vm.beginCreate()
+        vm.setDraft(
+            {
+                "name": name,
+                "baseUrl": "https://example.com",
+                "needsLogin": True,
+                "username": name,
+                "password": "secret",
+            }
+        )
+        assert vm.saveDraft() is True
+
+    with session_factory() as session:
+        suppliers = session.query(Supplier).order_by(Supplier.name).all()
+    keys = [supplier.credential_key for supplier in suppliers]
+    assert len(set(keys)) == 3
+    assert all(key.startswith(f"supplier:{supplier.id}:") for key, supplier in zip(keys, suppliers))
+    assert deleted == []
+
+    target = next(supplier for supplier in suppliers if supplier.name == "A B")
+    untouched = next(supplier for supplier in suppliers if supplier.name == "a-b")
+    vm.selectSupplier(target.id)
+    vm.beginEdit()
+    vm.setDraft({"username": "replacement", "password": "replacement-secret"})
+    assert vm.saveDraft() is True
+    assert deleted == [target.credential_key]
+    with session_factory() as session:
+        assert session.get(Supplier, untouched.id).credential_key == untouched.credential_key
+        assert session.get(Supplier, target.id).credential_key != target.credential_key
+
+
+def test_replacement_commit_failure_deletes_only_new_key_and_keeps_old(
+    session_factory, monkeypatch
+) -> None:
+    with session_factory() as session:
+        supplier = Supplier(
+            name="Existing",
+            base_url="https://existing.example",
+            needs_login=True,
+            credential_key="legacy-key",
+        )
+        session.add(supplier)
+        session.commit()
+        supplier_id = supplier.id
+    import app.ui_qml.viewmodels.suppliers as suppliers_module
+
+    saved = []
+    deleted = []
+    fail_commits = {"enabled": False}
+
+    def factory():
+        session = session_factory()
+        original_commit = session.commit
+
+        def commit():
+            if fail_commits["enabled"]:
+                raise RuntimeError("db-secret-detail")
+            original_commit()
+
+        session.commit = commit
+        return session
+
+    monkeypatch.setattr(suppliers_module, "list_adapters", lambda: [])
+    monkeypatch.setattr(
+        suppliers_module,
+        "save_supplier_credentials",
+        lambda key, user, password: saved.append(key),
+    )
+    monkeypatch.setattr(suppliers_module, "delete_supplier_credentials", deleted.append)
+    vm = suppliers_module.SuppliersViewModel(session_factory=factory)
+    vm.selectSupplier(supplier_id)
+    vm.beginEdit()
+    vm.setDraft({"username": "new-user", "password": "new-password"})
+    fail_commits["enabled"] = True
+
+    assert vm.saveDraft() is False
+    assert len(saved) == 1
+    assert deleted == [saved[0]]
+    assert "db-secret-detail" not in repr(vm.fieldErrors)
+    with session_factory() as session:
+        assert session.get(Supplier, supplier_id).credential_key == "legacy-key"
 
 
 def test_disabling_login_deletes_old_credentials(session_factory, monkeypatch) -> None:
@@ -329,6 +445,132 @@ def test_delete_calls_credential_delete_and_clears_state(
     assert vm.editorOpen is False
     with session_factory() as session:
         assert session.get(Supplier, supplier_id) is None
+
+
+def test_delete_db_failure_keeps_state_and_does_not_delete_credentials(
+    session_factory, monkeypatch
+) -> None:
+    with session_factory() as session:
+        supplier = Supplier(
+            name="Keep me",
+            base_url="https://keep.example",
+            credential_key="keep-key",
+        )
+        session.add(supplier)
+        session.commit()
+        supplier_id = supplier.id
+    import app.ui_qml.viewmodels.suppliers as suppliers_module
+
+    fail_commits = {"enabled": False}
+    deleted = []
+
+    def factory():
+        session = session_factory()
+        original_commit = session.commit
+
+        def commit():
+            if fail_commits["enabled"]:
+                raise RuntimeError("db-private-detail")
+            original_commit()
+
+        session.commit = commit
+        return session
+
+    monkeypatch.setattr(suppliers_module, "list_adapters", lambda: [])
+    monkeypatch.setattr(suppliers_module, "delete_supplier_credentials", deleted.append)
+    vm = suppliers_module.SuppliersViewModel(session_factory=factory)
+    vm.selectSupplier(supplier_id)
+    assert vm.requestDelete() is True
+    fail_commits["enabled"] = True
+
+    assert vm.confirmDelete() is False
+    assert deleted == []
+    assert vm.selectedId == supplier_id
+    assert vm.deleteConfirmationOpen is True
+    assert vm.fieldErrors["form"] == "도매처를 삭제하지 못했습니다."
+    with session_factory() as session:
+        assert session.get(Supplier, supplier_id) is not None
+
+
+def test_delete_uses_bounded_bulk_statements_and_removes_nested_rows(
+    session_factory, monkeypatch
+) -> None:
+    with session_factory() as session:
+        supplier = Supplier(name="Nested", base_url="https://nested.example")
+        session.add(supplier)
+        session.flush()
+        crawl = CrawlRun(supplier_id=supplier.id, run_type="full")
+        session.add(crawl)
+        session.flush()
+        product = Product(
+            supplier_id=supplier.id,
+            crawl_run_id=crawl.id,
+            supplier_name=supplier.name,
+            supplier_product_code="P-1",
+            supplier_status="판매중",
+            raw_product_name="Nested product",
+        )
+        session.add(product)
+        session.flush()
+        session.add_all(
+            [
+                ProductOption(product_id=product.id),
+                StockSnapshot(product_id=product.id, crawl_run_id=crawl.id),
+                StockChange(product_id=product.id, change_type="price"),
+            ]
+        )
+        session.commit()
+        supplier_id = supplier.id
+
+    import app.ui_qml.viewmodels.suppliers as suppliers_module
+    from sqlalchemy import event
+
+    statements = []
+    engine = session_factory.kw["bind"]
+
+    def capture(_conn, _cursor, statement, _parameters, _context, _many):
+        if statement.lstrip().upper().startswith("DELETE"):
+            statements.append(statement)
+
+    event.listen(engine, "before_cursor_execute", capture)
+    monkeypatch.setattr(suppliers_module, "list_adapters", lambda: [])
+    vm = suppliers_module.SuppliersViewModel(session_factory=session_factory)
+    vm.selectSupplier(supplier_id)
+    vm.requestDelete()
+
+    assert vm.confirmDelete() is True
+    event.remove(engine, "before_cursor_execute", capture)
+    assert len(statements) == 6
+    assert [
+        table
+        for statement in statements
+        for table in (
+            "stock_changes",
+            "stock_snapshots",
+            "product_options",
+            "products",
+            "crawl_runs",
+            "suppliers",
+        )
+        if f"DELETE FROM {table}" in statement
+    ] == [
+        "stock_changes",
+        "stock_snapshots",
+        "product_options",
+        "products",
+        "crawl_runs",
+        "suppliers",
+    ]
+    with session_factory() as session:
+        for model in (
+            StockChange,
+            StockSnapshot,
+            ProductOption,
+            Product,
+            CrawlRun,
+            Supplier,
+        ):
+            assert session.query(model).count() == 0
 
 
 def test_rows_are_ordered_include_status_and_selection_detail(
@@ -498,6 +740,7 @@ def test_editor_visibility_clears_password_but_not_url(qt_app) -> None:
     assert url_field is not None
     assert username_field is not None
     assert password_field is not None
+    suppliers_vm.setDraft({"username": "keep-user", "password": "clear-me"})
     username_field.setProperty("text", "keep-user")
     password_field.setProperty("text", "clear-me")
     editor.setProperty("visible", False)
@@ -506,6 +749,42 @@ def test_editor_visibility_clears_password_but_not_url(qt_app) -> None:
     assert url_field.property("text") == "https://keep.example"
     assert username_field.property("text") == "keep-user"
     assert password_field.property("text") == ""
+    assert suppliers_vm.draft["username"] == "keep-user"
+    assert suppliers_vm.draft["password"] == ""
+
+
+def test_supplier_editor_renders_form_failure_banner(qt_app, monkeypatch) -> None:
+    import app.ui_qml.viewmodels.suppliers as suppliers_module
+    from app.ui_qml.application import create_engine
+
+    monkeypatch.setattr(
+        suppliers_module,
+        "save_supplier_credentials",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("secret detail")),
+    )
+    engine = create_engine()
+    root = engine.rootObjects()[0]
+    suppliers_vm = engine.property("suppliersViewModel")
+    suppliers_vm.beginCreate()
+    suppliers_vm.setDraft(
+        {
+            "name": "Failure",
+            "baseUrl": "https://failure.example",
+            "needsLogin": True,
+            "username": "buyer",
+            "password": "password",
+        }
+    )
+
+    assert suppliers_vm.saveDraft() is False
+    qt_app.processEvents()
+    banner = root.findChild(QObject, "supplierFormError")
+    assert banner is not None
+    assert banner.property("visible") is True
+    assert banner.property("text") == "로그인 정보를 안전하게 저장하지 못했습니다."
+    interface = QAccessible.queryAccessibleInterface(banner)
+    assert interface is not None
+    assert interface.text(QAccessible.Text.Name) == banner.property("text")
 
 
 def test_supplier_list_delegate_exposes_text_statuses(

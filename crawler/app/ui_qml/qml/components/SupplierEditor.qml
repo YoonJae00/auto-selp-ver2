@@ -15,6 +15,9 @@ FocusScope {
     }
     onVisibleChanged: {
         passwordField.clear()
+        if (root.viewModel && root.viewModel.editorOpen
+                && root.viewModel.draft.password)
+            root.viewModel.setDraft({"password": ""})
         if (visible)
             Qt.callLater(function() { nameField.forceActiveFocus() })
     }
@@ -171,6 +174,16 @@ FocusScope {
                 text: root.viewModel.fieldErrors.monitorIntervalHours || ""
                 color: Ui.Theme.dangerForeground
                 font.pixelSize: 11
+            }
+
+            InlineBanner {
+                objectName: "supplierFormError"
+                Layout.fillWidth: true
+                visible: text.length > 0
+                text: root.viewModel.fieldErrors.form || ""
+                severity: "danger"
+                Accessible.name: text
+                Accessible.description: text
             }
 
             RowLayout {

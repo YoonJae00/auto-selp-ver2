@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import re
+import uuid
 from collections.abc import Callable, Mapping
 from typing import Any
 from urllib.parse import urlparse
 
 from PySide6.QtCore import Property, QObject, Signal, Slot
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app.credentials.store import (
@@ -14,7 +15,14 @@ from app.credentials.store import (
     save_supplier_credentials,
 )
 from app.crawlers.registry import adapter_exists, list_adapters
-from app.db.models import CrawlRun, Supplier
+from app.db.models import (
+    CrawlRun,
+    Product,
+    ProductOption,
+    StockChange,
+    StockSnapshot,
+    Supplier,
+)
 from app.db.session import get_session
 from app.ui_qml.models.list_model import ListModel
 from app.ui_qml.viewmodels.base import BaseViewModel
@@ -36,6 +44,33 @@ _ROW_ROLES = (
 
 def _slugify(name: str) -> str:
     return re.sub(r"[^a-z0-9_-]", "", name.lower().replace(" ", "-"))
+
+
+def _credential_key(supplier_id: str) -> str:
+    return f"supplier:{supplier_id}:{uuid.uuid4().hex}"
+
+
+def _best_effort_delete_credentials(credential_key: str | None) -> None:
+    if not credential_key:
+        return
+    try:
+        delete_supplier_credentials(credential_key)
+    except Exception:
+        pass
+
+
+def _bulk_delete_supplier(session: Session, supplier_id: str) -> None:
+    product_ids = select(Product.id).where(Product.supplier_id == supplier_id)
+    session.execute(delete(StockChange).where(StockChange.product_id.in_(product_ids)))
+    session.execute(
+        delete(StockSnapshot).where(StockSnapshot.product_id.in_(product_ids))
+    )
+    session.execute(
+        delete(ProductOption).where(ProductOption.product_id.in_(product_ids))
+    )
+    session.execute(delete(Product).where(Product.supplier_id == supplier_id))
+    session.execute(delete(CrawlRun).where(CrawlRun.supplier_id == supplier_id))
+    session.execute(delete(Supplier).where(Supplier.id == supplier_id))
 
 
 def _default_draft() -> dict[str, Any]:
@@ -286,7 +321,6 @@ class SuppliersViewModel(BaseViewModel):
             adapter_file = ""
         delay = int(self._draft.get("delaySeconds", 0) or 0)
         interval = int(self._draft.get("monitorIntervalHours", 12))
-        slug = _slugify(name)
         new_credential_saved = False
         old_credential_key: str | None = None
 
@@ -298,26 +332,27 @@ class SuppliersViewModel(BaseViewModel):
                 self.set_field_errors({"form": "선택한 도매처를 찾을 수 없습니다."})
                 return False
             if supplier is None:
-                supplier = Supplier(name=name, base_url=base_url)
+                supplier = Supplier(id=str(uuid.uuid4()), name=name, base_url=base_url)
                 session.add(supplier)
             old_credential_key = supplier.credential_key
 
             if needs_login and password:
+                new_credential_key = _credential_key(supplier.id)
                 try:
-                    save_supplier_credentials(slug, username, password)
+                    save_supplier_credentials(new_credential_key, username, password)
                 except Exception:
                     self.set_field_errors(
                         {"form": "로그인 정보를 안전하게 저장하지 못했습니다."}
                     )
                     return False
                 new_credential_saved = True
-                credential_key = slug
+                credential_key = new_credential_key
             elif needs_login and self._is_editing:
                 # A rename without replacement keeps the opaque key. Migrating it
                 # would require reading and exposing the stored password.
                 credential_key = supplier.credential_key
             elif needs_login:
-                credential_key = slug
+                credential_key = supplier.credential_key
             else:
                 credential_key = None
 
@@ -333,8 +368,8 @@ class SuppliersViewModel(BaseViewModel):
                 session.commit()
             except Exception:
                 session.rollback()
-                if new_credential_saved and credential_key != old_credential_key:
-                    delete_supplier_credentials(credential_key)
+                if new_credential_saved:
+                    _best_effort_delete_credentials(credential_key)
                 self.set_field_errors({"form": "도매처 정보를 저장하지 못했습니다."})
                 return False
             saved_id = supplier.id
@@ -343,7 +378,7 @@ class SuppliersViewModel(BaseViewModel):
             not needs_login
             or (new_credential_saved and old_credential_key != credential_key)
         ):
-            delete_supplier_credentials(old_credential_key)
+            _best_effort_delete_credentials(old_credential_key)
 
         self._selected_id = saved_id
         self._clear_transient()
@@ -380,15 +415,25 @@ class SuppliersViewModel(BaseViewModel):
     def confirmDelete(self) -> bool:
         if not self._delete_confirmation_open or not self._selected_id:
             return False
+        supplier_id = self._selected_id
         with self._session_factory() as session:
-            supplier = session.get(Supplier, self._selected_id)
-            if supplier is None:
+            credential_key = session.scalar(
+                select(Supplier.credential_key).where(Supplier.id == supplier_id)
+            )
+            supplier_exists = session.scalar(
+                select(Supplier.id).where(Supplier.id == supplier_id)
+            )
+            if supplier_exists is None:
                 self.cancelDelete()
                 return False
-            if supplier.credential_key:
-                delete_supplier_credentials(supplier.credential_key)
-            session.delete(supplier)
-            session.commit()
+            try:
+                _bulk_delete_supplier(session, supplier_id)
+                session.commit()
+            except Exception:
+                session.rollback()
+                self.set_field_errors({"form": "도매처를 삭제하지 못했습니다."})
+                return False
+        _best_effort_delete_credentials(credential_key)
         self._selected_id = ""
         self._selected_supplier = {}
         self._delete_confirmation_open = False
