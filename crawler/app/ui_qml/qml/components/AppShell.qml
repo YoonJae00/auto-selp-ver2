@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Layouts
+import "../screens" as Screens
 
 Item {
     id: root
@@ -55,7 +56,12 @@ Item {
                 Layout.fillHeight: true
                 currentIndex: root.routeIndex
 
-                PlaceholderScreen { title: "공급사" }
+                Screens.SuppliersScreen {
+                    objectName: "suppliersScreen"
+                    // qmllint disable unqualified
+                    viewModel: SuppliersVM
+                    // qmllint enable unqualified
+                }
                 PlaceholderScreen { title: "어댑터" }
                 PlaceholderScreen { title: "수집" }
                 PlaceholderScreen { title: "모니터" }
