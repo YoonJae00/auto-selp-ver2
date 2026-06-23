@@ -46,7 +46,8 @@ def test_theme_and_shared_control_can_be_instantiated(qt_app) -> None:
     component.setData(
         b'''import QtQuick\nimport "." as Ui\nimport "components" as Components\n'''
         b'''Item { property color canvasToken: Ui.Theme.canvas\n'''
-        b'''Components.AppButton { objectName: "probeButton"; text: "Probe" } }''',
+        b'''Components.AppButton { objectName: "probeButton"; text: "Probe" }\n'''
+        b'''Components.DataTable { objectName: "probeTable"; accessibleName: "Probe table" } }''',
         qml_url,
     )
 
@@ -55,6 +56,28 @@ def test_theme_and_shared_control_can_be_instantiated(qt_app) -> None:
     assert not component.errors()
     assert probe is not None
     assert probe.findChild(QObject, "probeButton") is not None
+    assert probe.findChild(QObject, "probeTable") is not None
+
+
+def test_shell_animations_follow_disabled_motion_theme(qt_app) -> None:
+    engine = create_engine()
+    component = QQmlComponent(engine)
+    component.setData(
+        b'''import QtQuick\nimport "." as Ui\n'''
+        b'''Item { Component.onCompleted: Ui.Theme.motionEnabled = false }''',
+        QUrl.fromLocalFile(str(QML_DIRECTORY / "MotionProbe.qml")),
+    )
+
+    probe = component.create(engine.rootContext())
+    qt_app.processEvents()
+    root = engine.rootObjects()[0]
+    sidebar = root.findChild(QObject, "sidebar")
+    task_panel = root.findChild(QObject, "taskPanel")
+
+    assert not component.errors()
+    assert probe is not None
+    assert sidebar.property("animationDuration") == 0
+    assert task_panel.property("animationDuration") == 0
 
 
 def test_navigation_updates_content_stack_index(qt_app) -> None:

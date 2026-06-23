@@ -8,6 +8,7 @@ GlassPanel {
     required property var viewModel
     required property bool collapsed
     required property string currentRoute
+    readonly property int animationDuration: Ui.Theme.motionEnabled ? Ui.Theme.motionNormal : 0
 
     objectName: "sidebar"
     radius: 0
@@ -16,7 +17,7 @@ GlassPanel {
     implicitWidth: collapsed ? 64 : 224
 
     Behavior on implicitWidth {
-        NumberAnimation { duration: Ui.Theme.motionNormal; easing.type: Easing.OutCubic }
+        NumberAnimation { duration: root.animationDuration; easing.type: Easing.OutCubic }
     }
 
     ColumnLayout {

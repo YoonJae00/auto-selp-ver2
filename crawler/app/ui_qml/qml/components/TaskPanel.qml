@@ -9,13 +9,14 @@ GlassPanel {
     required property bool panelOpen
     readonly property var task: viewModel.activeTask
     property bool expanded: panelOpen
+    readonly property int animationDuration: Ui.Theme.motionEnabled ? Ui.Theme.motionNormal : 0
 
     objectName: "taskPanel"
     implicitHeight: expanded ? 220 : 58
     clip: true
 
     Behavior on implicitHeight {
-        NumberAnimation { duration: Ui.Theme.motionNormal; easing.type: Easing.OutCubic }
+        NumberAnimation { duration: root.animationDuration; easing.type: Easing.OutCubic }
     }
 
     ColumnLayout {
