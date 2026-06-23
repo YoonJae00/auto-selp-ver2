@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import re
-import threading
 
-from PySide6.QtCore import Qt, Signal, QObject, QThread
+from PySide6.QtCore import Qt, QThread
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -27,8 +25,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from app.analyzer.adapter_generator import generate_adapter_yaml
-from app.analyzer.element_picker import PickedElement, pick_element, suggest_defaults_for_field
+from app.analyzer.element_picker import PickedElement, suggest_defaults_for_field
 from app.analyzer.mapping_hints import MappingHint
 from app.analyzer.adapter_schema import (
     Adapter,
@@ -39,34 +36,16 @@ from app.analyzer.adapter_schema import (
     get_login_summary,
     get_options_summary,
 )
-from app.analyzer.site_probe import probe_site, ProbeResult
+from app.analyzer.site_probe import ProbeResult
 from app.analyzer.validation_summary import ValidationSummary, build_validation_summary, get_save_gate_decision
 from app.config import load_config
 from app.credentials.store import save_supplier_credentials
 from app.crawlers.registry import load_adapter_from_text, save_adapter
 from app.ui.tabs.base_tab import BaseTab
-from app.workers.adapter import PickerWorker, TestWorker
-
-
-# ====== Signal classes ======
-
-
-class TestSignals(QObject):
-    finished = Signal(dict)  # field_key -> extracted_value or None
-    error = Signal(str)
-    progress = Signal(str)
-
-
-class ProbeSignals(QObject):
-    progress = Signal(str)
-    finished = Signal(object)
-    error = Signal(str)
-
-
-class GenerateSignals(QObject):
-    finished = Signal(str, str, int)
-    error = Signal(str)
-    progress = Signal(str)
+from app.workers.adapter import (
+    AdapterTestRequest, GenerateRequest, GenerateWorker, PickerRequest,
+    PickerWorker, ProbeRequest, ProbeWorker, TestWorker,
+)
 
 
 HINT_FIELD_CHOICES = [
@@ -142,7 +121,8 @@ class AdapterBuilderTab(BaseTab):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._probe_result: ProbeResult | None = None
-        self._probe_thread: threading.Thread | None = None
+        self._probe_worker: ProbeWorker | None = None
+        self._generate_worker: GenerateWorker | None = None
         self._test_worker: QThread | None = None
         self._picker_worker: QThread | None = None
         self._last_test_raw_results: dict[str, list[dict]] = {}
@@ -673,11 +653,6 @@ class AdapterBuilderTab(BaseTab):
         self.cancel_probe_btn.setEnabled(True)
         self.status_label.setText("분석 중... 잠시만 기다려 주세요.")
 
-        signals = ProbeSignals()
-        signals.progress.connect(self._on_probe_progress)
-        signals.finished.connect(self._on_probe_finished)
-        signals.error.connect(self._on_probe_error)
-
         listing_url = self.listing_url_edit.text().strip() or None
         detail_url = self.detail_url_edit.text().strip() or None
 
@@ -691,34 +666,22 @@ class AdapterBuilderTab(BaseTab):
             if slug:
                 save_supplier_credentials(slug, username, password)
 
-        def do_probe() -> None:
-            loop = asyncio.new_event_loop()
-            try:
-                result = loop.run_until_complete(
-                    probe_site(
-                        main_url,
-                        listing_url,
-                        detail_url,
-                        headless=True,
-                        on_progress=lambda msg: signals.progress.emit(msg),
-                        login_url=login_url,
-                        username=username,
-                        password=password,
-                    )
-                )
-                signals.finished.emit(result)
-            except Exception as exc:
-                signals.error.emit(str(exc))
-            finally:
-                loop.close()
-
-        self._probe_thread = threading.Thread(target=do_probe, daemon=True)
-        self._probe_thread.start()
+        worker = ProbeWorker(ProbeRequest(
+            main_url, listing_url, detail_url, login_url, username, password
+        ))
+        worker.progress.connect(self._on_probe_progress)
+        worker.finished.connect(self._on_probe_finished)
+        worker.error.connect(self._on_probe_error)
+        worker.cancelled.connect(lambda: self._on_probe_error("취소됨"))
+        worker.start()
+        self._probe_worker = worker
 
     def _on_cancel_probe(self) -> None:
         self.log_text.appendPlainText("취소 요청됨. 브라우저 종료 중...")
         self.cancel_probe_btn.setEnabled(False)
         self.status_label.setText("취소 중...")
+        if self._probe_worker:
+            self._probe_worker.requestInterruption()
 
     def _on_probe_progress(self, msg: str) -> None:
         self.log_text.appendPlainText(msg)
@@ -1048,7 +1011,7 @@ class AdapterBuilderTab(BaseTab):
             login_url = login_config["login_url"]
         self._set_mapping_table_buttons_enabled(False)
         self.log_text.appendPlainText(f"전체상품 페이지 브라우저 선택 시작: {target_url}")
-        worker = PickerWorker(field_path, target_url, login_url, username, password, login_config)
+        worker = PickerWorker(PickerRequest(field_path, target_url, login_url, username, password, login_config))
         worker.finished.connect(self._on_picker_finished)
         worker.error.connect(self._on_picker_error)
         worker.start()
@@ -1066,7 +1029,7 @@ class AdapterBuilderTab(BaseTab):
             login_url = login_config["login_url"]
         self._set_mapping_table_buttons_enabled(False)
         self.log_text.appendPlainText(f"프로브 단계 브라우저 선택 시작 ({field_path}): {target_url}")
-        worker = PickerWorker(field_path, target_url, login_url, username, password, login_config)
+        worker = PickerWorker(PickerRequest(field_path, target_url, login_url, username, password, login_config))
         worker.finished.connect(self._on_picker_finished)
         worker.error.connect(self._on_picker_error)
         worker.start()
@@ -1084,7 +1047,7 @@ class AdapterBuilderTab(BaseTab):
         self._set_mapping_table_buttons_enabled(False)
         self.pick_element_field_path = field_path
         self.log_text.appendPlainText(f"브라우저 선택 시작 ({field_path}): {target_url}")
-        worker = PickerWorker(field_path, target_url, login_url, username, password, login_config)
+        worker = PickerWorker(PickerRequest(field_path, target_url, login_url, username, password, login_config))
         worker.finished.connect(self._on_picker_finished)
         worker.error.connect(self._on_picker_error)
         worker.start()
@@ -1192,31 +1155,14 @@ class AdapterBuilderTab(BaseTab):
         probe = self._probe_result
         mapping_hints = list(self._mapping_hints)
 
-        gen_signals = GenerateSignals()
-        gen_signals.finished.connect(self._on_generate_finished)
-        gen_signals.error.connect(self._on_generate_error)
-        gen_signals.progress.connect(lambda msg: self.log_text.appendPlainText(msg))
-
-        def do_generate() -> None:
-            loop = asyncio.new_event_loop()
-            try:
-                result = loop.run_until_complete(
-                    generate_adapter_yaml(
-                        probe,
-                        name,
-                        llm_provider=config.llm_provider,
-                        auto_fallback=config.auto_fallback_enabled,
-                        on_progress=lambda msg: gen_signals.progress.emit(msg),
-                        mapping_hints=mapping_hints,
-                    )
-                )
-                gen_signals.finished.emit(result.yaml_text, result.provider_used, result.retries)
-            except Exception as exc:
-                gen_signals.error.emit(str(exc))
-            finally:
-                loop.close()
-
-        threading.Thread(target=do_generate, daemon=True).start()
+        worker = GenerateWorker(GenerateRequest(
+            probe, name, config.llm_provider, config.auto_fallback_enabled, mapping_hints
+        ))
+        worker.finished.connect(self._on_generate_finished)
+        worker.error.connect(self._on_generate_error)
+        worker.progress.connect(lambda msg: self.log_text.appendPlainText(msg))
+        worker.start()
+        self._generate_worker = worker
 
     def _on_generate_finished(self, yaml_text: str, provider: str, retries: int) -> None:
         self.yaml_edit.setPlainText(yaml_text)
@@ -1399,7 +1345,7 @@ class AdapterBuilderTab(BaseTab):
         self.status_label.setText(f"테스트 중: {field_key}...")
 
         tested_yaml_hash = self._yaml_hash(yaml_text)
-        worker = TestWorker(yaml_text, test_url, tested_yaml_hash, login_url, username, password)
+        worker = TestWorker(AdapterTestRequest(yaml_text, [test_url], tested_yaml_hash, login_url, username, password))
         worker.finished.connect(
             lambda results, h=tested_yaml_hash: self._on_test_finished(results, single_field=field_key, tested_yaml_hash=h)
         )
@@ -1425,7 +1371,7 @@ class AdapterBuilderTab(BaseTab):
         self.test_results_table.setRowCount(0)
 
         tested_yaml_hash = self._yaml_hash(yaml_text)
-        worker = TestWorker(yaml_text, test_url, tested_yaml_hash, login_url, username, password)
+        worker = TestWorker(AdapterTestRequest(yaml_text, [test_url], tested_yaml_hash, login_url, username, password))
         worker.finished.connect(lambda results, h=tested_yaml_hash: self._on_test_finished(results, tested_yaml_hash=h))
         worker.error.connect(self._on_test_error)
         worker.progress.connect(lambda msg: self.log_text.appendPlainText(msg))
@@ -1515,7 +1461,7 @@ class AdapterBuilderTab(BaseTab):
         self.test_results_table.setRowCount(0)
 
         tested_yaml_hash = self._yaml_hash(yaml_text)
-        worker = TestWorker(yaml_text, normalized, tested_yaml_hash, login_url, username, password)
+        worker = TestWorker(AdapterTestRequest(yaml_text, normalized, tested_yaml_hash, login_url, username, password))
         worker.finished.connect(lambda results, h=tested_yaml_hash: self._on_test_finished(results, tested_yaml_hash=h))
         worker.error.connect(self._on_test_error)
         worker.progress.connect(lambda msg: self.log_text.appendPlainText(msg))

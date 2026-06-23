@@ -6,16 +6,21 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 import yaml
-from PySide6.QtCore import QObject, Property, Signal, Slot
+from PySide6.QtCore import QObject, Property, QTimer, Signal, Slot
 
 from app.analyzer.adapter_schema import FIELD_LABELS_KO, get_product_field_mappings
 from app.analyzer.element_picker import suggest_defaults_for_field
 from app.analyzer.mapping_hints import MappingHint, apply_locked_hints_to_yaml_dict
 from app.analyzer.validation_summary import build_validation_summary, get_save_gate_decision
+from app.config import load_config
+from app.credentials.store import load_supplier_credentials, save_supplier_credentials
 from app.crawlers.registry import load_adapter_from_text, save_adapter
 from app.ui_qml.models.list_model import ListModel
 from app.ui_qml.viewmodels.base import BaseViewModel, sanitize_diagnostic
-from app.workers.adapter import AdapterTestWorker, GenerateWorker, PickerWorker, ProbeWorker
+from app.workers.adapter import (
+    AdapterTestRequest, AdapterTestWorker, GenerateRequest, GenerateWorker,
+    PickerRequest, PickerWorker, ProbeRequest, ProbeWorker,
+)
 
 
 MAPPING_ROLES = ("key", "label", "selector", "attribute", "transform", "status", "testValue", "testOk")
@@ -47,12 +52,17 @@ class AdapterStudioViewModel(BaseViewModel):
         self._validated_hash: str | None = None
         self._validation_stale = True
         self._validation_summary = None
+        self._save_warning: dict[str, Any] = {}
+        self._warning_ack: tuple[str, str] | None = None
         self._mapping_rows = ListModel(MAPPING_ROLES, parent=self)
         self._probe_result = None
         self._probe_summary: dict[str, Any] = {}
         self._advanced_editor_open = False
         self._busy = False
         self._worker = None
+        self._retired_workers: list[object] = []
+        self._operation_id = 0
+        self._cancelled_operations: set[int] = set()
         self._pending_hint = None
         self._mapping_hints: list[MappingHint] = []
         self._inputs = {
@@ -68,6 +78,7 @@ class AdapterStudioViewModel(BaseViewModel):
     mappingRows = Property(QObject, lambda self: self._mapping_rows, constant=True)
     probeSummary = Property("QVariantMap", lambda self: dict(self._probe_summary), notify=stateChanged)
     canSave = Property(bool, lambda self: self._can_save(), notify=stateChanged)
+    saveWarning = Property("QVariantMap", lambda self: dict(self._save_warning), notify=stateChanged)
     advancedEditorOpen = Property(bool, lambda self: self._advanced_editor_open, notify=stateChanged)
     busy = Property(bool, lambda self: self._busy, notify=stateChanged)
     connectionInputs = Property("QVariantMap", lambda self: {k: v for k, v in self._inputs.items() if k not in {"username", "password"}}, notify=stateChanged)
@@ -90,14 +101,20 @@ class AdapterStudioViewModel(BaseViewModel):
         }
 
     def _can_save(self) -> bool:
-        if not self._yaml_text or self._validated_hash != yaml_content_hash(self._yaml_text):
+        if not self._yaml_text:
             return False
         try:
             load_adapter_from_text(self._yaml_text)
         except Exception:
             return False
         decision = get_save_gate_decision(self._validation_summary, self._validation_stale)
-        return not decision.should_warn
+        if not decision.should_warn:
+            return True
+        return decision.allow_continue and self._warning_ack == (yaml_content_hash(self._yaml_text), decision.reason)
+
+    def _clear_save_warning(self) -> None:
+        self._save_warning = {}
+        self._warning_ack = None
 
     @Slot(int)
     def setCurrentStage(self, stage: int) -> None:
@@ -133,12 +150,35 @@ class AdapterStudioViewModel(BaseViewModel):
         self._emit()
 
     def _connect_worker(self, worker, *, finished, key: str) -> None:
+        self._operation_id += 1
+        operation_id = self._operation_id
         self._worker = worker
-        worker.finished.connect(finished)
-        worker.error.connect(self._operation_error)
+        worker.finished.connect(lambda *args: self._dispatch_finished(operation_id, finished, *args))
+        worker.error.connect(lambda message: self._dispatch_error(operation_id, message))
+        if hasattr(worker, "cancelled"):
+            worker.cancelled.connect(lambda: self._dispatch_cancelled(operation_id))
         if hasattr(worker, "progress"):
-            worker.progress.connect(lambda message: self._task_progress(key, message))
+            worker.progress.connect(lambda message: self._dispatch_progress(operation_id, key, message))
         worker.start()
+
+    def _operation_is_current(self, operation_id: int) -> bool:
+        return operation_id == self._operation_id and operation_id not in self._cancelled_operations
+
+    def _dispatch_finished(self, operation_id: int, callback, *args) -> None:
+        if self._operation_is_current(operation_id):
+            callback(*args)
+
+    def _dispatch_error(self, operation_id: int, message: str) -> None:
+        if self._operation_is_current(operation_id):
+            self._operation_error(message)
+
+    def _dispatch_cancelled(self, operation_id: int) -> None:
+        if self._operation_is_current(operation_id):
+            self._cancel("작업 취소됨")
+
+    def _dispatch_progress(self, operation_id: int, stage: str, message: str) -> None:
+        if self._operation_is_current(operation_id):
+            self._task_progress(stage, message)
 
     def _task_progress(self, stage: str, message: str) -> None:
         if self._app:
@@ -146,18 +186,34 @@ class AdapterStudioViewModel(BaseViewModel):
 
     def _operation_done(self) -> None:
         self._busy = False
-        self._worker = None
+        self._retire_current_worker()
         if self._app:
             self._app.complete_task()
         self._emit()
 
     def _operation_error(self, message: str) -> None:
         self._busy = False
-        self._worker = None
+        self._retire_current_worker()
         self.set_field_errors({"form": sanitize_diagnostic(message)})
         if self._app:
             self._app.fail_task(sanitize_diagnostic(message))
         self._emit()
+
+    def _retire_current_worker(self) -> None:
+        worker = self._worker
+        self._worker = None
+        if worker is None:
+            return
+        self._retired_workers.append(worker)
+        self._cleanup_retired_workers()
+
+    def _cleanup_retired_workers(self) -> None:
+        self._retired_workers = [
+            worker for worker in self._retired_workers
+            if not hasattr(worker, "isRunning") or worker.isRunning()
+        ]
+        if self._retired_workers:
+            QTimer.singleShot(25, self._cleanup_retired_workers)
 
     @Slot()
     def probe(self) -> bool:
@@ -174,10 +230,18 @@ class AdapterStudioViewModel(BaseViewModel):
             self.set_field_errors(errors)
             return False
         credentials = (self._inputs["loginUrl"], self._inputs["username"], self._inputs["password"])
-        worker = self._factories["probe"](
+        if self._inputs["needsLogin"] and all(credentials):
+            try:
+                save_supplier_credentials(_slugify(name), str(credentials[1]), str(credentials[2]))
+            except Exception as exc:
+                self._inputs["username"] = self._inputs["password"] = ""
+                self.set_field_errors({"form": f"로그인 정보 저장 실패: {sanitize_diagnostic(exc)}"})
+                return False
+        request = ProbeRequest(
             url, self._inputs["listingUrl"] or None, self._inputs["detailUrl"] or None,
             *(credentials if self._inputs["needsLogin"] else (None, None, None)),
         )
+        worker = self._factories["probe"](request)
         self._inputs["username"] = self._inputs["password"] = ""
         self.set_field_errors({})
         self._task_start("adapter-probe", "사이트 분석", "connect")
@@ -204,9 +268,11 @@ class AdapterStudioViewModel(BaseViewModel):
         if self._probe_result is None:
             self.set_field_errors({"form": "먼저 사이트 분석을 실행하세요."})
             return False
-        worker = self._factories["generate"](
-            self._probe_result, str(self._inputs["supplierName"]), "gemini", self._mapping_hints
-        )
+        config = load_config()
+        worker = self._factories["generate"](GenerateRequest(
+            self._probe_result, str(self._inputs["supplierName"]), config.llm_provider,
+            config.auto_fallback_enabled, list(self._mapping_hints),
+        ))
         self._task_start("adapter-generate", "수집 설정 생성", "analyze")
         self._connect_worker(worker, finished=lambda text, *_: self._generated(text), key="generate")
         return True
@@ -220,9 +286,11 @@ class AdapterStudioViewModel(BaseViewModel):
         self._cancel("설정 생성 취소")
 
     def _cancel(self, message: str) -> None:
+        operation_id = self._operation_id
+        self._cancelled_operations.add(operation_id)
         if self._worker is not None and hasattr(self._worker, "requestInterruption"):
             self._worker.requestInterruption()
-        self._worker = None
+        self._retire_current_worker()
         self._busy = False
         if self._app:
             self._app.cancel_task(message)
@@ -235,6 +303,7 @@ class AdapterStudioViewModel(BaseViewModel):
         self._validated_hash = None
         self._validation_summary = None
         self._validation_stale = True
+        self._clear_save_warning()
         self._current_stage = 2
         self._refresh_mapping_rows()
         self._emit()
@@ -246,6 +315,7 @@ class AdapterStudioViewModel(BaseViewModel):
         self._yaml_text = str(text)
         self._yaml_dirty = True
         self._validation_stale = self._validated_hash != yaml_content_hash(self._yaml_text)
+        self._clear_save_warning()
         self._refresh_mapping_rows()
         self._emit()
 
@@ -265,6 +335,7 @@ class AdapterStudioViewModel(BaseViewModel):
         self._validation_summary = build_validation_summary(dict(raw_results))
         self._validated_hash = str(tested_yaml_hash)
         self._validation_stale = yaml_content_hash(self._yaml_text) != self._validated_hash
+        self._clear_save_warning()
         self._current_stage = 3
         self._apply_test_results(raw_results)
         self._emit()
@@ -303,8 +374,16 @@ class AdapterStudioViewModel(BaseViewModel):
             self.set_field_errors({"form": "테스트할 상품 URL이 없습니다."})
             return False
         tested_hash = self.beginValidation()
-        credentials = (self._inputs["loginUrl"] or None, self._inputs["username"] or None, self._inputs["password"] or None)
-        worker = self._factories["test"](self._yaml_text, urls[:3], tested_hash, *credentials, fields=fields)
+        username = password = None
+        if self._inputs["needsLogin"]:
+            loaded = self._load_transient_credentials()
+            if loaded:
+                username, password = loaded
+        request = AdapterTestRequest(
+            self._yaml_text, urls[:3], tested_hash, self._inputs["loginUrl"] or None,
+            username, password, tuple(fields) if fields else None,
+        )
+        worker = self._factories["test"](request)
         self._inputs["username"] = self._inputs["password"] = ""
         self._task_start("adapter-test", "필드 검증", "validate")
         self._connect_worker(worker, finished=lambda result: self._test_finished(result, tested_hash), key="validate")
@@ -318,10 +397,42 @@ class AdapterStudioViewModel(BaseViewModel):
     @Slot(str)
     def pickElement(self, field_path: str) -> bool:
         target = str(self._inputs["detailUrl"] or self._inputs["mainUrl"])
-        worker = self._factories["picker"](field_path, target, None, None, None, None)
+        username = password = None
+        if self._inputs["needsLogin"]:
+            loaded = self._load_transient_credentials()
+            if loaded:
+                username, password = loaded
+        worker = self._factories["picker"](PickerRequest(
+            field_path, target, self._inputs["loginUrl"] or None, username, password,
+            self._adapter_login_config(),
+        ))
         self._task_start("adapter-pick", "요소 선택", "map")
         self._connect_worker(worker, finished=self._picked, key="map")
         return True
+
+    def _load_transient_credentials(self) -> tuple[str, str] | None:
+        try:
+            return load_supplier_credentials(_slugify(str(self._inputs["supplierName"])))
+        except Exception as exc:
+            self.set_field_errors({"form": f"로그인 정보 불러오기 실패: {sanitize_diagnostic(exc)}"})
+            return None
+
+    def _adapter_login_config(self) -> dict[str, str] | None:
+        try:
+            login = load_adapter_from_text(self._yaml_text).adapter.login
+            config: dict[str, str] = {}
+            if login.login_url:
+                config["login_url"] = login.login_url
+            if login.fields:
+                config["id_selector"] = login.fields.id
+                config["password_selector"] = login.fields.password
+            if login.submit:
+                config["submit_selector"] = login.submit
+            if login.success_indicator:
+                config["success_indicator"] = login.success_indicator
+            return config or None
+        except Exception:
+            return None
 
     @Slot()
     def pickAllProducts(self) -> bool:
@@ -364,7 +475,13 @@ class AdapterStudioViewModel(BaseViewModel):
             return False
         if not self._can_save():
             decision = get_save_gate_decision(self._validation_summary, self._validation_stale)
-            self.set_field_errors({"form": decision.message})
+            self._save_warning = {
+                "reason": decision.reason, "message": decision.message,
+                "failedFields": list(decision.failed_fields),
+                "allowContinue": decision.allow_continue,
+            }
+            self.set_field_errors({})
+            self._emit()
             return False
         slug = _slugify(str(self._inputs["supplierName"]).strip())
         if not slug:
@@ -379,3 +496,11 @@ class AdapterStudioViewModel(BaseViewModel):
         self.set_field_errors({})
         self._emit()
         return True
+
+    @Slot()
+    def acknowledgeSaveWarning(self) -> None:
+        decision = get_save_gate_decision(self._validation_summary, self._validation_stale)
+        if decision.should_warn and decision.allow_continue:
+            self._warning_ack = (yaml_content_hash(self._yaml_text), decision.reason)
+            self._save_warning = {}
+            self._emit()

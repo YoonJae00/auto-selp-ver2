@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import re
-from collections.abc import Sequence
+from dataclasses import dataclass, field
+from typing import Any, Coroutine
 
 from PySide6.QtCore import QThread, Signal
 
@@ -12,129 +13,165 @@ from app.analyzer.site_probe import probe_site
 from app.crawlers.yaml_adapter import _status_from_maxq_value
 
 
-class PickerWorker(QThread):
+@dataclass
+class ProbeRequest:
+    main_url: str
+    listing_url: str | None = None
+    detail_url: str | None = None
+    login_url: str | None = None
+    username: str | None = None
+    password: str | None = None
+
+
+@dataclass
+class GenerateRequest:
+    probe_result: Any
+    supplier_name: str
+    provider: str = "gemini"
+    auto_fallback: bool = True
+    mapping_hints: list[Any] = field(default_factory=list)
+
+
+@dataclass
+class PickerRequest:
+    field_path: str
+    target_url: str
+    login_url: str | None = None
+    username: str | None = None
+    password: str | None = None
+    login_config: dict[str, str] | None = None
+
+
+@dataclass
+class AdapterTestRequest:
+    adapter_yaml: str
+    test_urls: list[str]
+    tested_yaml_hash: str
+    login_url: str | None = None
+    username: str | None = None
+    password: str | None = None
+    fields: tuple[str, ...] | None = None
+
+
+class _AsyncWorker(QThread):
+    error = Signal(str)
+    progress = Signal(str)
+    cancelled = Signal()
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._task: asyncio.Task | None = None
+
+    def requestInterruption(self) -> None:
+        super().requestInterruption()
+        loop, task = self._loop, self._task
+        if loop is not None and task is not None and loop.is_running():
+            loop.call_soon_threadsafe(task.cancel)
+
+    def _run_async(self, coroutine: Coroutine[Any, Any, Any], emit_result) -> None:
+        loop = asyncio.new_event_loop()
+        self._loop = loop
+        try:
+            asyncio.set_event_loop(loop)
+            task = loop.create_task(coroutine)
+            self._task = task
+            if self.isInterruptionRequested():
+                task.cancel()
+            result = loop.run_until_complete(task)
+            if not self.isInterruptionRequested():
+                emit_result(result)
+            else:
+                self.cancelled.emit()
+        except asyncio.CancelledError:
+            self.cancelled.emit()
+        except Exception as exc:
+            if self.isInterruptionRequested():
+                self.cancelled.emit()
+            else:
+                self.error.emit(str(exc))
+        finally:
+            self._task = None
+            self._loop = None
+            asyncio.set_event_loop(None)
+            loop.close()
+
+
+class PickerWorker(_AsyncWorker):
     finished = Signal(object, str)
-    error = Signal(str)
-
-    def __init__(self, field_path: str, target_url: str, login_url: str | None,
-                 username: str | None, password: str | None,
-                 login_config: dict[str, str] | None = None) -> None:
+    def __init__(self, request: PickerRequest) -> None:
         super().__init__()
-        self.field_path = field_path
-        self.target_url = target_url
-        self.login_url = login_url
-        self.username = username
-        self.password = password
-        self.login_config = login_config
+        self.request = request
 
     def run(self) -> None:
-        loop = asyncio.new_event_loop()
         try:
-            result = loop.run_until_complete(pick_element(
-                self.target_url, login_url=self.login_url, username=self.username,
-                password=self.password, login_config=self.login_config,
-            ))
-            self.finished.emit(result, self.field_path)
-        except Exception as exc:
-            self.error.emit(str(exc))
+            self._run_async(pick_element(
+                self.request.target_url, login_url=self.request.login_url,
+                username=self.request.username, password=self.request.password,
+                login_config=self.request.login_config,
+            ), lambda result: self.finished.emit(result, self.request.field_path))
         finally:
-            self.password = None
-            loop.close()
+            self.request.password = None
 
 
-class ProbeWorker(QThread):
+class ProbeWorker(_AsyncWorker):
     finished = Signal(object)
-    error = Signal(str)
-    progress = Signal(str)
-
-    def __init__(self, main_url: str, listing_url: str | None = None,
-                 detail_url: str | None = None, login_url: str | None = None,
-                 username: str | None = None, password: str | None = None) -> None:
+    def __init__(self, request: ProbeRequest) -> None:
         super().__init__()
-        self.main_url = main_url
-        self.listing_url = listing_url
-        self.detail_url = detail_url
-        self.login_url = login_url
-        self.username = username
-        self.password = password
+        self.request = request
 
     def run(self) -> None:
-        loop = asyncio.new_event_loop()
         try:
-            result = loop.run_until_complete(probe_site(
-                self.main_url, self.listing_url, self.detail_url, headless=True,
-                on_progress=self.progress.emit, login_url=self.login_url,
-                username=self.username, password=self.password,
-            ))
-            self.finished.emit(result)
-        except Exception as exc:
-            self.error.emit(str(exc))
+            self._run_async(probe_site(
+                self.request.main_url, self.request.listing_url,
+                self.request.detail_url, headless=True, on_progress=self.progress.emit,
+                login_url=self.request.login_url, username=self.request.username,
+                password=self.request.password,
+            ), self.finished.emit)
         finally:
-            self.password = None
-            loop.close()
+            self.request.password = None
 
 
-class GenerateWorker(QThread):
+class GenerateWorker(_AsyncWorker):
     finished = Signal(str, str, int)
-    error = Signal(str)
-    progress = Signal(str)
-
-    def __init__(self, probe_result, supplier_name: str, provider: str = "gemini",
-                 mapping_hints: list | None = None) -> None:
+    def __init__(self, request: GenerateRequest) -> None:
         super().__init__()
-        self.probe_result = probe_result
-        self.supplier_name = supplier_name
-        self.provider = provider
-        self.mapping_hints = list(mapping_hints or [])
+        self.request = request
 
     def run(self) -> None:
-        loop = asyncio.new_event_loop()
-        try:
-            result = loop.run_until_complete(generate_adapter_yaml(
-                self.probe_result, self.supplier_name, llm_provider=self.provider,
-                on_progress=self.progress.emit, mapping_hints=self.mapping_hints,
-            ))
-            self.finished.emit(result.yaml_text, result.provider_used, result.retries)
-        except Exception as exc:
-            self.error.emit(str(exc))
-        finally:
-            loop.close()
+        self._run_async(generate_adapter_yaml(
+            self.request.probe_result, self.request.supplier_name,
+            llm_provider=self.request.provider, auto_fallback=self.request.auto_fallback,
+            on_progress=self.progress.emit, mapping_hints=self.request.mapping_hints,
+        ), lambda result: self.finished.emit(result.yaml_text, result.provider_used, result.retries))
 
 
-class AdapterTestWorker(QThread):
+class AdapterTestWorker(_AsyncWorker):
     finished = Signal(dict)
-    error = Signal(str)
-    progress = Signal(str)
-
     FIELD_NAMES = (
         "supplier_product_id", "supplier_product_code", "raw_product_name",
         "supplier_status", "supply_price", "origin", "main_image_url",
         "detail_content", "extra_image_urls", "brand_name",
     )
 
-    def __init__(self, adapter_yaml: str, test_url: str | Sequence[str],
-                 tested_yaml_hash: str, login_url: str | None,
-                 username: str | None, password: str | None,
-                 fields: Sequence[str] | None = None) -> None:
+    def __init__(self, request: AdapterTestRequest) -> None:
         super().__init__()
-        self.adapter_yaml = adapter_yaml
-        self.test_urls = [test_url] if isinstance(test_url, str) else list(test_url)
-        self.tested_yaml_hash = tested_yaml_hash
-        self.login_url = login_url
-        self.username = username
-        self.password = password
-        self.fields = tuple(fields or self.FIELD_NAMES)
+        self.request = request
+        self.adapter_yaml = request.adapter_yaml
+        self.test_urls = list(request.test_urls)
+        self.tested_yaml_hash = request.tested_yaml_hash
+        self.login_url = request.login_url
+        self.username = request.username
+        self.password = request.password
+        self.fields = tuple(request.fields or self.FIELD_NAMES)
         self.raw_results: dict[str, list[dict]] = {}
 
     def run(self) -> None:
-        loop = asyncio.new_event_loop()
         try:
-            self.finished.emit(loop.run_until_complete(self._run_test()))
-        except Exception as exc:
-            self.error.emit(str(exc))
+            self._run_async(self._run_test(), self.finished.emit)
         finally:
             self.password = None
-            loop.close()
+            self.request.password = None
 
     async def _run_test(self) -> dict:
         from app.crawlers.engine import create_engine

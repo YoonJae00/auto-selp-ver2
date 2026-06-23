@@ -49,9 +49,9 @@ Item {
                             Components.AppTextField { id: listingUrl; Layout.fillWidth: true; placeholderText: "상품 목록 URL (선택)"; Accessible.name: "상품 목록 URL" }
                             Components.AppTextField { id: detailUrl; Layout.fillWidth: true; placeholderText: "샘플 상품 URL (선택)"; Accessible.name: "샘플 상품 URL" }
                             CheckBox { id: needsLogin; text: "로그인 필요"; Accessible.name: text }
-                            Components.AppTextField { id: loginUrl; visible: needsLogin.checked; Layout.fillWidth: true; placeholderText: "로그인 URL" }
-                            Components.AppTextField { id: username; visible: needsLogin.checked; Layout.fillWidth: true; placeholderText: "아이디" }
-                            Components.AppTextField { id: password; visible: needsLogin.checked; Layout.fillWidth: true; placeholderText: "비밀번호"; echoMode: TextInput.Password }
+                            Components.AppTextField { id: loginUrl; visible: needsLogin.checked; Layout.fillWidth: true; placeholderText: "로그인 URL"; Accessible.name: "로그인 URL" }
+                            Components.AppTextField { id: username; visible: needsLogin.checked; Layout.fillWidth: true; placeholderText: "아이디"; Accessible.name: "로그인 아이디" }
+                            Components.AppTextField { id: password; visible: needsLogin.checked; Layout.fillWidth: true; placeholderText: "비밀번호"; echoMode: TextInput.Password; Accessible.name: "로그인 비밀번호" }
                             RowLayout {
                                 Components.AppButton {
                                     text: "사이트 분석"
@@ -95,8 +95,22 @@ Item {
                         Text { text: "검증 및 저장"; color: Ui.Theme.text; font.pixelSize: 20; font.weight: Font.Bold }
                         Text { text: root.viewModel.validationSummary.message || "검증이 필요합니다."; color: root.viewModel.canSave ? Ui.Theme.success : Ui.Theme.warning }
                         Text { text: "샘플 " + (root.viewModel.validationSummary.totalSamples || 0) + "개"; color: Ui.Theme.textMuted }
+                        Components.InlineBanner {
+                            Layout.fillWidth: true
+                            visible: Boolean(root.viewModel.saveWarning.message)
+                            text: root.viewModel.saveWarning.message || ""
+                            severity: "warning"
+                        }
                         Item { Layout.fillHeight: true }
-                        Components.AppButton { text: "어댑터 저장"; selected: true; enabled: root.viewModel.canSave && !root.viewModel.busy; onClicked: root.viewModel.save() }
+                        RowLayout {
+                            Components.AppButton { text: "검증 실행"; enabled: !root.viewModel.busy; onClicked: root.viewModel.testAll() }
+                            Components.AppButton {
+                                visible: Boolean(root.viewModel.saveWarning.allowContinue)
+                                text: "경고 확인 후 계속"
+                                onClicked: root.viewModel.acknowledgeSaveWarning()
+                            }
+                            Components.AppButton { text: "어댑터 저장"; selected: true; enabled: !root.viewModel.busy; onClicked: root.viewModel.save() }
+                        }
                     }
                 }
                 CheckBox {
