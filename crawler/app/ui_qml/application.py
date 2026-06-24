@@ -8,6 +8,7 @@ from PySide6.QtQml import QQmlApplicationEngine
 from app.ui_qml.viewmodels.app import AppViewModel
 from app.ui_qml.viewmodels.adapter_studio import AdapterStudioViewModel
 from app.ui_qml.viewmodels.suppliers import SuppliersViewModel
+from app.workers.lifecycle import install_shutdown_hook
 from app.ui_qml.viewmodels.crawl import CrawlViewModel
 
 
@@ -15,6 +16,7 @@ QML_DIRECTORY = Path(__file__).parent / "qml"
 
 
 def create_engine() -> QQmlApplicationEngine:
+    install_shutdown_hook()
     engine = QQmlApplicationEngine()
     engine.addImportPath(str(QML_DIRECTORY))
     app_view_model = AppViewModel(engine)
