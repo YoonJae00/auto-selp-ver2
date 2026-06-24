@@ -8,6 +8,7 @@ FocusScope {
     property string title: "상세 정보"
     property bool modal: false
     property Item previousFocusItem: null
+    property Component contentComponent: null
     signal closeRequested()
 
     width: Math.min(340, parent ? parent.width * 0.86 : 340)
@@ -63,13 +64,24 @@ FocusScope {
                 onClicked: root.closeRequested()
             }
         }
-        Text {
+        Loader {
             Layout.fillWidth: true
-            text: "선택한 항목의 상세 정보가 여기에 표시됩니다."
-            color: Ui.Theme.textMuted
-            wrapMode: Text.Wrap
-            font.pixelSize: 13
+            Layout.fillHeight: true
+            sourceComponent: root.contentComponent || defaultContent
         }
-        Item { Layout.fillHeight: true }
+    }
+
+    Component {
+        id: defaultContent
+        Item {
+            Text {
+                anchors.top: parent.top
+                width: parent.width
+                text: "선택한 항목의 상세 정보가 여기에 표시됩니다."
+                color: Ui.Theme.textMuted
+                wrapMode: Text.Wrap
+                font.pixelSize: 13
+            }
+        }
     }
 }

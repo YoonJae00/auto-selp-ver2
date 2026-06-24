@@ -13,6 +13,15 @@ Item {
     readonly property var routes: ["suppliers", "adapter", "crawl", "monitor", "export", "settings"]
     readonly property int routeIndex: Math.max(0, routes.indexOf(currentRoute))
 
+    Component {
+        id: monitorScheduleDetail
+        MonitorScheduleDetail {
+            // qmllint disable unqualified
+            schedule: MonitorVM.selectedSupplierSchedule
+            // qmllint enable unqualified
+        }
+    }
+
     function syncViewModel() {
         currentRoute = viewModel.currentRoute
         sidebarCollapsed = viewModel.sidebarCollapsed
@@ -79,6 +88,7 @@ Item {
                     // qmllint disable unqualified
                     viewModel: MonitorVM
                     // qmllint enable unqualified
+                    appViewModel: root.viewModel
                 }
                 PlaceholderScreen { title: "내보내기" }
                 PlaceholderScreen { title: "설정" }
@@ -94,6 +104,8 @@ Item {
 
         DetailDrawer {
             objectName: "detailDrawerWide"
+            title: root.currentRoute === "monitor" ? "모니터 일정" : "상세 정보"
+            contentComponent: root.currentRoute === "monitor" ? monitorScheduleDetail : null
             modal: false
             visible: root.detailPanelOpen && root.wideDetailMode
             Layout.fillHeight: true
@@ -118,6 +130,8 @@ Item {
 
     DetailDrawer {
         objectName: "detailDrawerOverlay"
+        title: root.currentRoute === "monitor" ? "모니터 일정" : "상세 정보"
+        contentComponent: root.currentRoute === "monitor" ? monitorScheduleDetail : null
         anchors.top: parent.top
         anchors.right: parent.right
         anchors.bottom: parent.bottom

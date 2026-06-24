@@ -94,6 +94,38 @@ def test_monitor_view_model_is_retained_and_monitor_route_is_real_screen(qt_app)
     assert monitor.findChild(QObject, "ackSelectedButton").property("accessibleName")
 
 
+def test_monitor_schedule_detail_uses_shared_wide_and_overlay_drawers(qt_app) -> None:
+    engine = create_engine()
+    root = engine.rootObjects()[0]
+    app_vm = engine.property("appViewModel")
+    monitor = root.findChild(QObject, "monitorScreen")
+    wide = root.findChild(QObject, "detailDrawerWide")
+    overlay = root.findChild(QObject, "detailDrawerOverlay")
+
+    app_vm.navigate("monitor")
+    assert QMetaObject.invokeMethod(monitor, "openScheduleDetail") is True
+    qt_app.processEvents()
+
+    assert wide.property("visible") is True
+    assert wide.property("title") == "모니터 일정"
+    for name in ("monitorLastCheckText", "monitorNextCheckText", "monitorFailureText"):
+        field = wide.findChild(QObject, name)
+        assert field is not None
+        assert field.property("text")
+    assert monitor.findChild(QObject, "monitorInlineSchedule") is None
+
+    root.setWidth(900)
+    qt_app.processEvents()
+
+    assert wide.property("visible") is False
+    assert overlay.property("visible") is True
+    assert overlay.property("title") == "모니터 일정"
+    for name in ("monitorLastCheckText", "monitorNextCheckText", "monitorFailureText"):
+        field = overlay.findChild(QObject, name)
+        assert field is not None
+        assert field.property("text")
+
+
 def test_theme_and_shared_control_can_be_instantiated(qt_app) -> None:
     engine = create_engine()
     component = QQmlComponent(engine)

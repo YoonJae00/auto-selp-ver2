@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from PySide6.QtCore import Property, QObject, Signal, Slot
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app.db.models import CrawlRun, Product, StockChange, Supplier
@@ -71,7 +71,7 @@ class MonitorViewModel(BaseViewModel):
 
     @staticmethod
     def _empty_metrics() -> dict[str, int]:
-        return {"unread": 0, "soldOut": 0, "restocked": 0, "priceChanged": 0, "stockChanged": 0}
+        return {"unread": 0, "soldOut": 0, "restocked": 0, "priceChanged": 0, "failedSchedules": 0}
 
     def _event_statement(self):
         statement = (
@@ -103,7 +103,7 @@ class MonitorViewModel(BaseViewModel):
         metrics = MonitorViewModel._empty_metrics()
         metric_for_type = {
             "sold_out": "soldOut", "restocked": "restocked",
-            "price_changed": "priceChanged", "stock_changed": "stockChanged",
+            "price_changed": "priceChanged",
         }
         for row in rows:
             if not row["acknowledged"]:
@@ -142,6 +142,14 @@ class MonitorViewModel(BaseViewModel):
             suppliers = session.execute(select(Supplier).order_by(Supplier.name)).scalars().all()
             results = session.execute(self._event_statement()).all()
             rows = [self._row(change, product, supplier) for change, product, supplier in results]
+            failed_statement = select(func.count()).select_from(CrawlRun).where(
+                CrawlRun.run_type == "stock_check", CrawlRun.status == "failed"
+            )
+            if self._supplier_filter:
+                failed_statement = failed_statement.where(
+                    CrawlRun.supplier_id == self._supplier_filter
+                )
+            failed_schedules = session.scalar(failed_statement) or 0
             known_ids = {row["id"] for row in rows}
             if self._selected_change_id not in known_ids:
                 self._selected_change_id = ""
@@ -153,6 +161,7 @@ class MonitorViewModel(BaseViewModel):
         self._suppliers.resetRows([{"id": "", "name": "전체 도매처"}] + [{"id": s.id, "name": s.name} for s in suppliers])
         self._events.resetRows(rows)
         self._metrics = self._metrics_for(rows)
+        self._metrics["failedSchedules"] = failed_schedules
         self.stateChanged.emit()
 
     @Slot(str)

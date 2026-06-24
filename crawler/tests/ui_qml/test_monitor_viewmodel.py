@@ -41,6 +41,7 @@ def seeded(session_factory):
             StockChange(id="c4", product_id="p2", change_type="stock_changed", previous_value="2", new_value="1", detected_at=datetime(2026, 6, 24, 4, 2)),
             CrawlRun(id="r1", supplier_id="s1", run_type="stock_check", status="success", started_at=datetime(2026, 6, 24, 4), finished_at=datetime(2026, 6, 24, 5)),
             CrawlRun(id="r2", supplier_id="s1", run_type="stock_check", status="failed", started_at=datetime(2026, 6, 24, 6), finished_at=datetime(2026, 6, 24, 7), error="network failed"),
+            CrawlRun(id="r3", supplier_id="s2", run_type="stock_check", status="failed", started_at=datetime(2026, 6, 24, 8), error="timeout"),
         ])
         session.commit()
     return session_factory
@@ -51,15 +52,16 @@ def test_rows_metrics_filters_and_iso_timestamps_are_filtered(seeded) -> None:
     rows = _rows(vm.events)
     assert {row["id"] for row in rows} == {"c1", "c2", "c3", "c4"}
     assert rows[0]["detectedAt"].endswith("+00:00")
-    assert vm.metrics == {"unread": 3, "soldOut": 1, "restocked": 1, "priceChanged": 1, "stockChanged": 1}
+    assert vm.metrics == {"unread": 3, "soldOut": 1, "restocked": 1, "priceChanged": 1, "failedSchedules": 2}
     assert [row["id"] for row in _rows(vm.suppliers)] == ["", "s1", "s2"]
 
     vm.setSupplierFilter("s1")
     assert {row["id"] for row in _rows(vm.events)} == {"c1", "c2"}
-    assert vm.metrics == {"unread": 1, "soldOut": 1, "restocked": 0, "priceChanged": 1, "stockChanged": 0}
+    assert vm.metrics == {"unread": 1, "soldOut": 1, "restocked": 0, "priceChanged": 1, "failedSchedules": 1}
     vm.setChangeType("price_changed")
     assert [row["id"] for row in _rows(vm.events)] == ["c2"]
     assert vm.metrics["unread"] == 0
+    assert vm.metrics["failedSchedules"] == 1
     vm.setChangeType("invalid")
     assert vm.changeType == "price_changed"
     vm.refresh()
@@ -99,6 +101,7 @@ def test_acknowledge_rolls_back_and_sanitizes_form_error(seeded) -> None:
         def __enter__(self): return self
         def __exit__(self, *_): self.inner.close()
         def execute(self, *args): return self.inner.execute(*args)
+        def scalar(self, *args): return self.inner.scalar(*args)
         def get(self, *args): return self.inner.get(*args)
         def commit(self): raise RuntimeError("db-secret-token")
         def rollback(self): self.rolled_back = True; self.inner.rollback()

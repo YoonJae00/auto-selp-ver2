@@ -9,7 +9,12 @@ import ".." as Ui
 Item {
     id: root
     required property var viewModel
+    required property var appViewModel
     readonly property int minimumContentWidth: 620
+
+    function openScheduleDetail() {
+        appViewModel.set_detail_panel_open(true)
+    }
 
     function displayTime(value) {
         if (!value) return "-"
@@ -33,7 +38,7 @@ Item {
                 MetricCard { Layout.fillWidth: true; title: "품절"; value: root.viewModel.metrics.soldOut || 0; semantic: "warning" }
                 MetricCard { Layout.fillWidth: true; title: "재입고"; value: root.viewModel.metrics.restocked || 0; semantic: "success" }
                 MetricCard { Layout.fillWidth: true; title: "가격 변경"; value: root.viewModel.metrics.priceChanged || 0 }
-                MetricCard { Layout.fillWidth: true; title: "재고 변경"; value: root.viewModel.metrics.stockChanged || 0 }
+                MetricCard { Layout.fillWidth: true; title: "실패 일정"; value: root.viewModel.metrics.failedSchedules || 0; semantic: "danger" }
             }
 
             RowLayout {
@@ -47,7 +52,7 @@ Item {
                     textRole: "name"
                     valueRole: "id"
                     Accessible.name: "도매처 필터"
-                    onActivated: root.viewModel.setSupplierFilter(currentValue)
+                    onActivated: { root.viewModel.setSupplierFilter(currentValue); root.openScheduleDetail() }
                 }
                 ComboBox {
                     id: typeFilter
@@ -91,8 +96,8 @@ Item {
                         border.color: Ui.Theme.border
                         Accessible.role: Accessible.ListItem
                         Accessible.name: model.supplierName + " " + model.productName + " " + model.changeLabel + (model.acknowledged ? " 읽음" : " 읽지 않음")
-                        Keys.onReturnPressed: root.viewModel.selectChange(model.id)
-                        MouseArea { anchors.fill: parent; onClicked: { eventTable.currentIndex = eventRow.index; root.viewModel.selectChange(eventRow.model.id) } }
+                        Keys.onReturnPressed: { root.viewModel.selectChange(model.id); root.openScheduleDetail() }
+                        MouseArea { anchors.fill: parent; onClicked: { eventTable.currentIndex = eventRow.index; root.viewModel.selectChange(eventRow.model.id); root.openScheduleDetail() } }
                         RowLayout {
                             anchors.fill: parent; anchors.margins: 9; spacing: 8
                             Text { text: eventRow.model.acknowledged ? "○" : "●"; color: eventRow.model.acknowledged ? Ui.Theme.textMuted : Ui.Theme.accent; Accessible.name: eventRow.model.acknowledged ? "읽음" : "읽지 않음" }
@@ -108,22 +113,6 @@ Item {
                     }
                 }
 
-                GlassPanel {
-                    visible: root.width >= 900
-                    Layout.preferredWidth: visible ? 250 : 0
-                    Layout.fillHeight: true
-                    ColumnLayout {
-                        anchors.fill: parent; anchors.margins: 16; spacing: 8
-                        Text { text: "도매처 일정"; color: Ui.Theme.text; font.pixelSize: 16; font.weight: Font.DemiBold }
-                        Text { text: root.viewModel.selectedSupplierSchedule.supplierName || "도매처를 선택하세요"; color: Ui.Theme.text; wrapMode: Text.WordWrap; Layout.fillWidth: true }
-                        StatusBadge { text: root.viewModel.selectedSupplierSchedule.monitorEnabled ? "모니터링 사용" : "모니터링 중지"; variant: root.viewModel.selectedSupplierSchedule.monitorEnabled ? "success" : "neutral" }
-                        Text { text: "주기  " + (root.viewModel.selectedSupplierSchedule.intervalHours || "-") + "시간"; color: Ui.Theme.textMuted }
-                        Text { text: "마지막 확인\n" + root.displayTime(root.viewModel.selectedSupplierSchedule.lastCheckAt); color: Ui.Theme.text; wrapMode: Text.WordWrap }
-                        Text { text: "다음 확인\n" + root.displayTime(root.viewModel.selectedSupplierSchedule.nextCheckAt); color: Ui.Theme.text; wrapMode: Text.WordWrap }
-                        Text { visible: text.length > 0; text: root.viewModel.selectedSupplierSchedule.latestFailure || ""; color: Ui.Theme.dangerForeground; wrapMode: Text.WordWrap; Layout.fillWidth: true }
-                        Item { Layout.fillHeight: true }
-                    }
-                }
             }
 
             RowLayout {
