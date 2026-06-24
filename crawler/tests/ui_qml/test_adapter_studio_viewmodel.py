@@ -504,3 +504,85 @@ def test_mapping_rows_never_clip_at_wide_or_narrow_width(qt_app) -> None:
         mapping = probe.findChild(QObject, "mapping")
         assert mapping.property("firstRowHeight") > 0
         assert mapping.property("firstRowHeight") >= mapping.property("firstRowContentHeight") + 18
+
+
+@pytest.mark.asyncio
+async def test_saved_adapter_slug_can_load_migrated_studio_credentials(tmp_path, monkeypatch) -> None:
+    from app.analyzer.adapter_schema import Adapter
+    from app.crawlers.yaml_adapter import YAMLAdapter
+    from app.ui_qml.viewmodels.adapter_studio import AdapterStudioViewModel
+
+    store = {}
+    monkeypatch.setattr("app.ui_qml.viewmodels.adapter_studio.save_supplier_credentials", lambda key, user, password: store.__setitem__(key, (user, password)))
+    monkeypatch.setattr("app.ui_qml.viewmodels.adapter_studio.load_supplier_credentials", lambda key: store.get(key))
+    monkeypatch.setattr("app.ui_qml.viewmodels.adapter_studio.delete_supplier_credentials", lambda key: store.pop(key, None))
+    monkeypatch.setattr("app.ui_qml.viewmodels.adapter_studio.save_adapter", lambda slug, text: tmp_path / f"{slug}.yaml")
+    monkeypatch.setattr("app.crawlers.yaml_adapter.load_supplier_credentials", lambda key: store.get(key))
+    vm = AdapterStudioViewModel(app_view_model=AppViewModel(), worker_factories={"probe": lambda request: FakeWorker(request)})
+    vm.setConnectionInputs({"supplierName": "Test Shop", "mainUrl": "https://shop.example", "needsLogin": True})
+    vm.setLoginInputs({"loginUrl": "https://shop.example/login", "username": "buyer", "password": "secret"})
+    assert vm.probe() is True
+    studio_key = vm._active_credential_key
+    vm.cancelProbe()
+    vm.acceptGeneratedYaml(VALID_YAML)
+    vm.acceptValidation(successful_results(), vm.beginValidation())
+
+    assert vm.save() is True
+    assert studio_key not in store
+    assert store["test-shop"] == ("buyer", "secret")
+    assert vm._active_credential_key == "test-shop"
+
+    adapter = Adapter.model_validate({
+        "adapter": {
+            "name": "Test Shop", "base_url": "https://shop.example",
+            "login": {"required": True, "login_url": "https://shop.example/login", "fields": {"id": "#id", "password": "#pw"}, "submit": "#submit"},
+        }
+    })
+
+    class Element:
+        async def fill(self, _value): pass
+        async def click(self): pass
+
+    class Page:
+        async def goto(self, *args, **kwargs): pass
+        async def wait_for_timeout(self, _value): pass
+        async def query_selector(self, selector):
+            return Element() if selector in {"#id", "#pw", "#submit", "a[href*='logout']"} else None
+
+    runtime = YAMLAdapter(adapter, None, "Test Shop", supplier_slug="test-shop")
+    assert await runtime._perform_login(Page()) is True
+
+
+def test_credential_migration_failure_preserves_studio_key_and_dirty_state(tmp_path, monkeypatch) -> None:
+    from app.ui_qml.viewmodels.adapter_studio import AdapterStudioViewModel
+
+    store = {}
+    deleted = []
+    saved_adapters = []
+
+    def save_credentials(key, user, password):
+        if key == "test-shop":
+            raise RuntimeError("password=secret migration failed")
+        store[key] = (user, password)
+
+    monkeypatch.setattr("app.ui_qml.viewmodels.adapter_studio.save_supplier_credentials", save_credentials)
+    monkeypatch.setattr("app.ui_qml.viewmodels.adapter_studio.load_supplier_credentials", lambda key: store.get(key))
+    monkeypatch.setattr("app.ui_qml.viewmodels.adapter_studio.delete_supplier_credentials", lambda key: deleted.append(key))
+    monkeypatch.setattr("app.ui_qml.viewmodels.adapter_studio.save_adapter", lambda slug, text: saved_adapters.append((slug, text)) or tmp_path / f"{slug}.yaml")
+    vm = AdapterStudioViewModel(app_view_model=AppViewModel(), worker_factories={"probe": lambda request: FakeWorker(request)})
+    vm.setConnectionInputs({"supplierName": "Test Shop", "mainUrl": "https://shop.example", "needsLogin": True})
+    vm.setLoginInputs({"loginUrl": "https://shop.example/login", "username": "buyer", "password": "secret"})
+    assert vm.probe() is True
+    studio_key = vm._active_credential_key
+    vm.cancelProbe()
+    vm.acceptGeneratedYaml(VALID_YAML)
+    vm.acceptValidation(successful_results(), vm.beginValidation())
+
+    assert vm.save() is False
+    assert saved_adapters == [("test-shop", VALID_YAML)]
+    assert vm.yamlDirty is True
+    assert studio_key in store
+    assert deleted == []
+    assert vm._active_credential_key == studio_key
+    assert "어댑터 파일은 저장되었지만" in vm.fieldErrors["form"]
+    assert "secret" not in vm.fieldErrors["form"]

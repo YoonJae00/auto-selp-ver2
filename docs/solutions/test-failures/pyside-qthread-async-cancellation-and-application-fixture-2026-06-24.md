@@ -68,6 +68,8 @@ key = f"studio-{readable}-{digest}"
 
 This keeps Korean-only names nonempty and prevents suppliers with the same readable slug or different sites from loading each other's credentials. The credential key remains internal and is never exposed through QML properties.
 
+Before the adapter has a filename, Site Studio stores credentials under that collision-safe private key. After `save_adapter(slug, yaml)` succeeds, it copies any active studio credentials to the runtime `slug` key used by `YAMLAdapter`, then best-effort deletes the studio key and switches its private active key to `slug`. If the credential copy fails, the adapter file remains written but the view model deliberately remains dirty, returns `False`, preserves the studio credential, and shows a sanitized “adapter saved, credential connection failed” error. This avoids claiming a fully successful save when runtime login would not work.
+
 ## Why This Works
 
 Qt allows exactly one GUI application instance. Starting with the more capable `QApplication` avoids an impossible in-process upgrade after QML tests. For cancellation, `Task.cancel()` injects `CancelledError` at the asyncio suspension point; using `call_soon_threadsafe` is necessary because the request originates from the GUI thread while the event loop runs in the worker thread. Retaining the QThread object matches Qt's lifetime requirements, while operation IDs prevent stale signals from changing current UI state.
@@ -81,6 +83,8 @@ Qt allows exactly one GUI application instance. Starting with the more capable `
 - Attempt every second operation while one worker is active and assert no second factory call occurs.
 - Exercise shutdown twice with both cooperative and deferred workers; repeated shutdown must remain safe and bounded.
 - Test Korean supplier names and identical names on different URLs for distinct keyring namespaces.
+- Exercise the real `YAMLAdapter` login lookup after save to prove the runtime adapter slug resolves migrated credentials.
+- Treat adapter-file success plus credential-migration failure as a partial save: keep dirty state and preserve the source credential.
 - Keep credentials in typed worker request objects only for dispatch and clear passwords in every worker's `finally` block.
 
 ## Related Issues

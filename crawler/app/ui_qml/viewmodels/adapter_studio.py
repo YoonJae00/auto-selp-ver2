@@ -14,7 +14,11 @@ from app.analyzer.element_picker import suggest_defaults_for_field
 from app.analyzer.mapping_hints import MappingHint, apply_locked_hints_to_yaml_dict
 from app.analyzer.validation_summary import build_validation_summary, get_save_gate_decision
 from app.config import load_config
-from app.credentials.store import load_supplier_credentials, save_supplier_credentials
+from app.credentials.store import (
+    delete_supplier_credentials,
+    load_supplier_credentials,
+    save_supplier_credentials,
+)
 from app.crawlers.registry import load_adapter_from_text, save_adapter
 from app.ui_qml.models.list_model import ListModel
 from app.ui_qml.viewmodels.base import BaseViewModel, sanitize_diagnostic
@@ -74,6 +78,7 @@ class AdapterStudioViewModel(BaseViewModel):
         self._operation_id = 0
         self._cancelled_operations: set[int] = set()
         self._shutting_down = False
+        self._active_credential_key: str | None = None
         self._pending_hint = None
         self._mapping_hints: list[MappingHint] = []
         self._inputs = {
@@ -252,7 +257,9 @@ class AdapterStudioViewModel(BaseViewModel):
         credentials = (self._inputs["loginUrl"], self._inputs["username"], self._inputs["password"])
         if self._inputs["needsLogin"] and all(credentials):
             try:
-                save_supplier_credentials(self._credential_key(), str(credentials[1]), str(credentials[2]))
+                credential_key = self._credential_key()
+                save_supplier_credentials(credential_key, str(credentials[1]), str(credentials[2]))
+                self._active_credential_key = credential_key
             except Exception as exc:
                 self._inputs["username"] = self._inputs["password"] = ""
                 self.set_field_errors({"form": f"로그인 정보 저장 실패: {sanitize_diagnostic(exc)}"})
@@ -442,7 +449,11 @@ class AdapterStudioViewModel(BaseViewModel):
 
     def _load_transient_credentials(self) -> tuple[str, str] | None:
         try:
-            return load_supplier_credentials(self._credential_key())
+            key = self._active_credential_key or self._credential_key()
+            credentials = load_supplier_credentials(key)
+            if credentials:
+                self._active_credential_key = key
+            return credentials
         except Exception as exc:
             self.set_field_errors({"form": f"로그인 정보 불러오기 실패: {sanitize_diagnostic(exc)}"})
             return None
@@ -564,9 +575,44 @@ class AdapterStudioViewModel(BaseViewModel):
         except Exception as exc:
             self.set_field_errors({"form": f"저장 실패: {sanitize_diagnostic(exc)}"})
             return False
+        if not self._migrate_credentials_to_runtime_slug(slug):
+            return False
         self._yaml_dirty = False
         self.set_field_errors({})
         self._emit()
+        return True
+
+    def _migrate_credentials_to_runtime_slug(self, slug: str) -> bool:
+        if self._active_credential_key is None:
+            return True
+        source_key = self._active_credential_key
+        if source_key == slug:
+            return True
+        try:
+            credentials = load_supplier_credentials(source_key)
+        except Exception as exc:
+            self.set_field_errors({
+                "form": "어댑터 파일은 저장되었지만 로그인 정보 연결에 실패했습니다: "
+                f"{sanitize_diagnostic(exc)}"
+            })
+            self._emit()
+            return False
+        if not credentials:
+            return True
+        try:
+            save_supplier_credentials(slug, credentials[0], credentials[1])
+        except Exception as exc:
+            self.set_field_errors({
+                "form": "어댑터 파일은 저장되었지만 로그인 정보 연결에 실패했습니다: "
+                f"{sanitize_diagnostic(exc)}"
+            })
+            self._emit()
+            return False
+        try:
+            delete_supplier_credentials(source_key)
+        except Exception:
+            pass
+        self._active_credential_key = slug
         return True
 
     @Slot()
