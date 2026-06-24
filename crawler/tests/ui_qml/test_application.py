@@ -126,6 +126,34 @@ def test_monitor_schedule_detail_uses_shared_wide_and_overlay_drawers(qt_app) ->
         assert field.property("text")
 
 
+def test_export_issue_detail_reuses_wide_and_overlay_drawers(qt_app) -> None:
+    engine = create_engine()
+    root = engine.rootObjects()[0]
+    app_vm = engine.property("appViewModel")
+    export_vm = engine.property("exportViewModel")
+    export_vm._selected_issue_detail = {
+        "productId": "p1", "code": "P-1", "name": "Product", "supplier": "Supplier",
+        "status": "available", "price": 1200, "message": "원산지 누락", "severity": "warning",
+    }
+    export_vm.stateChanged.emit()
+    app_vm.navigate("export")
+    app_vm.set_detail_panel_open(True)
+    qt_app.processEvents()
+
+    wide = root.findChild(QObject, "detailDrawerWide")
+    overlay = root.findChild(QObject, "detailDrawerOverlay")
+    assert wide.property("visible") is True
+    assert wide.property("title") == "내보내기 검증 상세"
+    assert wide.findChild(QObject, "exportIssueCode").property("text") == "P-1"
+    assert wide.findChild(QObject, "exportIssueMessage").property("text") == "원산지 누락"
+
+    root.setWidth(900)
+    qt_app.processEvents()
+    assert wide.property("visible") is False
+    assert overlay.property("visible") is True
+    assert overlay.findChild(QObject, "exportIssueCode").property("text") == "P-1"
+
+
 def test_monitor_drawer_open_keeps_dashboard_horizontally_usable(qt_app) -> None:
     engine = create_engine()
     root = engine.rootObjects()[0]

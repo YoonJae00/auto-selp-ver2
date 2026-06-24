@@ -22,6 +22,22 @@ Item {
         }
     }
 
+    Component {
+        id: exportIssueDetail
+        ExportIssueDetail {
+            // qmllint disable unqualified
+            detail: ExportVM.selectedIssueDetail
+            // qmllint enable unqualified
+        }
+    }
+
+    readonly property string detailTitle: currentRoute === "monitor" ? "모니터 일정"
+                                                : currentRoute === "export" ? "내보내기 검증 상세"
+                                                : "상세 정보"
+    readonly property Component detailContent: currentRoute === "monitor" ? monitorScheduleDetail
+                                                   : currentRoute === "export" ? exportIssueDetail
+                                                   : null
+
     function syncViewModel() {
         currentRoute = viewModel.currentRoute
         sidebarCollapsed = viewModel.sidebarCollapsed
@@ -109,8 +125,8 @@ Item {
 
         DetailDrawer {
             objectName: "detailDrawerWide"
-            title: root.currentRoute === "monitor" ? "모니터 일정" : "상세 정보"
-            contentComponent: root.currentRoute === "monitor" ? monitorScheduleDetail : null
+            title: root.detailTitle
+            contentComponent: root.detailContent
             modal: false
             visible: root.detailPanelOpen && root.wideDetailMode
             Layout.fillHeight: true
@@ -135,8 +151,8 @@ Item {
 
     DetailDrawer {
         objectName: "detailDrawerOverlay"
-        title: root.currentRoute === "monitor" ? "모니터 일정" : "상세 정보"
-        contentComponent: root.currentRoute === "monitor" ? monitorScheduleDetail : null
+        title: root.detailTitle
+        contentComponent: root.detailContent
         anchors.top: parent.top
         anchors.right: parent.right
         anchors.bottom: parent.bottom

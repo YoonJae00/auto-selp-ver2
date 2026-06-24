@@ -52,7 +52,7 @@ Item {
                 ColumnLayout {
                     anchors.fill: parent; anchors.margins: 14
                     Text { text: "2. 검증"; color: Ui.Theme.text; font.bold: true; font.pixelSize: 16 }
-                    ValidationList { objectName: "exportValidationList"; Layout.fillWidth: true; Layout.fillHeight: true; model: root.viewModel.issues; onIssueActivated: (productId, productCode) => root.viewModel.selectIssue(productId, productCode) }
+                    ValidationList { objectName: "exportValidationList"; Layout.fillWidth: true; Layout.fillHeight: true; model: root.viewModel.issues; onIssueActivated: index => root.viewModel.selectIssue(index) }
                     CheckBox {
                         objectName: "exportWarningAcknowledgement"
                         text: "경고를 확인했으며 계속 진행합니다"

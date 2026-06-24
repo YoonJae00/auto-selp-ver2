@@ -7,7 +7,7 @@ import ".." as Ui
 ListView {
     id: root
     property string accessibleName: "내보내기 검증 결과"
-    signal issueActivated(string productId, string productCode)
+    signal issueActivated(int index)
     clip: true
     reuseItems: true
     spacing: 4
@@ -16,6 +16,7 @@ ListView {
     delegate: Rectangle {
         id: issueRow
         required property var model
+        required property int index
         width: ListView.view.width
         height: 48
         radius: Ui.Theme.radiusSmall
@@ -29,6 +30,6 @@ ListView {
             Text { Layout.fillWidth: true; text: issueRow.model.message; color: Ui.Theme.text; elide: Text.ElideRight }
             Text { text: issueRow.model.productCode; color: Ui.Theme.textMuted }
         }
-        TapHandler { onTapped: root.issueActivated(issueRow.model.productId, issueRow.model.productCode) }
+        TapHandler { onTapped: root.issueActivated(issueRow.index) }
     }
 }

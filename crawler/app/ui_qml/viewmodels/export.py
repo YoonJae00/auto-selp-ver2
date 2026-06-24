@@ -79,13 +79,15 @@ class ExportViewModel(BaseViewModel):
                  supplier_loader: Callable[[], list[Any]] = _load_suppliers,
                  scope_loader: Callable[[str], tuple[int, int, list[dict[str, str]]]] = _load_scope,
                  exports_dir: Path | None = None, picker: Callable[[str], Any] | None = None,
-                 worker_factory: Callable[[ExportRequest], Any] = ExportWorker) -> None:
+                 worker_factory: Callable[[ExportRequest], Any] = ExportWorker,
+                 session_factory: Callable[[], Any] = get_session) -> None:
         super().__init__(parent)
         self._app = app_view_model
         self._scope_loader = scope_loader
         self._exports_dir = Path(exports_dir) if exports_dir is not None else default_exports_dir()
         self._picker = picker
         self._worker_factory = worker_factory
+        self._session_factory = session_factory
         self._supplier_ids: set[str] = set()
         self._supplier_names: dict[str, str] = {}
         self._supplier_id = ""
@@ -94,6 +96,7 @@ class ExportViewModel(BaseViewModel):
         self._history = ListModel(("fileName", "path", "exportedAt", "rowCount", "outcome"), parent=self)
         self._suppliers = ListModel(("id", "name"), parent=self)
         self._warning_acknowledged = False
+        self._selected_issue_detail: dict[str, Any] = {}
         self._validated = False
         self._output_path: Path | None = None
         self._busy = False
@@ -118,6 +121,7 @@ class ExportViewModel(BaseViewModel):
     warningAcknowledged = Property(bool, lambda self: self._warning_acknowledged, notify=stateChanged)
     busy = Property(bool, lambda self: self._busy, notify=stateChanged)
     destinationName = Property(str, lambda self: self._output_path.name if self._output_path else "", notify=stateChanged)
+    selectedIssueDetail = Property("QVariantMap", lambda self: dict(self._selected_issue_detail), notify=stateChanged)
 
     @Property(bool, notify=stateChanged)
     def canExport(self) -> bool:
@@ -140,6 +144,9 @@ class ExportViewModel(BaseViewModel):
         self._product_count = self._option_count = 0
         self._issues.resetRows([])
         self._warning_acknowledged = self._validated = False
+        if self._selected_issue_detail and self._app:
+            self._app.set_detail_panel_open(False)
+        self._selected_issue_detail = {}
         self._output_path = None
         self._emit()
 
@@ -202,12 +209,17 @@ class ExportViewModel(BaseViewModel):
     def export(self) -> bool:
         if not self.canExport or self._shutting_down or self._worker is not None:
             return False
+        request = ExportRequest(self._supplier_id, self._output_path)
+        try:
+            worker = self._worker_factory(request)
+        except Exception as exc:
+            self.set_field_errors({"form": sanitize_diagnostic(exc)})
+            self._emit()
+            return False
         owner = object()
         if self._app and not self._app.acquire_task("export", "Excel 내보내기", owner):
             self.set_field_errors({"form": "다른 작업이 종료될 때까지 기다려 주세요."})
             return False
-        request = ExportRequest(self._supplier_id, self._output_path)
-        worker = self._worker_factory(request)
         self._operation_id += 1
         operation = self._operation_id
         self._task_owner = owner
@@ -217,7 +229,20 @@ class ExportViewModel(BaseViewModel):
         worker.error.connect(lambda message: self._on_error(operation, message))
         worker.cancelled.connect(lambda: self._on_cancelled(operation))
         self._emit()
-        worker.start()
+        try:
+            worker.start()
+        except Exception as exc:
+            safe = sanitize_diagnostic(exc)
+            failed_owner = self._task_owner
+            self._busy = False
+            self._worker = None
+            self._retired_workers.extend(stop_workers([worker], timeout_ms=100))
+            if self._app and failed_owner is not None:
+                self._app.fail_owned_task(failed_owner, safe)
+            self._task_owner = None
+            self.set_field_errors({"form": safe})
+            self._emit()
+            return False
         return True
 
     def _current(self, operation: int) -> bool:
@@ -282,10 +307,39 @@ class ExportViewModel(BaseViewModel):
         self._history.resetRows(rows)
         self._emit()
 
+    @Slot(int)
+    @Slot(str)
     @Slot(str, str)
-    def selectIssue(self, product_id: str, _product_code: str = "") -> None:
-        if product_id and self._app:
-            self._app.navigate("crawl")
+    def selectIssue(self, issue_id: int | str, product_code: str = "") -> None:
+        issue = None
+        if isinstance(issue_id, int):
+            if 0 <= issue_id < len(self._issues._rows):
+                issue = self._issues._rows[issue_id]
+        else:
+            issue = next((row for row in self._issues._rows if row.get("productId") == issue_id and (not product_code or row.get("productCode") == product_code)), None)
+        product_id = str(issue.get("productId", "")) if issue else ""
+        if not product_id:
+            return
+        session = self._session_factory()
+        try:
+            product = session.get(Product, product_id)
+        finally:
+            session.close()
+        if product is None:
+            return
+        self._selected_issue_detail = {
+            "productId": str(product.id),
+            "code": product.supplier_product_code or "",
+            "name": product.raw_product_name or "",
+            "supplier": product.supplier_name or "",
+            "status": product.supplier_status or "",
+            "price": product.supply_price if product.supply_price is not None else 0,
+            "message": issue.get("message", ""),
+            "severity": issue.get("severity", ""),
+        }
+        if self._app:
+            self._app.set_detail_panel_open(True)
+        self._emit()
 
     @Slot()
     def shutdown(self) -> None:
