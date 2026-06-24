@@ -81,6 +81,19 @@ def test_app_view_model_is_retained_and_readable_from_qml(qt_app) -> None:
     assert bound_object.property("route") == "suppliers"
 
 
+def test_monitor_view_model_is_retained_and_monitor_route_is_real_screen(qt_app) -> None:
+    engine = create_engine()
+    root = engine.rootObjects()[0]
+    monitor = root.findChild(QObject, "monitorScreen")
+
+    assert b"monitorViewModel" in engine.dynamicPropertyNames()
+    assert monitor is not None
+    assert monitor.property("minimumContentWidth") == 620
+    assert monitor.findChild(QObject, "monitorEventsTable") is not None
+    assert monitor.findChild(QObject, "unreadMarkerLegend") is not None
+    assert monitor.findChild(QObject, "ackSelectedButton").property("accessibleName")
+
+
 def test_theme_and_shared_control_can_be_instantiated(qt_app) -> None:
     engine = create_engine()
     component = QQmlComponent(engine)

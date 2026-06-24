@@ -74,7 +74,12 @@ Item {
                     viewModel: CrawlVM
                     // qmllint enable unqualified
                 }
-                PlaceholderScreen { title: "모니터" }
+                Screens.MonitorScreen {
+                    objectName: "monitorScreen"
+                    // qmllint disable unqualified
+                    viewModel: MonitorVM
+                    // qmllint enable unqualified
+                }
                 PlaceholderScreen { title: "내보내기" }
                 PlaceholderScreen { title: "설정" }
             }
