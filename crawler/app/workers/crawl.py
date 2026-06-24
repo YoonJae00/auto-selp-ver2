@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Callable
@@ -152,24 +153,24 @@ class CrawlWorker(_AsyncThread):
 
     async def _crawl(self) -> None:
         request = self.request
-        if not self._adapter_checker(request.adapter_file):
-            raise FileNotFoundError(f"어댑터 파일이 없습니다: {request.adapter_file}")
-        model = self._adapter_loader(request.adapter_file)
-        engine = self._engine_factory(channel=model.adapter.browser.channel, headless=True)
         session = self._session_factory()
-        run: CrawlRun | None = None
+        run = CrawlRun(
+            supplier_id=request.supplier_id, run_type="full", status="running",
+            started_at=datetime.now(timezone.utc),
+            categories_crawled=[path for _, path in request.categories],
+        )
+        session.add(run)
+        session.commit()
         products = options = 0
+        engine = None
         started = False
         try:
+            if not self._adapter_checker(request.adapter_file):
+                raise FileNotFoundError(f"어댑터 파일이 없습니다: {request.adapter_file}")
+            model = self._adapter_loader(request.adapter_file)
+            engine = self._engine_factory(channel=model.adapter.browser.channel, headless=True)
             await engine.start()
             started = True
-            run = CrawlRun(
-                supplier_id=request.supplier_id, run_type="full", status="running",
-                started_at=datetime.now(timezone.utc),
-                categories_crawled=[path for _, path in request.categories],
-            )
-            session.add(run)
-            session.commit()
             adapter = self._adapter_factory(
                 adapter=model, engine=engine, supplier_name=request.supplier_name,
                 delay_seconds=request.delay_seconds, supplier_slug=request.credential_key,
@@ -187,27 +188,50 @@ class CrawlWorker(_AsyncThread):
                         result.product.supplier_product_code,
                         len(result.options),
                     )
+                    self.progress.emit(
+                        f"상품 {products}: {result.product.raw_product_name} "
+                        f"({result.product.supplier_product_code})"
+                    )
                     self._persist_result(session, run.id, result)
                     if products % 5 == 0:
                         session.commit()
+            await engine.close()
+            started = False
             self._finish_run(session, run, "completed", products, options)
             self.finished.emit(products, options)
         except asyncio.CancelledError:
-            if run is not None:
-                self._finish_run(session, run, "cancelled", products, options)
+            try:
+                if started and engine is not None:
+                    await engine.close()
+                    started = False
+            except Exception as exc:
+                safe = self._safe_error(exc)
+                session.rollback()
+                self._finish_run(session, run, "failed", products, options, safe)
+                raise RuntimeError(safe) from exc
+            self._finish_run(session, run, "cancelled", products, options)
             raise
         except Exception as exc:
-            if run is not None:
+            safe = self._safe_error(exc)
+            if started and engine is not None:
                 try:
-                    session.rollback()
-                    self._finish_run(session, run, "failed", products, options, str(exc))
-                except Exception:
-                    session.rollback()
-            raise
+                    await engine.close()
+                    started = False
+                except Exception as close_exc:
+                    safe = f"{safe}; 종료 오류: {self._safe_error(close_exc)}"
+            session.rollback()
+            self._finish_run(session, run, "failed", products, options, safe)
+            raise RuntimeError(safe) from exc
         finally:
-            if started:
-                await engine.close()
             session.close()
+
+    @staticmethod
+    def _safe_error(error: object) -> str:
+        text = str(error)
+        return re.sub(
+            r"(?i)(password|passwd|secret|token|api[_ -]?key)(\s*[:=]\s*)[^\s,;]+",
+            r"\1\2[REDACTED]", text,
+        )
 
     @staticmethod
     def _finish_run(session, run, status, products, options, error=None) -> None:

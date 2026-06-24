@@ -71,6 +71,33 @@ def test_request_uses_credential_key_and_delay_precedence(monkeypatch) -> None:
     assert made[0].request.delay_seconds == 7
 
 
+def test_supplier_and_explicit_delay_precedence_and_numeric_validation(monkeypatch) -> None:
+    from app.ui_qml.viewmodels.crawl import CrawlViewModel
+
+    monkeypatch.setattr("app.ui_qml.viewmodels.crawl.load_config", lambda: SimpleNamespace(global_delay_seconds=7))
+    for explicit, supplier_delay, expected in ((-1, 4, 4), (2, 4, 2)):
+        made = []
+        vm = CrawlViewModel(
+            app_view_model=AppViewModel(), supplier_loader=lambda d=supplier_delay: [supplier(default_delay_seconds=d)],
+            worker_factories={"crawl": lambda request: made.append(FakeWorker(request)) or made[-1]},
+            adapter_checker=lambda _: True,
+        )
+        vm.selectSupplier("s1")
+        vm._set_categories([SimpleNamespace(category_id="c", name="C", path="C", children=[])])
+        vm.toggleCategory("c", True)
+        vm.setDelaySeconds(explicit)
+        assert vm.startCrawl() and made[0].request.delay_seconds == expected
+
+    vm = CrawlViewModel(supplier_loader=lambda: [supplier()], adapter_checker=lambda _: True)
+    vm.selectSupplier("s1")
+    vm._set_categories([SimpleNamespace(category_id="c", name="C", path="C", children=[])])
+    vm.toggleCategory("c", True)
+    vm.setMaxPages(501)
+    vm.setDelaySeconds(61)
+    assert vm.startCrawl() is False
+    assert set(vm.fieldErrors) >= {"maxPages", "delaySeconds"}
+
+
 def test_discovery_builds_nested_observable_rows_and_toggle_parent() -> None:
     from app.ui_qml.viewmodels.crawl import CrawlViewModel
 
@@ -124,3 +151,142 @@ def test_legacy_tab_only_imports_ui_independent_shared_workers() -> None:
     assert "class DiscoverSignals" not in legacy_source
     assert "threading.Thread" not in legacy_source
     assert "QtWidgets" not in worker_source
+
+
+def test_product_signal_updates_live_target() -> None:
+    from app.ui_qml.viewmodels.crawl import CrawlViewModel
+
+    app = AppViewModel()
+    worker = FakeWorker(None)
+    vm = CrawlViewModel(app_view_model=app, supplier_loader=lambda: [supplier()],
+                        worker_factories={"crawl": lambda _: worker}, adapter_checker=lambda _: True)
+    vm.selectSupplier("s1")
+    vm._set_categories([SimpleNamespace(category_id="c", name="C", path="C", children=[])])
+    vm.toggleCategory("c", True)
+    assert vm.startCrawl()
+    worker.product_found.emit("Live Product", "CODE-1", 3)
+    assert vm.currentTarget == "상품 1: Live Product (CODE-1)"
+    assert (vm.productCount, vm.optionCount) == (1, 3)
+
+
+def test_foreign_task_and_unwinding_worker_block_start() -> None:
+    from app.ui_qml.viewmodels.crawl import CrawlViewModel
+
+    app = AppViewModel()
+    app.start_task("adapter-probe", "probe")
+    vm = CrawlViewModel(app_view_model=app, supplier_loader=lambda: [supplier()], adapter_checker=lambda _: True)
+    assert vm.discoverCategories() is False
+    assert "다른 작업" in vm.fieldErrors["form"]
+
+    app.cancel_task()
+    worker = FakeWorker(None)
+    worker.isRunning = lambda: True
+    vm._retired_workers.append(worker)
+    assert vm.discoverCategories() is False
+
+
+def test_shutdown_invalidates_late_worker_signals() -> None:
+    from app.ui_qml.viewmodels.crawl import CrawlViewModel
+
+    app = AppViewModel()
+    worker = FakeWorker(None)
+    vm = CrawlViewModel(app_view_model=app, supplier_loader=lambda: [supplier()],
+                        worker_factories={"discovery": lambda _: worker}, adapter_checker=lambda _: True)
+    vm.selectSupplier("s1")
+    assert vm.discoverCategories()
+    vm.shutdown()
+    state = app.activeTask.state
+    worker.error.emit("late secret=oops")
+    worker.categories_found.emit([])
+    assert app.activeTask.state == state
+    assert "form" not in vm.fieldErrors
+
+
+def test_crawl_screen_scrolls_and_swaps_start_cancel_controls() -> None:
+    qml = (Path(__file__).parents[2] / "app" / "ui_qml" / "qml" / "screens" / "CrawlScreen.qml").read_text(encoding="utf-8")
+    assert 'objectName: "crawlScrollView"' in qml
+    assert 'objectName: "crawlStartButton"' in qml
+    assert 'objectName: "crawlCancelButton"' in qml
+    assert "visible: !root.viewModel.busy" in qml
+    assert "visible: root.viewModel.busy" in qml
+    assert "implicitHeight: root.compact ? 760" in qml
+
+
+class FakeSession:
+    def __init__(self):
+        self.run = None
+    def add(self, value):
+        if value.__class__.__name__ == "CrawlRun": self.run = value
+    def commit(self): pass
+    def rollback(self): pass
+    def close(self): pass
+
+
+def test_worker_persists_failed_run_before_adapter_check() -> None:
+    from app.workers.crawl import CrawlRequest, CrawlWorker
+
+    session = FakeSession()
+    request = CrawlRequest("s", "shop", "missing", [("c", "C")], 1, 0)
+    worker = CrawlWorker(request, session_factory=lambda: session, adapter_checker=lambda _: False)
+    worker.run()
+    assert session.run.status == "failed"
+    assert session.run.finished_at is not None
+    assert "어댑터" in session.run.error
+
+
+def test_worker_marks_start_and_close_failures_failed() -> None:
+    from app.workers.crawl import CrawlRequest, CrawlWorker
+
+    model = SimpleNamespace(adapter=SimpleNamespace(
+        browser=SimpleNamespace(channel="chromium"), login=SimpleNamespace(required=False)))
+
+    class Engine:
+        def __init__(self, fail_start=False, fail_close=False):
+            self.fail_start, self.fail_close = fail_start, fail_close
+        async def start(self):
+            if self.fail_start: raise RuntimeError("password=start-secret")
+        async def close(self):
+            if self.fail_close: raise RuntimeError("token=close-secret")
+
+    class Adapter:
+        async def crawl_category(self, *_):
+            if False: yield None
+
+    request = CrawlRequest("s", "shop", "adapter", [("c", "C")], 1, 0)
+    for engine in (Engine(fail_start=True), Engine(fail_close=True)):
+        session = FakeSession()
+        worker = CrawlWorker(
+            request, session_factory=lambda s=session: s, adapter_checker=lambda _: True,
+            adapter_loader=lambda _: model, engine_factory=lambda **_: engine,
+            adapter_factory=lambda **_: Adapter(),
+        )
+        worker.run()
+        assert session.run.status == "failed"
+        assert "secret" not in session.run.error
+        assert "[REDACTED]" in session.run.error
+
+
+def test_worker_persists_completed_and_cancelled_statuses() -> None:
+    import asyncio
+    from app.workers.crawl import CrawlRequest, CrawlWorker
+
+    model = SimpleNamespace(adapter=SimpleNamespace(
+        browser=SimpleNamespace(channel="chromium"), login=SimpleNamespace(required=False)))
+    class Engine:
+        async def start(self): pass
+        async def close(self): pass
+    class Adapter:
+        def __init__(self, cancel=False): self.cancel = cancel
+        async def crawl_category(self, *_):
+            if self.cancel: raise asyncio.CancelledError
+            if False: yield None
+    request = CrawlRequest("s", "shop", "adapter", [("c", "C")], 1, 0)
+    for cancel, expected in ((False, "completed"), (True, "cancelled")):
+        session = FakeSession()
+        worker = CrawlWorker(
+            request, session_factory=lambda s=session: s, adapter_checker=lambda _: True,
+            adapter_loader=lambda _: model, engine_factory=lambda **_: Engine(),
+            adapter_factory=lambda **_: Adapter(cancel),
+        )
+        worker.run()
+        assert session.run.status == expected

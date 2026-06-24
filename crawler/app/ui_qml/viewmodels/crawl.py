@@ -143,6 +143,7 @@ class CrawlViewModel(BaseViewModel):
     @Slot(result=bool)
     def discoverCategories(self) -> bool:
         if not self._can_start():
+            self.set_field_errors({"form": "다른 작업이 종료될 때까지 기다려 주세요."})
             return False
         errors = self._validate_supplier()
         if errors:
@@ -215,6 +216,7 @@ class CrawlViewModel(BaseViewModel):
     @Slot(result=bool)
     def startCrawl(self) -> bool:
         if not self._can_start():
+            self.set_field_errors({"form": "다른 작업이 종료될 때까지 기다려 주세요."})
             return False
         errors = self._validate_supplier()
         if not self._selected:
@@ -247,7 +249,16 @@ class CrawlViewModel(BaseViewModel):
         return self._start_worker(self._factories["crawl"](request), "crawl")
 
     def _can_start(self) -> bool:
-        return not self._shutting_down and not self._busy and self._worker is None
+        self._cleanup_retired_workers(schedule=False)
+        foreign_task = False
+        if self._app:
+            task = self._app.activeTask
+            foreign_task = task.state in {"validating", "running"} and not task.key.startswith("crawl-")
+        return (
+            not self._shutting_down and not self._busy and self._worker is None
+            and not any(getattr(worker, "isRunning", lambda: False)() for worker in self._retired_workers)
+            and not foreign_task
+        )
 
     def _start_worker(self, worker, kind: str) -> bool:
         if not self._can_start():
@@ -297,11 +308,12 @@ class CrawlViewModel(BaseViewModel):
             return
         self._product_count += 1
         self._option_count += option_count
+        self._current_target = f"상품 {self._product_count}: {name} ({code})"
         rows = list(self._results._rows)
         rows.append({"name": name, "code": code, "optionCount": option_count})
         self._results.resetRows(rows)
         if self._app:
-            self._app.update_task(f"상품 {self._product_count}개 · 옵션 {self._option_count}개")
+            self._app.update_task(self._current_target)
         self._emit()
 
     def _on_finished(self, operation_id: int, products: int, options: int) -> None:
@@ -358,9 +370,9 @@ class CrawlViewModel(BaseViewModel):
             self._retired_workers.append(worker)
             self._cleanup_retired_workers()
 
-    def _cleanup_retired_workers(self) -> None:
+    def _cleanup_retired_workers(self, schedule: bool = True) -> None:
         self._retired_workers = [w for w in self._retired_workers if not hasattr(w, "isRunning") or w.isRunning()]
-        if self._retired_workers:
+        if schedule and self._retired_workers:
             QTimer.singleShot(25, self._cleanup_retired_workers)
 
     @Slot()
@@ -368,6 +380,8 @@ class CrawlViewModel(BaseViewModel):
         if self._shutting_down:
             return
         self._shutting_down = True
+        self._operation_id += 1
+        self._cancelled_operations.add(self._operation_id - 1)
         if self._worker is not None:
             self._retired_workers.append(self._worker)
             self._worker = None

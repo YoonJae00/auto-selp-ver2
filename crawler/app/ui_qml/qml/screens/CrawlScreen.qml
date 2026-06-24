@@ -12,8 +12,16 @@ Item {
     readonly property bool compact: width < 760
     focus: true
 
-    GridLayout {
+    ScrollView {
+        id: crawlScroll
+        objectName: "crawlScrollView"
         anchors.fill: parent
+        contentWidth: availableWidth
+        clip: true
+
+    GridLayout {
+        width: crawlScroll.availableWidth
+        implicitHeight: root.compact ? 760 : Math.max(440, crawlScroll.availableHeight)
         columns: root.compact ? 1 : 2
         columnSpacing: 14
         rowSpacing: 14
@@ -21,7 +29,7 @@ Item {
         Components.GlassPanel {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            Layout.minimumHeight: 260
+            Layout.minimumHeight: root.compact ? 360 : 260
             ColumnLayout {
                 anchors.fill: parent
                 anchors.margins: 14
@@ -62,7 +70,7 @@ Item {
         Components.GlassPanel {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            Layout.minimumHeight: 260
+            Layout.minimumHeight: root.compact ? 360 : 260
             ColumnLayout {
                 anchors.fill: parent
                 anchors.margins: 14
@@ -83,8 +91,8 @@ Item {
                 }
                 RowLayout {
                     Layout.fillWidth: true
-                    Components.AppButton { text: "수집 시작"; selected: true; enabled: !root.viewModel.busy; onClicked: root.viewModel.startCrawl() }
-                    Components.AppButton { text: "취소"; enabled: root.viewModel.busy; onClicked: root.viewModel.cancelCrawl() }
+                    Components.AppButton { objectName: "crawlStartButton"; text: "수집 시작"; selected: true; visible: !root.viewModel.busy; onClicked: root.viewModel.startCrawl() }
+                    Components.AppButton { objectName: "crawlCancelButton"; text: "취소"; visible: root.viewModel.busy; onClicked: root.viewModel.cancelCrawl() }
                     Item { Layout.fillWidth: true }
                     Text { text: root.viewModel.elapsedSeconds + "초"; color: Ui.Theme.textMuted }
                 }
@@ -94,5 +102,6 @@ Item {
                 Components.CrawlResults { Layout.fillWidth: true; Layout.fillHeight: true; viewModel: root.viewModel }
             }
         }
+    }
     }
 }
