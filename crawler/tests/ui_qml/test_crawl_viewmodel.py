@@ -264,8 +264,11 @@ def test_process_registry_retains_survivor_after_viewmodel_deletion(qt_app) -> N
 
     assert worker in surviving_workers()
     assert vm_ref() is None
-    worker.running = False
     worker.finished.emit()
+    assert worker in surviving_workers()
+    worker.running = False
+    from PySide6.QtTest import QTest
+    QTest.qWait(100)
     assert worker not in surviving_workers()
 
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import weakref
 
-from PySide6.QtCore import QCoreApplication, QElapsedTimer
+from PySide6.QtCore import QCoreApplication, QElapsedTimer, QTimer
 
 
 _SURVIVING_WORKERS: list[object] = []
@@ -31,6 +31,16 @@ def _release_survivor(reference) -> None:
         _SURVIVING_WORKERS.remove(worker)
 
 
+def _poll_survivor(reference) -> None:
+    worker = reference()
+    if worker is None or worker not in _SURVIVING_WORKERS:
+        return
+    if not getattr(worker, "isRunning", lambda: False)():
+        _release_survivor(reference)
+        return
+    QTimer.singleShot(50, lambda: _poll_survivor(reference))
+
+
 def _register_survivor(worker: object) -> None:
     if worker in _SURVIVING_WORKERS:
         return
@@ -39,17 +49,19 @@ def _register_survivor(worker: object) -> None:
         reference = weakref.ref(worker)
     except TypeError:
         reference = lambda: worker
-    callback = lambda *_: _release_survivor(reference)
-    for signal_name in ("finished", "destroyed"):
-        signal = getattr(worker, signal_name, None)
-        if signal is not None and hasattr(signal, "connect"):
-            try:
-                signal.connect(callback)
-            except (RuntimeError, TypeError):
-                pass
-    install_shutdown_hook()
-    if not getattr(worker, "isRunning", lambda: False)():
-        _release_survivor(reference)
+    finished = getattr(worker, "finished", None)
+    if finished is not None and hasattr(finished, "connect"):
+        try:
+            finished.connect(lambda *_: _poll_survivor(reference))
+        except (RuntimeError, TypeError):
+            pass
+    destroyed = getattr(worker, "destroyed", None)
+    if destroyed is not None and hasattr(destroyed, "connect"):
+        try:
+            destroyed.connect(lambda *_: _release_survivor(reference))
+        except (RuntimeError, TypeError):
+            pass
+    _poll_survivor(reference)
 
 
 def stop_workers(workers: list[object], timeout_ms: int = 1500) -> list[object]:
@@ -79,4 +91,7 @@ def stop_workers(workers: list[object], timeout_ms: int = 1500) -> list[object]:
 def drain_surviving_workers(timeout_ms: int = 5000) -> tuple[object, ...]:
     """Final application-shutdown drain; any survivors remain referenced for process life."""
     stop_workers(list(_SURVIVING_WORKERS), timeout_ms=timeout_ms)
+    for worker in list(_SURVIVING_WORKERS):
+        if not getattr(worker, "isRunning", lambda: False)():
+            _SURVIVING_WORKERS.remove(worker)
     return surviving_workers()

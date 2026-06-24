@@ -299,3 +299,13 @@ def test_navigation_updates_content_stack_index(qt_app) -> None:
     qt_app.processEvents()
 
     assert content_stack.property("currentIndex") == 3
+
+
+def test_shutdown_coordinator_drains_after_both_view_models() -> None:
+    from app.ui_qml.application import _shutdown_view_models
+
+    order = []
+    adapter = type("Adapter", (), {"shutdown": lambda self: order.append("adapter")})()
+    crawl = type("Crawl", (), {"shutdown": lambda self: order.append("crawl")})()
+    _shutdown_view_models(adapter, crawl, drain=lambda: order.append("drain"))
+    assert order == ["adapter", "crawl", "drain"]
