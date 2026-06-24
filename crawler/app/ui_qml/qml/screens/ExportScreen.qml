@@ -54,10 +54,12 @@ Item {
                     Text { text: "2. 검증"; color: Ui.Theme.text; font.bold: true; font.pixelSize: 16 }
                     ValidationList { objectName: "exportValidationList"; Layout.fillWidth: true; Layout.fillHeight: true; model: root.viewModel.issues; onIssueActivated: index => root.viewModel.selectIssue(index) }
                     CheckBox {
+                        id: warningAcknowledgement
                         objectName: "exportWarningAcknowledgement"
                         text: "경고를 확인했으며 계속 진행합니다"
                         Accessible.name: text
-                        onToggled: root.viewModel.acknowledgeWarnings(checked)
+                        onClicked: root.viewModel.acknowledgeWarnings(checked)
+                        Binding on checked { value: root.viewModel.warningAcknowledged }
                     }
                 }
             }

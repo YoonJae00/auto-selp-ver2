@@ -154,6 +154,32 @@ def test_export_issue_detail_reuses_wide_and_overlay_drawers(qt_app) -> None:
     assert overlay.findChild(QObject, "exportIssueCode").property("text") == "P-1"
 
 
+def test_export_warning_acknowledgement_tracks_view_model_resets(qt_app) -> None:
+    engine = create_engine()
+    root = engine.rootObjects()[0]
+    app_vm = engine.property("appViewModel")
+    export_vm = engine.property("exportViewModel")
+    app_vm.navigate("export")
+    qt_app.processEvents()
+    checkbox = root.findChild(QObject, "exportWarningAcknowledgement")
+    button = root.findChild(QObject, "startExportButton")
+
+    export_vm._warning_acknowledged = True
+    export_vm.stateChanged.emit()
+    qt_app.processEvents()
+    assert checkbox.property("checked") is True
+
+    export_vm._warning_acknowledged = False
+    export_vm.stateChanged.emit()
+    qt_app.processEvents()
+    assert checkbox.property("checked") is False
+    assert button.property("enabled") == export_vm.canExport
+
+    assert QMetaObject.invokeMethod(checkbox, "click") is True
+    qt_app.processEvents()
+    assert export_vm.warningAcknowledged is True
+
+
 def test_monitor_drawer_open_keeps_dashboard_horizontally_usable(qt_app) -> None:
     engine = create_engine()
     root = engine.rootObjects()[0]
