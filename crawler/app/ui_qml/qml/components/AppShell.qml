@@ -90,7 +90,12 @@ Item {
                     // qmllint enable unqualified
                     appViewModel: root.viewModel
                 }
-                PlaceholderScreen { title: "내보내기" }
+                Screens.ExportScreen {
+                    objectName: "exportScreen"
+                    // qmllint disable unqualified
+                    viewModel: ExportVM
+                    // qmllint enable unqualified
+                }
                 PlaceholderScreen { title: "설정" }
             }
 
