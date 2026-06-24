@@ -1,10 +1,6 @@
 from __future__ import annotations
 
-import asyncio
-import re
-from datetime import datetime, timezone
-
-from PySide6.QtCore import QThread, Signal, Qt, QObject
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
@@ -19,193 +15,27 @@ from PySide6.QtWidgets import (
     QTableWidgetItem,
     QTreeWidget,
     QTreeWidgetItem,
-    QVBoxLayout,
     QWidget,
 )
 
 from app.config import load_config
-from app.crawlers.engine import PlaywrightEngine
-from app.crawlers.registry import adapter_exists, load_adapter
-from app.crawlers.yaml_adapter import YAMLAdapter
-from app.db.models import CrawlRun, Product, ProductOption, Supplier
+from app.crawlers.registry import adapter_exists
+from app.db.models import Supplier
 from app.db.session import get_session
 from app.ui.tabs.base_tab import BaseTab
-
-
-class CrawlWorker(QThread):
-    progress = Signal(str)
-    product_found = Signal(str, str)
-    finished = Signal(int, int)
-    error = Signal(str)
-
-    def __init__(
-        self,
-        supplier_id: str,
-        supplier_name: str,
-        adapter_slug: str,
-        selected_categories: list[tuple[str, str]],
-        max_pages: int,
-        delay_seconds: int,
-        supplier_slug: str | None = None,
-    ) -> None:
-        super().__init__()
-        self.supplier_id = supplier_id
-        self.supplier_name = supplier_name
-        self.adapter_slug = adapter_slug
-        self.selected_categories = selected_categories
-        self.max_pages = max_pages
-        self.delay_seconds = delay_seconds
-        self.supplier_slug = supplier_slug
-        self._cancelled = False
-
-    def cancel(self) -> None:
-        self._cancelled = True
-
-    def run(self) -> None:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            loop.run_until_complete(self._run_async())
-        except Exception as exc:
-            self.error.emit(str(exc))
-        finally:
-            loop.close()
-
-    async def _run_async(self) -> None:
-        if not adapter_exists(self.adapter_slug):
-            self.error.emit(f"어댑터 파일이 없습니다: {self.adapter_slug}")
-            return
-
-        adapter_model = load_adapter(self.adapter_slug)
-        engine = PlaywrightEngine(channel=adapter_model.adapter.browser.channel, headless=True)
-        await engine.start()
-
-        session = get_session()
-        crawl_run = CrawlRun(
-            supplier_id=self.supplier_id,
-            run_type="full",
-            status="running",
-            started_at=datetime.now(timezone.utc),
-            categories_crawled=[c[1] for c in self.selected_categories],
-        )
-        session.add(crawl_run)
-        session.commit()
-
-        product_count = 0
-        option_count = 0
-
-        try:
-            if adapter_model.adapter.login.required:
-                self.progress.emit("도매처 로그인 중...")
-            adapter = YAMLAdapter(
-                adapter=adapter_model,
-                engine=engine,
-                supplier_name=self.supplier_name,
-                delay_seconds=self.delay_seconds,
-                supplier_slug=self.supplier_slug,
-            )
-
-            for cat_id, cat_path in self.selected_categories:
-                if self._cancelled:
-                    break
-                self.progress.emit(f"[카테고리] {cat_path}")
-                async for result in adapter.crawl_category(cat_id, self.max_pages):
-                    if self._cancelled:
-                        break
-                    product_count += 1
-                    option_count += len(result.options)
-                    self.product_found.emit(result.product.raw_product_name, result.product.supplier_product_code)
-                    self.progress.emit(f"  상품 {product_count}: {result.product.raw_product_name} ({len(result.options)} 옵션)")
-
-                    existing = session.query(Product).filter_by(
-                        supplier_id=self.supplier_id,
-                        supplier_product_code=result.product.supplier_product_code,
-                    ).first()
-
-                    if existing:
-                        existing.supplier_name = result.product.supplier_name
-                        existing.supplier_product_id = result.product.supplier_product_id
-                        existing.supplier_status = result.product.supplier_status
-                        existing.supplier_category = result.product.supplier_category
-                        existing.raw_product_name = result.product.raw_product_name
-                        existing.origin = result.product.origin
-                        existing.supply_price = result.product.supply_price
-                        existing.main_image_url = result.product.main_image_url
-                        existing.extra_image_urls = result.product.extra_image_urls
-                        existing.detail_content = result.product.detail_content
-                        existing.brand_name = result.product.brand_name
-                        existing.manufacturer = result.product.manufacturer
-                        existing.model_name = result.product.model_name
-                        existing.raw_metadata = result.product.raw_metadata
-                        existing.crawl_run_id = crawl_run.id
-                        session.query(ProductOption).filter_by(product_id=existing.id).delete()
-                        product_obj = existing
-                    else:
-                        product_obj = Product(
-                            supplier_id=self.supplier_id,
-                            crawl_run_id=crawl_run.id,
-                            supplier_name=result.product.supplier_name,
-                            supplier_product_code=result.product.supplier_product_code,
-                            supplier_product_id=result.product.supplier_product_id,
-                            supplier_status=result.product.supplier_status,
-                            supplier_category=result.product.supplier_category,
-                            raw_product_name=result.product.raw_product_name,
-                            origin=result.product.origin,
-                            supply_price=result.product.supply_price,
-                            main_image_url=result.product.main_image_url,
-                            extra_image_urls=result.product.extra_image_urls,
-                            detail_content=result.product.detail_content,
-                            brand_name=result.product.brand_name,
-                            manufacturer=result.product.manufacturer,
-                            model_name=result.product.model_name,
-                            raw_metadata=result.product.raw_metadata,
-                        )
-                        session.add(product_obj)
-                        session.flush()
-
-                    for opt in result.options:
-                        session.add(ProductOption(
-                            product_id=product_obj.id,
-                            option_sku=opt.option_sku,
-                            option_type=opt.option_type,
-                            option_group_1=opt.option_group_1,
-                            option_value_1=opt.option_value_1,
-                            option_group_2=opt.option_group_2,
-                            option_value_2=opt.option_value_2,
-                            option_group_3=opt.option_group_3,
-                            option_value_3=opt.option_value_3,
-                            option_display_name=opt.option_display_name,
-                            option_supply_price=opt.option_supply_price,
-                            option_sale_price=opt.option_sale_price,
-                            option_price_delta=opt.option_price_delta,
-                            option_stock_quantity=opt.option_stock_quantity,
-                            option_status=opt.option_status,
-                            option_usable=opt.option_usable,
-                            option_main_image_url=opt.option_main_image_url,
-                            option_extra_image_urls=opt.option_extra_image_urls,
-                            option_position=opt.option_position,
-                            raw_option_text=opt.raw_option_text,
-                            raw_option_metadata=opt.raw_option_metadata,
-                        ))
-
-                    if product_count % 5 == 0:
-                        session.commit()
-
-            crawl_run.status = "cancelled" if self._cancelled else "completed"
-            crawl_run.products_crawled = product_count
-            crawl_run.options_crawled = option_count
-            crawl_run.finished_at = datetime.now(timezone.utc)
-            session.commit()
-        finally:
-            await engine.close()
-            session.close()
-            self.finished.emit(product_count, option_count)
+from app.workers.crawl import (
+    CategoryDiscoveryRequest,
+    CategoryDiscoveryWorker,
+    CrawlRequest,
+    CrawlWorker,
+)
 
 
 class CrawlTab(BaseTab):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._worker: CrawlWorker | None = None
+        self._discovery_worker: CategoryDiscoveryWorker | None = None
         self._build_ui()
         self._refresh_suppliers()
 
@@ -294,7 +124,10 @@ class CrawlTab(BaseTab):
         try:
             suppliers = session.query(Supplier).order_by(Supplier.name).all()
             for s in suppliers:
-                self.supplier_combo.addItem(s.name, (s.id, s.adapter_file))
+                self.supplier_combo.addItem(
+                    s.name,
+                    (s.id, s.adapter_file, s.credential_key, s.default_delay_seconds),
+                )
         finally:
             session.close()
 
@@ -305,40 +138,18 @@ class CrawlTab(BaseTab):
         data = self.supplier_combo.currentData()
         if not data:
             return
-        supplier_id, adapter_file = data
+        supplier_id, adapter_file, credential_key, _supplier_delay = data
         if not adapter_file or not adapter_exists(adapter_file):
             QMessageBox.warning(self, "어댑터 없음", "이 도매처에 어댑터가 지정되지 않았습니다.")
             return
 
         self.log_text.appendPlainText("카테고리 불러오는 중...")
-        import threading
-
-        class DiscoverSignals(QObject):
-            finished = Signal(list)
-            error = Signal(str)
-
-        disc_signals = DiscoverSignals()
-        disc_signals.finished.connect(self._on_discover_finished)
-        disc_signals.error.connect(self._on_discover_error)
-
-        def do_discover():
-            loop = asyncio.new_event_loop()
-            try:
-                adapter_model = load_adapter(adapter_file)
-                engine = PlaywrightEngine(channel=adapter_model.adapter.browser.channel, headless=True)
-                loop.run_until_complete(engine.start())
-                supplier_name = self.supplier_combo.currentText()
-                slug = re.sub(r"[^a-z0-9_-]", "", supplier_name.lower().replace(" ", "-"))
-                adapter = YAMLAdapter(adapter=adapter_model, engine=engine, supplier_name="", supplier_slug=slug)
-                categories = loop.run_until_complete(adapter.discover_categories())
-                loop.run_until_complete(engine.close())
-                disc_signals.finished.emit(categories)
-            except Exception as exc:
-                disc_signals.error.emit(str(exc))
-            finally:
-                loop.close()
-
-        threading.Thread(target=do_discover, daemon=True).start()
+        self._discovery_worker = CategoryDiscoveryWorker(CategoryDiscoveryRequest(
+            self.supplier_combo.currentText(), adapter_file, credential_key,
+        ))
+        self._discovery_worker.categories_found.connect(self._on_discover_finished)
+        self._discovery_worker.error.connect(self._on_discover_error)
+        self._discovery_worker.start()
 
     def _on_discover_finished(self, categories: list) -> None:
         self.category_tree.clear()
@@ -376,7 +187,7 @@ class CrawlTab(BaseTab):
         if not data:
             QMessageBox.warning(self, "선택 필요", "도매처를 선택하세요.")
             return
-        supplier_id, adapter_file = data
+        supplier_id, adapter_file, credential_key, supplier_delay = data
         if not adapter_file or not adapter_exists(adapter_file):
             QMessageBox.warning(self, "어댑터 없음", "어댑터가 지정되지 않았습니다.")
             return
@@ -387,22 +198,26 @@ class CrawlTab(BaseTab):
             return
 
         config = load_config()
-        delay = self.delay_spin.value() if self.delay_spin.value() > 0 else config.global_delay_seconds
+        delay = (
+            self.delay_spin.value()
+            if self.delay_spin.value() > 0
+            else supplier_delay if supplier_delay is not None
+            else config.global_delay_seconds
+        )
         supplier_name = self.supplier_combo.currentText()
-        slug = re.sub(r"[^a-z0-9_-]", "", supplier_name.lower().replace(" ", "-"))
-
-        self._worker = CrawlWorker(
+        self._worker = CrawlWorker(CrawlRequest(
             supplier_id=supplier_id,
             supplier_name=supplier_name,
-            adapter_slug=adapter_file,
-            selected_categories=selected,
+            adapter_file=adapter_file,
+            categories=selected,
             max_pages=self.max_pages_spin.value(),
             delay_seconds=delay,
-            supplier_slug=slug,
-        )
+            credential_key=credential_key,
+        ))
         self._worker.progress.connect(self._on_progress)
-        self._worker.product_found.connect(self._on_product_found)
+        self._worker.product_found.connect(lambda name, code, _options: self._on_product_found(name, code))
         self._worker.finished.connect(self._on_finished)
+        self._worker.cancelled.connect(self._on_finished)
         self._worker.error.connect(self._on_error)
         self._worker.start()
 
