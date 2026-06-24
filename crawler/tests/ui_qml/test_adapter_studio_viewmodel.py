@@ -291,6 +291,7 @@ def test_test_and_picker_load_credentials_transiently(monkeypatch) -> None:
     assert made["test"][0].password == "stored-secret"
     vm._worker = None
     vm._busy = False
+    vm._app.complete_task()
     assert vm.pickElement("adapter.product.raw_product_name") is True
     assert made["picker"][0].username == "stored-user"
     assert made["picker"][0].password == "stored-secret"
@@ -683,3 +684,26 @@ def test_form_reset_preserves_migrated_runtime_key_but_never_reuses_it(tmp_path,
     assert "a-shop" not in deleted
     assert vm._active_credential_key is None
     assert vm._load_transient_credentials() is None
+
+
+def test_running_crawl_blocks_adapter_worker_creation() -> None:
+    from app.ui_qml.viewmodels.adapter_studio import AdapterStudioViewModel
+
+    app = AppViewModel()
+    assert app.start_task("crawl-crawl", "상품 수집")
+    made = []
+    vm = AdapterStudioViewModel(
+        app_view_model=app,
+        worker_factories={
+            name: (lambda request, operation=name: made.append((operation, request)) or FakeWorker(request))
+            for name in ("probe", "generate", "test", "picker")
+        },
+    )
+    vm.setConnectionInputs({"supplierName": "Shop", "mainUrl": "https://x"})
+    assert vm.probe() is False
+    assert vm.generate() is False
+    assert vm.testAll() is False
+    assert vm.pickElement("adapter.product.raw_product_name") is False
+    assert made == []
+    assert (app.activeTask.key, app.activeTask.label) == ("crawl-crawl", "상품 수집")
+    assert "다른 작업" in vm.fieldErrors["form"]

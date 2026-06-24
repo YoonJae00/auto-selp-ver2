@@ -70,10 +70,18 @@ class AppViewModel(BaseViewModel):
     def toggle_detail_panel(self) -> None:
         self.set_detail_panel_open(not self._detail_panel_open)
 
-    @Slot(str, str)
-    def start_task(self, key: str, label: str) -> None:
+    @Slot(str, result=bool)
+    def can_start_task(self, key: str) -> bool:
+        task = self._active_task
+        return task.state not in {"validating", "running"} or task.key == key
+
+    @Slot(str, str, result=bool)
+    def start_task(self, key: str, label: str) -> bool:
+        if not self.can_start_task(key):
+            return False
         self._active_task.start(key, label)
         self.set_task_panel_open(True)
+        return True
 
     @Slot(str)
     @Slot(str, float)

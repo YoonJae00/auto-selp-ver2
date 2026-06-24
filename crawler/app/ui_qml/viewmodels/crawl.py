@@ -142,7 +142,7 @@ class CrawlViewModel(BaseViewModel):
 
     @Slot(result=bool)
     def discoverCategories(self) -> bool:
-        if not self._can_start():
+        if not self._can_start("crawl-discovery"):
             self.set_field_errors({"form": "다른 작업이 종료될 때까지 기다려 주세요."})
             return False
         errors = self._validate_supplier()
@@ -215,7 +215,7 @@ class CrawlViewModel(BaseViewModel):
 
     @Slot(result=bool)
     def startCrawl(self) -> bool:
-        if not self._can_start():
+        if not self._can_start("crawl-crawl"):
             self.set_field_errors({"form": "다른 작업이 종료될 때까지 기다려 주세요."})
             return False
         errors = self._validate_supplier()
@@ -248,20 +248,17 @@ class CrawlViewModel(BaseViewModel):
         self.set_field_errors({})
         return self._start_worker(self._factories["crawl"](request), "crawl")
 
-    def _can_start(self) -> bool:
+    def _can_start(self, key: str | None = None) -> bool:
         self._cleanup_retired_workers(schedule=False)
-        foreign_task = False
-        if self._app:
-            task = self._app.activeTask
-            foreign_task = task.state in {"validating", "running"} and not task.key.startswith("crawl-")
         return (
             not self._shutting_down and not self._busy and self._worker is None
             and not any(getattr(worker, "isRunning", lambda: False)() for worker in self._retired_workers)
-            and not foreign_task
+            and (not self._app or key is None or self._app.can_start_task(key))
         )
 
     def _start_worker(self, worker, kind: str) -> bool:
-        if not self._can_start():
+        key = f"crawl-{kind}"
+        if not self._can_start(key):
             return False
         self._operation_id += 1
         operation_id = self._operation_id
@@ -280,7 +277,10 @@ class CrawlViewModel(BaseViewModel):
             worker.cancelled.connect(lambda products, options: self._on_cancelled(operation_id, products, options))
         if self._app:
             label = "카테고리 탐색" if kind == "discovery" else "상품 수집"
-            self._app.start_task(f"crawl-{kind}", label)
+            if not self._app.start_task(key, label):
+                self._worker = None
+                self._busy = self._discovering = False
+                return False
             self._app.update_task(label)
         self._emit()
         worker.start()

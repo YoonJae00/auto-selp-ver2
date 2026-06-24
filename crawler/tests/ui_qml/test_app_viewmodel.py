@@ -151,3 +151,11 @@ def test_list_model_defensively_copies_nested_input_and_output() -> None:
     exposed["tags"].append("egress mutation")
 
     assert model.data(model.index(0, 0), role) == {"tags": ["safe"]}
+
+
+def test_running_task_cannot_be_overwritten_by_foreign_owner() -> None:
+    vm = AppViewModel()
+    assert vm.start_task("crawl-crawl", "상품 수집") is True
+    assert vm.can_start_task("adapter-probe") is False
+    assert vm.start_task("adapter-probe", "사이트 분석") is False
+    assert (vm.activeTask.key, vm.activeTask.label) == ("crawl-crawl", "상품 수집")

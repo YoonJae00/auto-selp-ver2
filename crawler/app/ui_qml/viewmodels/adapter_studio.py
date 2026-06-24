@@ -190,18 +190,29 @@ class AdapterStudioViewModel(BaseViewModel):
         self._advanced_editor_open = bool(open_)
         self._emit()
 
-    def _task_start(self, key: str, label: str, stage: str) -> None:
+    def _task_start(self, key: str, label: str, stage: str) -> bool:
         self._busy = True
         if self._app:
-            self._app.start_task(key, label)
+            if not self._app.start_task(key, label):
+                self._busy = False
+                return False
             self._app.update_task(stage)
         self._emit()
+        return True
 
-    def _can_start_operation(self) -> bool:
-        return not self._shutting_down and not self._busy and self._worker is None
+    def _can_start_operation(self, key: str | None = None) -> bool:
+        local = not self._shutting_down and not self._busy and self._worker is None
+        return local and (not self._app or key is None or self._app.can_start_task(key))
+
+    def _guard_operation(self, key: str) -> bool:
+        if self._can_start_operation(key):
+            return True
+        if self._app and not self._app.can_start_task(key):
+            self.set_field_errors({"form": "다른 작업이 진행 중입니다. 완료 후 다시 시도하세요."})
+        return False
 
     def _connect_worker(self, worker, *, finished, key: str, label: str, stage: str) -> bool:
-        if not self._can_start_operation():
+        if not self._can_start_operation(key):
             return False
         self._operation_id += 1
         operation_id = self._operation_id
@@ -212,7 +223,9 @@ class AdapterStudioViewModel(BaseViewModel):
             worker.cancelled.connect(lambda: self._dispatch_cancelled(operation_id))
         if hasattr(worker, "progress"):
             worker.progress.connect(lambda message: self._dispatch_progress(operation_id, stage, message))
-        self._task_start(key, label, stage)
+        if not self._task_start(key, label, stage):
+            self._worker = None
+            return False
         worker.start()
         return True
 
@@ -272,7 +285,7 @@ class AdapterStudioViewModel(BaseViewModel):
 
     @Slot()
     def probe(self) -> bool:
-        if not self._can_start_operation():
+        if not self._guard_operation("adapter-probe"):
             return False
         name = str(self._inputs["supplierName"]).strip()
         url = str(self._inputs["mainUrl"]).strip()
@@ -327,7 +340,7 @@ class AdapterStudioViewModel(BaseViewModel):
 
     @Slot()
     def generate(self) -> bool:
-        if not self._can_start_operation():
+        if not self._guard_operation("adapter-generate"):
             return False
         if self._probe_result is None:
             self.set_field_errors({"form": "먼저 사이트 분석을 실행하세요."})
@@ -426,7 +439,7 @@ class AdapterStudioViewModel(BaseViewModel):
         return self._start_test(None)
 
     def _start_test(self, fields: list[str] | None) -> bool:
-        if not self._can_start_operation():
+        if not self._guard_operation("adapter-test"):
             return False
         try:
             load_adapter_from_text(self._yaml_text)
@@ -464,7 +477,7 @@ class AdapterStudioViewModel(BaseViewModel):
 
     @Slot(str)
     def pickElement(self, field_path: str) -> bool:
-        if not self._can_start_operation():
+        if not self._guard_operation("adapter-pick"):
             return False
         target = str(self._inputs["detailUrl"] or self._inputs["mainUrl"])
         username = password = None
