@@ -153,6 +153,27 @@ def test_legacy_tab_only_imports_ui_independent_shared_workers() -> None:
     assert "QtWidgets" not in worker_source
 
 
+def test_legacy_tab_blocks_double_discovery_and_stops_workers_on_close(qt_app, monkeypatch) -> None:
+    from app.ui.tabs import crawl_tab
+
+    monkeypatch.setattr(crawl_tab.CrawlTab, "_refresh_suppliers", lambda self: None)
+    tab = crawl_tab.CrawlTab()
+    discovery, crawling = FakeWorker(None), FakeWorker(None)
+    discovery.isRunning = lambda: True
+    crawling.isRunning = lambda: True
+    tab._discovery_worker = discovery
+    tab._worker = None
+    tab._on_discover()
+    assert tab._discovery_worker is discovery
+
+    stopped = []
+    monkeypatch.setattr(crawl_tab, "stop_workers", lambda workers: stopped.extend(workers) or [])
+    tab._worker = crawling
+    event = SimpleNamespace(accept=lambda: stopped.append("accepted"))
+    tab.closeEvent(event)
+    assert discovery in stopped and crawling in stopped and "accepted" in stopped
+
+
 def test_product_signal_updates_live_target() -> None:
     from app.ui_qml.viewmodels.crawl import CrawlViewModel
 
@@ -202,6 +223,22 @@ def test_shutdown_invalidates_late_worker_signals() -> None:
     assert "form" not in vm.fieldErrors
 
 
+def test_shutdown_uses_last_resort_for_worker_that_ignores_cancellation() -> None:
+    from app.workers.lifecycle import stop_workers
+
+    class Stuck:
+        running = True
+        interrupted = terminated = False
+        def requestInterruption(self): self.interrupted = True
+        def isRunning(self): return self.running
+        def wait(self, _timeout): return not self.running
+        def terminate(self): self.terminated = True; self.running = False
+
+    worker = Stuck()
+    assert stop_workers([worker], timeout_ms=1) == []
+    assert worker.interrupted and worker.terminated and not worker.running
+
+
 def test_crawl_screen_scrolls_and_swaps_start_cancel_controls() -> None:
     qml = (Path(__file__).parents[2] / "app" / "ui_qml" / "qml" / "screens" / "CrawlScreen.qml").read_text(encoding="utf-8")
     assert 'objectName: "crawlScrollView"' in qml
@@ -220,6 +257,23 @@ class FakeSession:
     def commit(self): pass
     def rollback(self): pass
     def close(self): pass
+
+
+def test_worker_closes_session_when_initial_run_commit_fails() -> None:
+    from app.workers.crawl import CrawlRequest, CrawlWorker
+
+    class BrokenSession(FakeSession):
+        closed = False
+        def commit(self): raise RuntimeError("database unavailable")
+        def close(self): self.closed = True
+
+    session = BrokenSession()
+    worker = CrawlWorker(
+        CrawlRequest("s", "shop", "adapter", [], 1, 0),
+        session_factory=lambda: session,
+    )
+    worker.run()
+    assert session.closed
 
 
 def test_worker_persists_failed_run_before_adapter_check() -> None:
@@ -244,9 +298,9 @@ def test_worker_marks_start_and_close_failures_failed() -> None:
         def __init__(self, fail_start=False, fail_close=False):
             self.fail_start, self.fail_close = fail_start, fail_close
         async def start(self):
-            if self.fail_start: raise RuntimeError("password=start-secret")
+            if self.fail_start: raise RuntimeError("Authorization: Bearer start-secret")
         async def close(self):
-            if self.fail_close: raise RuntimeError("token=close-secret")
+            if self.fail_close: raise RuntimeError('{"access_token":"close-secret"}')
 
     class Adapter:
         async def crawl_category(self, *_):
@@ -290,3 +344,83 @@ def test_worker_persists_completed_and_cancelled_statuses() -> None:
         )
         worker.run()
         assert session.run.status == expected
+
+
+def test_workers_close_partially_started_engine_before_terminal_signal() -> None:
+    from app.workers.crawl import CategoryDiscoveryRequest, CategoryDiscoveryWorker, CrawlRequest, CrawlWorker
+
+    model = SimpleNamespace(adapter=SimpleNamespace(
+        browser=SimpleNamespace(channel="chromium"), login=SimpleNamespace(required=False)))
+    class Engine:
+        def __init__(self): self.closed = False
+        async def start(self): raise RuntimeError("partial start")
+        async def close(self): self.closed = True
+
+    discovery_engine = Engine()
+    discovery = CategoryDiscoveryWorker(
+        CategoryDiscoveryRequest("shop", "adapter"), adapter_checker=lambda _: True,
+        adapter_loader=lambda _: model, engine_factory=lambda **_: discovery_engine,
+    )
+    found = []
+    discovery.categories_found.connect(found.append)
+    discovery.run()
+    assert discovery_engine.closed and found == []
+
+    crawl_engine = Engine()
+    session = FakeSession()
+    crawl = CrawlWorker(
+        CrawlRequest("s", "shop", "adapter", [("c", "C")], 1, 0),
+        session_factory=lambda: session, adapter_checker=lambda _: True,
+        adapter_loader=lambda _: model, engine_factory=lambda **_: crawl_engine,
+    )
+    crawl.run()
+    assert crawl_engine.closed and session.run.status == "failed"
+
+
+def test_workers_close_engine_when_start_is_cancelled() -> None:
+    import asyncio
+    from app.workers.crawl import CategoryDiscoveryRequest, CategoryDiscoveryWorker, CrawlRequest, CrawlWorker
+
+    model = SimpleNamespace(adapter=SimpleNamespace(
+        browser=SimpleNamespace(channel="chromium"), login=SimpleNamespace(required=False)))
+    class Engine:
+        closed = False
+        async def start(self): raise asyncio.CancelledError
+        async def close(self): self.closed = True
+
+    discovery_engine = Engine()
+    CategoryDiscoveryWorker(
+        CategoryDiscoveryRequest("shop", "adapter"), adapter_checker=lambda _: True,
+        adapter_loader=lambda _: model, engine_factory=lambda **_: discovery_engine,
+    ).run()
+    assert discovery_engine.closed
+
+    crawl_engine, session = Engine(), FakeSession()
+    CrawlWorker(
+        CrawlRequest("s", "shop", "adapter", [("c", "C")], 1, 0),
+        session_factory=lambda: session, adapter_checker=lambda _: True,
+        adapter_loader=lambda _: model, engine_factory=lambda **_: crawl_engine,
+    ).run()
+    assert crawl_engine.closed and session.run.status == "cancelled"
+
+
+def test_discovery_emits_only_after_engine_close() -> None:
+    from app.workers.crawl import CategoryDiscoveryRequest, CategoryDiscoveryWorker
+
+    model = SimpleNamespace(adapter=SimpleNamespace(browser=SimpleNamespace(channel="chromium")))
+    class Engine:
+        closed = False
+        async def start(self): pass
+        async def close(self): self.closed = True
+    class Adapter:
+        async def discover_categories(self): return ["category"]
+    engine = Engine()
+    worker = CategoryDiscoveryWorker(
+        CategoryDiscoveryRequest("shop", "adapter"), adapter_checker=lambda _: True,
+        adapter_loader=lambda _: model, engine_factory=lambda **_: engine,
+        adapter_factory=lambda **_: Adapter(),
+    )
+    close_state = []
+    worker.categories_found.connect(lambda _: close_state.append(engine.closed))
+    worker.run()
+    assert close_state == [True]

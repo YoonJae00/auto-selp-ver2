@@ -17,6 +17,7 @@ from app.workers.crawl import (
     CrawlRequest,
     CrawlWorker,
 )
+from app.workers.lifecycle import stop_workers
 
 
 def _load_suppliers() -> list[Supplier]:
@@ -66,6 +67,7 @@ class CrawlViewModel(BaseViewModel):
         self._worker = None
         self._retired_workers: list[Any] = []
         self._operation_id = 0
+        self._task_owner: object | None = None
         self._cancelled_operations: set[int] = set()
         self._shutting_down = False
         self._elapsed = QElapsedTimer()
@@ -253,7 +255,7 @@ class CrawlViewModel(BaseViewModel):
         return (
             not self._shutting_down and not self._busy and self._worker is None
             and not any(getattr(worker, "isRunning", lambda: False)() for worker in self._retired_workers)
-            and (not self._app or key is None or self._app.can_start_task(key))
+            and (not self._app or key is None or self._app.can_acquire_task(key, object()))
         )
 
     def _start_worker(self, worker, kind: str) -> bool:
@@ -262,6 +264,8 @@ class CrawlViewModel(BaseViewModel):
             return False
         self._operation_id += 1
         operation_id = self._operation_id
+        owner = object()
+        self._task_owner = owner
         self._worker = worker
         self._busy = True
         self._discovering = kind == "discovery"
@@ -277,11 +281,12 @@ class CrawlViewModel(BaseViewModel):
             worker.cancelled.connect(lambda products, options: self._on_cancelled(operation_id, products, options))
         if self._app:
             label = "카테고리 탐색" if kind == "discovery" else "상품 수집"
-            if not self._app.start_task(key, label):
+            if not self._app.acquire_task(key, label, owner):
                 self._worker = None
                 self._busy = self._discovering = False
+                self._task_owner = None
                 return False
-            self._app.update_task(label)
+            self._app.update_owned_task(owner, label)
         self._emit()
         worker.start()
         return True
@@ -293,8 +298,8 @@ class CrawlViewModel(BaseViewModel):
         if not self._current(operation_id):
             return
         self._current_target = sanitize_diagnostic(message)
-        if self._app:
-            self._app.update_task(self._current_target)
+        if self._app and self._task_owner is not None:
+            self._app.update_owned_task(self._task_owner, self._current_target)
         self._emit()
 
     def _on_discovered(self, operation_id: int, nodes) -> None:
@@ -312,8 +317,8 @@ class CrawlViewModel(BaseViewModel):
         rows = list(self._results._rows)
         rows.append({"name": name, "code": code, "optionCount": option_count})
         self._results.resetRows(rows)
-        if self._app:
-            self._app.update_task(self._current_target)
+        if self._app and self._task_owner is not None:
+            self._app.update_owned_task(self._task_owner, self._current_target)
         self._emit()
 
     def _on_finished(self, operation_id: int, products: int, options: int) -> None:
@@ -326,8 +331,9 @@ class CrawlViewModel(BaseViewModel):
         self._busy = self._discovering = False
         self._elapsed_timer.stop()
         self._retire_worker()
-        if self._app:
-            self._app.complete_task()
+        if self._app and self._task_owner is not None:
+            self._app.complete_owned_task(self._task_owner)
+        self._task_owner = None
         self._emit()
 
     def _on_error(self, operation_id: int, message: str) -> None:
@@ -338,8 +344,9 @@ class CrawlViewModel(BaseViewModel):
         self._retire_worker()
         safe = sanitize_diagnostic(message)
         self.set_field_errors({"form": safe})
-        if self._app:
-            self._app.fail_task(safe)
+        if self._app and self._task_owner is not None:
+            self._app.fail_owned_task(self._task_owner, safe)
+        self._task_owner = None
         self._emit()
 
     def _on_cancelled(self, operation_id: int, products: int, options: int) -> None:
@@ -360,8 +367,9 @@ class CrawlViewModel(BaseViewModel):
         self._busy = self._discovering = False
         self._elapsed_timer.stop()
         self._retire_worker()
-        if self._app:
-            self._app.cancel_task("수집 취소됨")
+        if self._app and self._task_owner is not None:
+            self._app.cancel_owned_task(self._task_owner, "수집 취소됨")
+        self._task_owner = None
         self._emit()
 
     def _retire_worker(self) -> None:
@@ -382,14 +390,11 @@ class CrawlViewModel(BaseViewModel):
         self._shutting_down = True
         self._operation_id += 1
         self._cancelled_operations.add(self._operation_id - 1)
+        self._task_owner = None
         if self._worker is not None:
             self._retired_workers.append(self._worker)
             self._worker = None
-        for worker in list(dict.fromkeys(self._retired_workers)):
-            if hasattr(worker, "requestInterruption"):
-                worker.requestInterruption()
-            if hasattr(worker, "wait") and hasattr(worker, "isRunning") and worker.isRunning():
-                worker.wait(500)
+        self._retired_workers = stop_workers(self._retired_workers)
         self._busy = self._discovering = False
         self._elapsed_timer.stop()
         self._emit()

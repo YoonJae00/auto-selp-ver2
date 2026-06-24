@@ -159,3 +159,29 @@ def test_running_task_cannot_be_overwritten_by_foreign_owner() -> None:
     assert vm.can_start_task("adapter-probe") is False
     assert vm.start_task("adapter-probe", "사이트 분석") is False
     assert (vm.activeTask.key, vm.activeTask.label) == ("crawl-crawl", "상품 수집")
+
+
+def test_task_owner_rejects_same_key_foreign_and_stale_terminal() -> None:
+    vm = AppViewModel()
+    first, second = object(), object()
+    assert vm.acquire_task("crawl-crawl", "first", first)
+    assert not vm.acquire_task("crawl-crawl", "second", second)
+    assert not vm.complete_owned_task(second)
+    assert vm.activeTask.label == "first" and vm.activeTask.state == "running"
+    assert vm.complete_owned_task(first)
+    assert vm.acquire_task("crawl-crawl", "second", second)
+    assert not vm.fail_owned_task(first, "stale")
+    assert vm.activeTask.label == "second" and vm.activeTask.state == "running"
+
+
+def test_shared_diagnostic_sanitizer_covers_header_and_json_forms() -> None:
+    from app.diagnostics import sanitize_diagnostic
+    from app.ui_qml.viewmodels.base import sanitize_diagnostic as compatible_export
+
+    value = ('Authorization: Bearer abc Bearer standalone '
+             '{"api_key":"k","access_token":"a","password":"p"}')
+    sanitized = sanitize_diagnostic(value)
+    assert compatible_export(value) == sanitized
+    for secret in ("abc", "standalone", '"k"', '"a"', '"p"'):
+        assert secret not in sanitized
+    assert sanitized.count("[REDACTED]") >= 5

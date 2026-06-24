@@ -35,9 +35,9 @@ The crawler originally created its `CrawlRun` only after adapter loading and bro
 
 ## Solution
 
-Create and commit the `CrawlRun(status="running")` before adapter checks or browser setup. Perform browser close before persisting `completed`; translate setup, crawl, and teardown exceptions into a sanitized `failed` run with `finished_at`.
+Create and commit the `CrawlRun(status="running")` inside a session-guarded `try/finally`, before adapter checks or browser setup. Once an engine object exists, always attempt `engine.close()` even when startup only partially succeeds. Persist `completed` or emit discovery results only after teardown succeeds; translate setup, crawl, and teardown exceptions into a sanitized `failed` run with `finished_at` when the database remains writable.
 
-At the view-model boundary, retain cancelled or completed workers until `isRunning()` becomes false. Reject starts while any retained worker is still running, and invalidate the operation generation during shutdown so queued signals become no-ops.
+At the view-model boundary, retain cancelled or completed workers until `isRunning()` becomes false. Shared task mutations use opaque owner tokens rather than task keys, so stale or same-key foreign signals are rejected. Shutdown requests cooperative cancellation and waits; only an unresponsive thread reaches the documented last-resort terminate-and-wait path.
 
 ```python
 run = CrawlRun(status="running", ...)
@@ -60,13 +60,14 @@ except Exception as exc:
 
 ## Why This Works
 
-The database record now spans the complete observable operation, including setup and teardown. Worker retention reflects actual thread lifetime rather than requested state, while generation checks make queued Qt signals harmless after cancellation or shutdown.
+The database record spans the complete observable operation when persistence is available, including setup and teardown. Worker retention reflects actual thread lifetime rather than requested state. Generation checks plus task-owner checks make queued Qt signals harmless after cancellation, replacement, or shutdown.
 
 ## Prevention
 
 - Test missing adapters, browser start failures, browser close failures, cancellation, and normal completion against persisted run status.
 - Test cancel-then-immediate-start with a worker whose `isRunning()` remains true during cleanup.
 - Invalidate operation IDs before shutdown cancellation and assert late result, error, and cancelled signals do not mutate shared state.
+- Reject same-key task acquisition when the opaque owner differs; a string key is a label, not an ownership capability.
 - Never persist success until all failure-producing teardown required by the operation has completed.
 
 ## Related Issues

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Callable
@@ -13,6 +12,7 @@ from app.crawlers.registry import adapter_exists, load_adapter
 from app.crawlers.yaml_adapter import YAMLAdapter
 from app.db.models import CrawlRun, Product, ProductOption
 from app.db.session import get_session
+from app.diagnostics import sanitize_diagnostic
 
 
 @dataclass(frozen=True)
@@ -97,25 +97,25 @@ class CategoryDiscoveryWorker(_AsyncThread):
             self.error.emit(str(exc))
 
     async def _discover(self) -> None:
-        if not self._adapter_checker(self.request.adapter_file):
-            raise FileNotFoundError(f"어댑터 파일이 없습니다: {self.request.adapter_file}")
-        model = self._adapter_loader(self.request.adapter_file)
-        engine = self._engine_factory(channel=model.adapter.browser.channel, headless=True)
-        started = False
+        engine = None
+        categories = None
         try:
+            if not self._adapter_checker(self.request.adapter_file):
+                raise FileNotFoundError(f"어댑터 파일이 없습니다: {self.request.adapter_file}")
+            model = self._adapter_loader(self.request.adapter_file)
+            engine = self._engine_factory(channel=model.adapter.browser.channel, headless=True)
             await engine.start()
-            started = True
             adapter = self._adapter_factory(
                 adapter=model, engine=engine, supplier_name=self.request.supplier_name,
                 supplier_slug=self.request.credential_key,
             )
             categories = await adapter.discover_categories()
-            if not self.isInterruptionRequested():
-                self.categories_found.emit(categories)
-                self.finished.emit(categories)
         finally:
-            if started:
+            if engine is not None:
                 await engine.close()
+        if not self.isInterruptionRequested() and categories is not None:
+            self.categories_found.emit(categories)
+            self.finished.emit(categories)
 
 
 class CrawlWorker(_AsyncThread):
@@ -154,23 +154,22 @@ class CrawlWorker(_AsyncThread):
     async def _crawl(self) -> None:
         request = self.request
         session = self._session_factory()
-        run = CrawlRun(
-            supplier_id=request.supplier_id, run_type="full", status="running",
-            started_at=datetime.now(timezone.utc),
-            categories_crawled=[path for _, path in request.categories],
-        )
-        session.add(run)
-        session.commit()
+        run = None
         products = options = 0
         engine = None
-        started = False
         try:
+            run = CrawlRun(
+                supplier_id=request.supplier_id, run_type="full", status="running",
+                started_at=datetime.now(timezone.utc),
+                categories_crawled=[path for _, path in request.categories],
+            )
+            session.add(run)
+            session.commit()
             if not self._adapter_checker(request.adapter_file):
                 raise FileNotFoundError(f"어댑터 파일이 없습니다: {request.adapter_file}")
             model = self._adapter_loader(request.adapter_file)
             engine = self._engine_factory(channel=model.adapter.browser.channel, headless=True)
             await engine.start()
-            started = True
             adapter = self._adapter_factory(
                 adapter=model, engine=engine, supplier_name=request.supplier_name,
                 delay_seconds=request.delay_seconds, supplier_slug=request.credential_key,
@@ -196,42 +195,40 @@ class CrawlWorker(_AsyncThread):
                     if products % 5 == 0:
                         session.commit()
             await engine.close()
-            started = False
+            engine = None
             self._finish_run(session, run, "completed", products, options)
             self.finished.emit(products, options)
         except asyncio.CancelledError:
             try:
-                if started and engine is not None:
+                if engine is not None:
                     await engine.close()
-                    started = False
+                    engine = None
             except Exception as exc:
-                safe = self._safe_error(exc)
+                safe = sanitize_diagnostic(exc)
                 session.rollback()
-                self._finish_run(session, run, "failed", products, options, safe)
+                if run is not None:
+                    self._finish_run(session, run, "failed", products, options, safe)
                 raise RuntimeError(safe) from exc
-            self._finish_run(session, run, "cancelled", products, options)
+            if run is not None:
+                self._finish_run(session, run, "cancelled", products, options)
             raise
         except Exception as exc:
-            safe = self._safe_error(exc)
-            if started and engine is not None:
+            safe = sanitize_diagnostic(exc)
+            if engine is not None:
                 try:
                     await engine.close()
-                    started = False
+                    engine = None
                 except Exception as close_exc:
-                    safe = f"{safe}; 종료 오류: {self._safe_error(close_exc)}"
+                    safe = f"{safe}; 종료 오류: {sanitize_diagnostic(close_exc)}"
             session.rollback()
-            self._finish_run(session, run, "failed", products, options, safe)
+            if run is not None:
+                try:
+                    self._finish_run(session, run, "failed", products, options, safe)
+                except Exception:
+                    session.rollback()
             raise RuntimeError(safe) from exc
         finally:
             session.close()
-
-    @staticmethod
-    def _safe_error(error: object) -> str:
-        text = str(error)
-        return re.sub(
-            r"(?i)(password|passwd|secret|token|api[_ -]?key)(\s*[:=]\s*)[^\s,;]+",
-            r"\1\2[REDACTED]", text,
-        )
 
     @staticmethod
     def _finish_run(session, run, status, products, options, error=None) -> None:

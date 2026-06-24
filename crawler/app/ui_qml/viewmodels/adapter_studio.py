@@ -7,7 +7,7 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 import yaml
-from PySide6.QtCore import QObject, Property, QElapsedTimer, QTimer, Signal, Slot
+from PySide6.QtCore import QObject, Property, QTimer, Signal, Slot
 
 from app.analyzer.adapter_schema import FIELD_LABELS_KO, get_product_field_mappings
 from app.analyzer.element_picker import suggest_defaults_for_field
@@ -26,6 +26,7 @@ from app.workers.adapter import (
     AdapterTestRequest, AdapterTestWorker, GenerateRequest, GenerateWorker,
     PickerRequest, PickerWorker, ProbeRequest, ProbeWorker,
 )
+from app.workers.lifecycle import stop_workers
 
 
 MAPPING_ROLES = ("key", "label", "selector", "attribute", "transform", "status", "testValue", "testOk")
@@ -76,6 +77,7 @@ class AdapterStudioViewModel(BaseViewModel):
         self._worker = None
         self._retired_workers: list[object] = []
         self._operation_id = 0
+        self._task_owner: object | None = None
         self._cancelled_operations: set[int] = set()
         self._shutting_down = False
         self._active_credential_key: str | None = None
@@ -190,24 +192,24 @@ class AdapterStudioViewModel(BaseViewModel):
         self._advanced_editor_open = bool(open_)
         self._emit()
 
-    def _task_start(self, key: str, label: str, stage: str) -> bool:
+    def _task_start(self, key: str, label: str, stage: str, owner: object) -> bool:
         self._busy = True
         if self._app:
-            if not self._app.start_task(key, label):
+            if not self._app.acquire_task(key, label, owner):
                 self._busy = False
                 return False
-            self._app.update_task(stage)
+            self._app.update_owned_task(owner, stage)
         self._emit()
         return True
 
     def _can_start_operation(self, key: str | None = None) -> bool:
         local = not self._shutting_down and not self._busy and self._worker is None
-        return local and (not self._app or key is None or self._app.can_start_task(key))
+        return local and (not self._app or key is None or self._app.can_acquire_task(key, object()))
 
     def _guard_operation(self, key: str) -> bool:
         if self._can_start_operation(key):
             return True
-        if self._app and not self._app.can_start_task(key):
+        if self._app and not self._app.can_acquire_task(key, object()):
             self.set_field_errors({"form": "다른 작업이 진행 중입니다. 완료 후 다시 시도하세요."})
         return False
 
@@ -216,6 +218,8 @@ class AdapterStudioViewModel(BaseViewModel):
             return False
         self._operation_id += 1
         operation_id = self._operation_id
+        owner = object()
+        self._task_owner = owner
         self._worker = worker
         worker.finished.connect(lambda *args: self._dispatch_finished(operation_id, finished, *args))
         worker.error.connect(lambda message: self._dispatch_error(operation_id, message))
@@ -223,8 +227,9 @@ class AdapterStudioViewModel(BaseViewModel):
             worker.cancelled.connect(lambda: self._dispatch_cancelled(operation_id))
         if hasattr(worker, "progress"):
             worker.progress.connect(lambda message: self._dispatch_progress(operation_id, stage, message))
-        if not self._task_start(key, label, stage):
+        if not self._task_start(key, label, stage, owner):
             self._worker = None
+            self._task_owner = None
             return False
         worker.start()
         return True
@@ -249,22 +254,24 @@ class AdapterStudioViewModel(BaseViewModel):
             self._task_progress(stage, message)
 
     def _task_progress(self, stage: str, message: str) -> None:
-        if self._app:
-            self._app.update_task(stage, -1.0, sanitize_diagnostic(message))
+        if self._app and self._task_owner is not None:
+            self._app.update_owned_task(self._task_owner, stage, -1.0, sanitize_diagnostic(message))
 
     def _operation_done(self) -> None:
         self._busy = False
         self._retire_current_worker()
-        if self._app:
-            self._app.complete_task()
+        if self._app and self._task_owner is not None:
+            self._app.complete_owned_task(self._task_owner)
+        self._task_owner = None
         self._emit()
 
     def _operation_error(self, message: str) -> None:
         self._busy = False
         self._retire_current_worker()
         self.set_field_errors({"form": sanitize_diagnostic(message)})
-        if self._app:
-            self._app.fail_task(sanitize_diagnostic(message))
+        if self._app and self._task_owner is not None:
+            self._app.fail_owned_task(self._task_owner, sanitize_diagnostic(message))
+        self._task_owner = None
         self._emit()
 
     def _retire_current_worker(self) -> None:
@@ -370,8 +377,9 @@ class AdapterStudioViewModel(BaseViewModel):
             self._worker.requestInterruption()
         self._retire_current_worker()
         self._busy = False
-        if self._app:
-            self._app.cancel_task(message)
+        if self._app and self._task_owner is not None:
+            self._app.cancel_owned_task(self._task_owner, message)
+        self._task_owner = None
         self._emit()
 
     @Slot(str)
@@ -517,7 +525,13 @@ class AdapterStudioViewModel(BaseViewModel):
 
     @Slot()
     def shutdown(self) -> None:
+        if self._shutting_down:
+            return
         self._shutting_down = True
+        previous_operation = self._operation_id
+        self._operation_id += 1
+        self._cancelled_operations.add(previous_operation)
+        self._task_owner = None
         if self._worker is not None:
             worker = self._worker
             self._worker = None
@@ -528,16 +542,7 @@ class AdapterStudioViewModel(BaseViewModel):
             if hasattr(worker, "requestInterruption"):
                 worker.requestInterruption()
             self._clear_worker_secret(worker)
-        timer = QElapsedTimer()
-        timer.start()
-        for worker in workers:
-            if hasattr(worker, "isRunning") and worker.isRunning() and hasattr(worker, "wait"):
-                remaining = max(0, 500 - timer.elapsed())
-                worker.wait(remaining)
-        self._retired_workers = [
-            worker for worker in workers
-            if not hasattr(worker, "isRunning") or worker.isRunning()
-        ]
+        self._retired_workers = stop_workers(workers)
         for worker in self._retired_workers:
             if worker not in _SHUTDOWN_WORKERS:
                 _SHUTDOWN_WORKERS.append(worker)

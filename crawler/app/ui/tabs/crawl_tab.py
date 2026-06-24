@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QTimer, Qt
 from PySide6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
@@ -29,6 +29,7 @@ from app.workers.crawl import (
     CrawlRequest,
     CrawlWorker,
 )
+from app.workers.lifecycle import stop_workers
 
 
 class CrawlTab(BaseTab):
@@ -135,6 +136,9 @@ class CrawlTab(BaseTab):
         self.category_tree.clear()
 
     def _on_discover(self) -> None:
+        if ((self._discovery_worker and self._discovery_worker.isRunning())
+                or (self._worker and self._worker.isRunning())):
+            return
         data = self.supplier_combo.currentData()
         if not data:
             return
@@ -144,6 +148,8 @@ class CrawlTab(BaseTab):
             return
 
         self.log_text.appendPlainText("카테고리 불러오는 중...")
+        self.discover_btn.setEnabled(False)
+        self.start_btn.setEnabled(False)
         self._discovery_worker = CategoryDiscoveryWorker(CategoryDiscoveryRequest(
             self.supplier_combo.currentText(), adapter_file, credential_key,
         ))
@@ -162,10 +168,20 @@ class CrawlTab(BaseTab):
                 item.addChild(child_item)
             self.category_tree.addTopLevelItem(item)
         self.log_text.appendPlainText(f"카테고리 {len(categories)}개 발견")
+        self._release_discovery_when_stopped()
 
     def _on_discover_error(self, msg: str) -> None:
         self.log_text.appendPlainText(f"\n카테고리 불러오기 오류: {msg}")
         QMessageBox.warning(self, "오류", f"카테고리를 불러오지 못했습니다:\n\n{msg}")
+        self._release_discovery_when_stopped()
+
+    def _release_discovery_when_stopped(self) -> None:
+        if self._discovery_worker and self._discovery_worker.isRunning():
+            QTimer.singleShot(25, self._release_discovery_when_stopped)
+            return
+        self._discovery_worker = None
+        self.discover_btn.setEnabled(not (self._worker and self._worker.isRunning()))
+        self.start_btn.setEnabled(not (self._worker and self._worker.isRunning()))
 
     def _collect_selected_categories(self) -> list[tuple[str, str]]:
         result: list[tuple[str, str]] = []
@@ -183,6 +199,9 @@ class CrawlTab(BaseTab):
             self._collect_from_item(item.child(i), result)
 
     def _on_start(self) -> None:
+        if ((self._worker and self._worker.isRunning())
+                or (self._discovery_worker and self._discovery_worker.isRunning())):
+            return
         data = self.supplier_combo.currentData()
         if not data:
             QMessageBox.warning(self, "선택 필요", "도매처를 선택하세요.")
@@ -222,6 +241,7 @@ class CrawlTab(BaseTab):
         self._worker.start()
 
         self.start_btn.setEnabled(False)
+        self.discover_btn.setEnabled(False)
         self.cancel_btn.setEnabled(True)
         self.progress_bar.setVisible(True)
         self.progress_bar.setRange(0, 0)
@@ -243,14 +263,28 @@ class CrawlTab(BaseTab):
         self.preview_table.setItem(row, 1, QTableWidgetItem(code))
 
     def _on_finished(self, products: int, options: int) -> None:
-        self.start_btn.setEnabled(True)
         self.cancel_btn.setEnabled(False)
         self.progress_bar.setVisible(False)
         self.log_text.appendPlainText(f"\n완료: 상품 {products}개, 옵션 {options}개")
         self._refresh_suppliers()
+        self._release_crawl_when_stopped()
 
     def _on_error(self, msg: str) -> None:
-        self.start_btn.setEnabled(True)
         self.cancel_btn.setEnabled(False)
         self.progress_bar.setVisible(False)
         self.log_text.appendPlainText(f"\n오류: {msg}")
+        self._release_crawl_when_stopped()
+
+    def _release_crawl_when_stopped(self) -> None:
+        if self._worker and self._worker.isRunning():
+            QTimer.singleShot(25, self._release_crawl_when_stopped)
+            return
+        self._worker = None
+        self.start_btn.setEnabled(not (self._discovery_worker and self._discovery_worker.isRunning()))
+        self.discover_btn.setEnabled(not (self._discovery_worker and self._discovery_worker.isRunning()))
+
+    def closeEvent(self, event) -> None:  # noqa: N802
+        stop_workers([self._discovery_worker, self._worker])
+        self._discovery_worker = None
+        self._worker = None
+        event.accept()

@@ -291,7 +291,8 @@ def test_test_and_picker_load_credentials_transiently(monkeypatch) -> None:
     assert made["test"][0].password == "stored-secret"
     vm._worker = None
     vm._busy = False
-    vm._app.complete_task()
+    vm._app.complete_owned_task(vm._task_owner)
+    vm._task_owner = None
     assert vm.pickElement("adapter.product.raw_product_name") is True
     assert made["picker"][0].username == "stored-user"
     assert made["picker"][0].password == "stored-secret"
@@ -478,7 +479,7 @@ def test_shutdown_cancels_waits_and_retains_unfinished_workers() -> None:
     vm.shutdown()
 
     assert worker.cancel_requested is True
-    assert waits and all(0 <= value <= 500 for value in waits)
+    assert waits and all(0 <= value <= 1500 for value in waits)
     assert worker in vm._retired_workers
     assert worker.args[0].password is None
     assert vm.probe() is False

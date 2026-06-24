@@ -18,6 +18,8 @@ class AppViewModel(BaseViewModel):
         self._task_panel_open = False
         self._detail_panel_open = False
         self._active_task = TaskModel(self)
+        self._task_owner: object | None = None
+        self._legacy_task_owner = object()
 
     currentRoute = Property(
         str, lambda self: self._current_route, notify=BaseViewModel.changed
@@ -72,15 +74,49 @@ class AppViewModel(BaseViewModel):
 
     @Slot(str, result=bool)
     def can_start_task(self, key: str) -> bool:
+        return self.can_acquire_task(key, self._legacy_task_owner)
+
+    def can_acquire_task(self, key: str, owner: object) -> bool:
         task = self._active_task
-        return task.state not in {"validating", "running"} or task.key == key
+        return (
+            task.state not in {"validating", "running"}
+            or (self._task_owner is owner and task.key == key)
+        )
+
+    def acquire_task(self, key: str, label: str, owner: object) -> bool:
+        if not self.can_acquire_task(key, owner):
+            return False
+        self._task_owner = owner
+        self._active_task.start(key, label)
+        self.set_task_panel_open(True)
+        return True
 
     @Slot(str, str, result=bool)
     def start_task(self, key: str, label: str) -> bool:
-        if not self.can_start_task(key):
+        return self.acquire_task(key, label, self._legacy_task_owner)
+
+    def update_owned_task(self, owner: object, stage: str, progress=None, log=None) -> bool:
+        if self._task_owner is not owner:
             return False
-        self._active_task.start(key, label)
-        self.set_task_panel_open(True)
+        self._active_task.update(stage, progress, log)
+        return True
+
+    def complete_owned_task(self, owner: object) -> bool:
+        if self._task_owner is not owner:
+            return False
+        self._active_task.complete()
+        return True
+
+    def fail_owned_task(self, owner: object, message: str) -> bool:
+        if self._task_owner is not owner:
+            return False
+        self._active_task.fail(message)
+        return True
+
+    def cancel_owned_task(self, owner: object, message: str = "") -> bool:
+        if self._task_owner is not owner:
+            return False
+        self._active_task.cancel(message)
         return True
 
     @Slot(str)
@@ -92,16 +128,16 @@ class AppViewModel(BaseViewModel):
         progress: float | None = None,
         log: str | None = None,
     ) -> None:
-        self._active_task.update(stage, progress, log)
+        self.update_owned_task(self._legacy_task_owner, stage, progress, log)
 
     @Slot()
     def complete_task(self) -> None:
-        self._active_task.complete()
+        self.complete_owned_task(self._legacy_task_owner)
 
     @Slot(str)
     def fail_task(self, message: str) -> None:
-        self._active_task.fail(message)
+        self.fail_owned_task(self._legacy_task_owner, message)
 
     @Slot(str)
     def cancel_task(self, message: str = "") -> None:
-        self._active_task.cancel(message)
+        self.cancel_owned_task(self._legacy_task_owner, message)
