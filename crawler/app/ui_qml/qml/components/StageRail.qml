@@ -22,6 +22,7 @@ Item {
                 id: stageButton
                 required property int index
                 Layout.fillWidth: true
+                enabled: root.enabled
                 text: (index + 1) + ". " + root.labels[index]
                 Accessible.name: text
                 onClicked: root.stageRequested(index)

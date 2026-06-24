@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QUrl
+from PySide6.QtCore import QCoreApplication, QUrl
 from PySide6.QtQml import QQmlApplicationEngine
 
 from app.ui_qml.viewmodels.app import AppViewModel
@@ -19,6 +19,9 @@ def create_engine() -> QQmlApplicationEngine:
     app_view_model = AppViewModel(engine)
     suppliers_view_model = SuppliersViewModel(engine)
     adapter_studio_view_model = AdapterStudioViewModel(engine, app_view_model=app_view_model)
+    application = QCoreApplication.instance()
+    if application is not None:
+        application.aboutToQuit.connect(adapter_studio_view_model.shutdown)
     engine.rootContext().setContextProperty("AppVM", app_view_model)
     engine.rootContext().setContextProperty("SuppliersVM", suppliers_view_model)
     engine.rootContext().setContextProperty("AdapterStudioVM", adapter_studio_view_model)

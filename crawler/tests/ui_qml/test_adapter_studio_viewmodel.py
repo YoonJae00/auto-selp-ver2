@@ -263,7 +263,7 @@ def test_probe_persists_credentials_and_clears_dispatch_secret(monkeypatch) -> N
     vm.setLoginInputs({"loginUrl": "https://shop.example/login", "username": "buyer", "password": "secret"})
 
     assert vm.probe() is True
-    assert saved == [("test-shop", "buyer", "secret")]
+    assert saved == [("studio-test-shop-5658994db300e872", "buyer", "secret")]
     assert made[0].username == "buyer"
     assert made[0].password == "secret"
     assert vm._inputs["username"] == vm._inputs["password"] == ""
@@ -393,3 +393,114 @@ def test_generate_worker_forwards_provider_and_fallback(monkeypatch) -> None:
     assert worker.wait(2000)
     assert received["llm_provider"] == "openai"
     assert received["auto_fallback"] is False
+
+
+def test_overlapping_start_is_rejected_and_first_worker_remains_cancellable(monkeypatch) -> None:
+    from app.ui_qml.viewmodels.adapter_studio import AdapterStudioViewModel
+
+    monkeypatch.setattr("app.ui_qml.viewmodels.adapter_studio.save_supplier_credentials", lambda *_: None)
+    made = []
+    vm = AdapterStudioViewModel(
+        app_view_model=AppViewModel(),
+        worker_factories={"probe": lambda request: made.append(FakeWorker(request)) or made[-1]},
+    )
+    vm.setConnectionInputs({"supplierName": "Shop", "mainUrl": "https://x"})
+
+    assert vm.probe() is True
+    first = vm._worker
+    assert vm.probe() is False
+    assert len(made) == 1
+    assert vm._worker is first
+    vm.cancelProbe()
+    assert first.cancel_requested is True
+    first.finished.emit(object())
+    assert vm._probe_result is None
+
+
+def test_studio_credential_key_is_nonempty_deterministic_and_collision_safe() -> None:
+    from app.ui_qml.viewmodels.adapter_studio import studio_credential_key
+
+    first = studio_credential_key("한글도매", "https://one.example")
+    assert first.startswith("studio-supplier-")
+    assert first == studio_credential_key(" 한글도매 ", "https://one.example")
+    assert first != studio_credential_key("한글도매", "https://two.example")
+    assert first != studio_credential_key("다른도매", "https://one.example")
+
+
+def test_credential_keys_do_not_cross_load_between_same_name_different_urls(monkeypatch) -> None:
+    from app.ui_qml.viewmodels.adapter_studio import AdapterStudioViewModel
+
+    store = {}
+    monkeypatch.setattr("app.ui_qml.viewmodels.adapter_studio.save_supplier_credentials", lambda key, user, password: store.__setitem__(key, (user, password)))
+    monkeypatch.setattr("app.ui_qml.viewmodels.adapter_studio.load_supplier_credentials", lambda key: store.get(key))
+    requests = []
+
+    def make_vm(url, password):
+        vm = AdapterStudioViewModel(
+            app_view_model=AppViewModel(),
+            worker_factories={
+                "probe": lambda request: FakeWorker(request),
+                "test": lambda request: requests.append(request) or FakeWorker(request),
+            },
+        )
+        vm.setConnectionInputs({"supplierName": "한글도매", "mainUrl": url, "detailUrl": url + "/p/1", "needsLogin": True})
+        vm.setLoginInputs({"loginUrl": url + "/login", "username": "user", "password": password})
+        assert vm.probe() is True
+        vm.cancelProbe()
+        vm.acceptGeneratedYaml(VALID_YAML)
+        assert vm.testAll() is True
+        return vm
+
+    make_vm("https://one.example", "first-secret")
+    make_vm("https://two.example", "second-secret")
+    assert requests[0].password == "first-secret"
+    assert requests[1].password == "second-secret"
+
+
+def test_shutdown_cancels_waits_and_retains_unfinished_workers() -> None:
+    from app.ui_qml.viewmodels.adapter_studio import AdapterStudioViewModel
+    from app.workers.adapter import ProbeRequest
+
+    worker = FakeWorker(ProbeRequest("https://x", password="secret"))
+    worker.running = True
+    worker.isRunning = lambda: worker.running
+    waits = []
+    worker.wait = lambda timeout: waits.append(timeout) or False
+    vm = AdapterStudioViewModel(app_view_model=AppViewModel())
+    vm._worker = worker
+    vm._busy = True
+
+    vm.shutdown()
+    vm.shutdown()
+
+    assert worker.cancel_requested is True
+    assert waits and all(0 <= value <= 500 for value in waits)
+    assert worker in vm._retired_workers
+    assert worker.args[0].password is None
+    assert vm.probe() is False
+
+
+def test_mapping_rows_never_clip_at_wide_or_narrow_width(qt_app) -> None:
+    from PySide6.QtCore import QObject, QUrl
+    from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent
+    from PySide6.QtTest import QTest
+    from app.ui_qml.application import QML_DIRECTORY
+
+    engine = QQmlApplicationEngine()
+    engine.addImportPath(str(QML_DIRECTORY))
+    component = QQmlComponent(engine)
+    component.setData(
+        b'''import QtQuick\nimport QtQuick.Window\nimport QtQml.Models\nimport "components" as Components\n'''
+        b'''Window { visible: true; width: 900; height: 300; QtObject { id: vm; property bool busy: false; function pickElement(x) {} function testSingle(x) {} }\n'''
+        b'''Components.MappingTable { objectName: "mapping"; anchors.fill: parent; viewModel: vm;\n'''
+        b'''model: ListModel { ListElement { key: "raw_product_name"; label: "Product"; selector: ".very-long-selector"; attribute: ""; transform: ""; status: "ok"; testValue: ""; testOk: false } } } }''',
+        QUrl.fromLocalFile(str(QML_DIRECTORY / "MappingGeometryProbe.qml")),
+    )
+    probe = component.create()
+    assert probe is not None, component.errors()
+    for width in (900, 600):
+        probe.setProperty("width", width)
+        QTest.qWait(50)
+        mapping = probe.findChild(QObject, "mapping")
+        assert mapping.property("firstRowHeight") > 0
+        assert mapping.property("firstRowHeight") >= mapping.property("firstRowContentHeight") + 18

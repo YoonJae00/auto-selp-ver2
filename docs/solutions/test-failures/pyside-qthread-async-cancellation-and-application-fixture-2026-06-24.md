@@ -1,6 +1,7 @@
 ---
 title: PySide QML and QWidget tests require QApplication and real async cancellation
 date: 2026-06-24
+last_updated: 2026-06-24
 category: test-failures
 module: crawler-ui-qml
 problem_type: test_failure
@@ -12,7 +13,7 @@ symptoms:
 root_cause: thread_violation
 resolution_type: code_fix
 severity: high
-tags: [pyside6, qthread, asyncio, cancellation, qml, qwidget, pytest]
+tags: [pyside6, qthread, asyncio, cancellation, concurrency, keyring, qml, pytest]
 ---
 
 # PySide QML and QWidget tests require QApplication and real async cancellation
@@ -55,6 +56,18 @@ def requestInterruption(self) -> None:
 
 The worker catches `asyncio.CancelledError`, emits a distinct `cancelled` signal, and clears transient credentials in `finally`. The view model assigns each operation an ID, ignores callbacks from cancelled or superseded IDs, and retains cancelled workers until `isRunning()` becomes false.
 
+All operation entry points check one central invariant before validating credentials or creating a worker: the view model must not be busy, shutting down, or holding a live worker. The worker-connection helper repeats the invariant so a future caller cannot silently replace an active worker. On application shutdown, the view model cancels every live and retired worker, performs bounded waits, clears request passwords, and retains any unfinished thread globally rather than allowing Qt object destruction while it is running.
+
+Credential storage uses a deterministic namespace derived from normalized supplier name and main URL:
+
+```python
+readable = ascii_slug(normalized_name) or "supplier"
+digest = sha256(f"{normalized_name}\n{normalized_url}".encode()).hexdigest()[:16]
+key = f"studio-{readable}-{digest}"
+```
+
+This keeps Korean-only names nonempty and prevents suppliers with the same readable slug or different sites from loading each other's credentials. The credential key remains internal and is never exposed through QML properties.
+
 ## Why This Works
 
 Qt allows exactly one GUI application instance. Starting with the more capable `QApplication` avoids an impossible in-process upgrade after QML tests. For cancellation, `Task.cancel()` injects `CancelledError` at the asyncio suspension point; using `call_soon_threadsafe` is necessary because the request originates from the GUI thread while the event loop runs in the worker thread. Retaining the QThread object matches Qt's lifetime requirements, while operation IDs prevent stale signals from changing current UI state.
@@ -65,6 +78,9 @@ Qt allows exactly one GUI application instance. Starting with the more capable `
 - Test cancellation with an async function that blocks indefinitely, then assert the worker stops and emits `cancelled`.
 - Assert a deferred worker remains strongly referenced until it reports it is no longer running.
 - Emit a fake late result after cancellation and assert task state and view-model data remain unchanged.
+- Attempt every second operation while one worker is active and assert no second factory call occurs.
+- Exercise shutdown twice with both cooperative and deferred workers; repeated shutdown must remain safe and bounded.
+- Test Korean supplier names and identical names on different URLs for distinct keyring namespaces.
 - Keep credentials in typed worker request objects only for dispatch and clear passwords in every worker's `finally` block.
 
 ## Related Issues

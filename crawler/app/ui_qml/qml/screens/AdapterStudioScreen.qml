@@ -16,6 +16,7 @@ Item {
         spacing: 12
         Components.StageRail {
             Layout.fillWidth: true
+            enabled: !root.viewModel.busy
             currentStage: root.viewModel.currentStage
             onStageRequested: stage => root.viewModel.setCurrentStage(stage)
         }
@@ -78,7 +79,7 @@ Item {
                             delegate: Text { required property var modelData; width: ListView.view.width; text: modelData.name || modelData.url || ""; color: Ui.Theme.text; elide: Text.ElideRight }
                         }
                         RowLayout {
-                            Components.AppButton { text: "전체상품 선택"; onClicked: root.viewModel.pickAllProducts() }
+                            Components.AppButton { text: "전체상품 선택"; enabled: !root.viewModel.busy; onClicked: root.viewModel.pickAllProducts() }
                             Components.AppButton { text: "AI 설정 생성"; selected: true; enabled: !root.viewModel.busy; onClicked: root.viewModel.generate() }
                             Components.AppButton { text: "취소"; enabled: root.viewModel.busy; onClicked: root.viewModel.cancelGenerate() }
                         }
@@ -87,7 +88,7 @@ Item {
                         Text { text: "필드 매핑"; color: Ui.Theme.text; font.pixelSize: 20; font.weight: Font.Bold }
                         Components.MappingTable { Layout.fillWidth: true; Layout.fillHeight: true; model: root.viewModel.mappingRows; viewModel: root.viewModel }
                         RowLayout {
-                            Components.AppButton { text: "선택 적용"; onClicked: root.viewModel.acceptPickedHint() }
+                            Components.AppButton { text: "선택 적용"; enabled: !root.viewModel.busy; onClicked: root.viewModel.acceptPickedHint() }
                             Components.AppButton { text: "전체 테스트"; selected: true; enabled: !root.viewModel.busy; onClicked: root.viewModel.testAll() }
                         }
                     }

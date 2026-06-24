@@ -8,6 +8,8 @@ ListView {
     id: root
     required property var viewModel
     readonly property bool compact: width < 720
+    property real firstRowHeight: 0
+    property real firstRowContentHeight: 0
     clip: true
     spacing: 5
     Accessible.name: "필드 매핑 목록"
@@ -19,12 +21,25 @@ ListView {
         required property string status
         required property string testValue
         required property bool testOk
+        required property int index
+        objectName: "mappingRow-" + index
+        readonly property real contentImplicitHeight: content.implicitHeight
+        function publishGeometry() {
+            if (index === 0) {
+                root.firstRowHeight = height
+                root.firstRowContentHeight = contentImplicitHeight
+            }
+        }
+        Component.onCompleted: publishGeometry()
+        onHeightChanged: publishGeometry()
         width: ListView.view.width
-        height: root.compact ? 104 : 72
+        height: Math.max(root.compact ? 104 : 72, contentImplicitHeight + 18)
         radius: 8
         color: Ui.Theme.surfaceRaised
         border.color: Ui.Theme.border
         ColumnLayout {
+            id: content
+            onImplicitHeightChanged: mappingRow.publishGeometry()
             anchors.fill: parent
             anchors.margins: 9
             spacing: 4
@@ -43,8 +58,8 @@ ListView {
             RowLayout {
                 Layout.alignment: Qt.AlignRight
                 Layout.fillWidth: root.compact
-                AppButton { Layout.fillWidth: root.compact; text: "선택"; onClicked: root.viewModel.pickElement("adapter.product." + mappingRow.key) }
-                AppButton { Layout.fillWidth: root.compact; text: "테스트"; onClicked: root.viewModel.testSingle(mappingRow.key) }
+                AppButton { Layout.fillWidth: root.compact; text: "선택"; enabled: !root.viewModel.busy; onClicked: root.viewModel.pickElement("adapter.product." + mappingRow.key) }
+                AppButton { Layout.fillWidth: root.compact; text: "테스트"; enabled: !root.viewModel.busy; onClicked: root.viewModel.testSingle(mappingRow.key) }
             }
         }
     }

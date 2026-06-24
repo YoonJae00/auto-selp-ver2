@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import re
+import unicodedata
 from collections.abc import Callable, Mapping
 from typing import Any
 
 import yaml
-from PySide6.QtCore import QObject, Property, QTimer, Signal, Slot
+from PySide6.QtCore import QObject, Property, QElapsedTimer, QTimer, Signal, Slot
 
 from app.analyzer.adapter_schema import FIELD_LABELS_KO, get_product_field_mappings
 from app.analyzer.element_picker import suggest_defaults_for_field
@@ -24,6 +25,7 @@ from app.workers.adapter import (
 
 
 MAPPING_ROLES = ("key", "label", "selector", "attribute", "transform", "status", "testValue", "testOk")
+_SHUTDOWN_WORKERS: list[object] = []
 
 
 def yaml_content_hash(text: str) -> str:
@@ -32,6 +34,14 @@ def yaml_content_hash(text: str) -> str:
 
 def _slugify(value: str) -> str:
     return re.sub(r"[^a-z0-9_-]", "", value.lower().replace(" ", "-"))
+
+
+def studio_credential_key(name: str, main_url: str) -> str:
+    normalized_name = unicodedata.normalize("NFKC", name).strip().casefold()
+    normalized_url = unicodedata.normalize("NFKC", main_url).strip().casefold()
+    readable = _slugify(normalized_name) or "supplier"
+    digest = hashlib.sha256(f"{normalized_name}\n{normalized_url}".encode("utf-8")).hexdigest()[:16]
+    return f"studio-{readable[:40]}-{digest}"
 
 
 class AdapterStudioViewModel(BaseViewModel):
@@ -63,6 +73,7 @@ class AdapterStudioViewModel(BaseViewModel):
         self._retired_workers: list[object] = []
         self._operation_id = 0
         self._cancelled_operations: set[int] = set()
+        self._shutting_down = False
         self._pending_hint = None
         self._mapping_hints: list[MappingHint] = []
         self._inputs = {
@@ -149,7 +160,12 @@ class AdapterStudioViewModel(BaseViewModel):
             self._app.update_task(stage)
         self._emit()
 
-    def _connect_worker(self, worker, *, finished, key: str) -> None:
+    def _can_start_operation(self) -> bool:
+        return not self._shutting_down and not self._busy and self._worker is None
+
+    def _connect_worker(self, worker, *, finished, key: str, label: str, stage: str) -> bool:
+        if not self._can_start_operation():
+            return False
         self._operation_id += 1
         operation_id = self._operation_id
         self._worker = worker
@@ -158,8 +174,10 @@ class AdapterStudioViewModel(BaseViewModel):
         if hasattr(worker, "cancelled"):
             worker.cancelled.connect(lambda: self._dispatch_cancelled(operation_id))
         if hasattr(worker, "progress"):
-            worker.progress.connect(lambda message: self._dispatch_progress(operation_id, key, message))
+            worker.progress.connect(lambda message: self._dispatch_progress(operation_id, stage, message))
+        self._task_start(key, label, stage)
         worker.start()
+        return True
 
     def _operation_is_current(self, operation_id: int) -> bool:
         return operation_id == self._operation_id and operation_id not in self._cancelled_operations
@@ -217,6 +235,8 @@ class AdapterStudioViewModel(BaseViewModel):
 
     @Slot()
     def probe(self) -> bool:
+        if not self._can_start_operation():
+            return False
         name = str(self._inputs["supplierName"]).strip()
         url = str(self._inputs["mainUrl"]).strip()
         errors = {}
@@ -232,7 +252,7 @@ class AdapterStudioViewModel(BaseViewModel):
         credentials = (self._inputs["loginUrl"], self._inputs["username"], self._inputs["password"])
         if self._inputs["needsLogin"] and all(credentials):
             try:
-                save_supplier_credentials(_slugify(name), str(credentials[1]), str(credentials[2]))
+                save_supplier_credentials(self._credential_key(), str(credentials[1]), str(credentials[2]))
             except Exception as exc:
                 self._inputs["username"] = self._inputs["password"] = ""
                 self.set_field_errors({"form": f"로그인 정보 저장 실패: {sanitize_diagnostic(exc)}"})
@@ -244,9 +264,10 @@ class AdapterStudioViewModel(BaseViewModel):
         worker = self._factories["probe"](request)
         self._inputs["username"] = self._inputs["password"] = ""
         self.set_field_errors({})
-        self._task_start("adapter-probe", "사이트 분석", "connect")
-        self._connect_worker(worker, finished=self._probe_finished, key="analyze")
-        return True
+        return self._connect_worker(
+            worker, finished=self._probe_finished, key="adapter-probe",
+            label="사이트 분석", stage="analyze",
+        )
 
     def _probe_finished(self, result) -> None:
         self._probe_result = result
@@ -265,6 +286,8 @@ class AdapterStudioViewModel(BaseViewModel):
 
     @Slot()
     def generate(self) -> bool:
+        if not self._can_start_operation():
+            return False
         if self._probe_result is None:
             self.set_field_errors({"form": "먼저 사이트 분석을 실행하세요."})
             return False
@@ -273,9 +296,10 @@ class AdapterStudioViewModel(BaseViewModel):
             self._probe_result, str(self._inputs["supplierName"]), config.llm_provider,
             config.auto_fallback_enabled, list(self._mapping_hints),
         ))
-        self._task_start("adapter-generate", "수집 설정 생성", "analyze")
-        self._connect_worker(worker, finished=lambda text, *_: self._generated(text), key="generate")
-        return True
+        return self._connect_worker(
+            worker, finished=lambda text, *_: self._generated(text),
+            key="adapter-generate", label="수집 설정 생성", stage="generate",
+        )
 
     def _generated(self, text: str) -> None:
         self.acceptGeneratedYaml(text)
@@ -361,6 +385,8 @@ class AdapterStudioViewModel(BaseViewModel):
         return self._start_test(None)
 
     def _start_test(self, fields: list[str] | None) -> bool:
+        if not self._can_start_operation():
+            return False
         try:
             load_adapter_from_text(self._yaml_text)
         except Exception as exc:
@@ -385,9 +411,10 @@ class AdapterStudioViewModel(BaseViewModel):
         )
         worker = self._factories["test"](request)
         self._inputs["username"] = self._inputs["password"] = ""
-        self._task_start("adapter-test", "필드 검증", "validate")
-        self._connect_worker(worker, finished=lambda result: self._test_finished(result, tested_hash), key="validate")
-        return True
+        return self._connect_worker(
+            worker, finished=lambda result: self._test_finished(result, tested_hash),
+            key="adapter-test", label="필드 검증", stage="validate",
+        )
 
     def _test_finished(self, result: dict, tested_hash: str) -> None:
         raw = dict(result).get("__raw_results__", {})
@@ -396,6 +423,8 @@ class AdapterStudioViewModel(BaseViewModel):
 
     @Slot(str)
     def pickElement(self, field_path: str) -> bool:
+        if not self._can_start_operation():
+            return False
         target = str(self._inputs["detailUrl"] or self._inputs["mainUrl"])
         username = password = None
         if self._inputs["needsLogin"]:
@@ -406,16 +435,59 @@ class AdapterStudioViewModel(BaseViewModel):
             field_path, target, self._inputs["loginUrl"] or None, username, password,
             self._adapter_login_config(),
         ))
-        self._task_start("adapter-pick", "요소 선택", "map")
-        self._connect_worker(worker, finished=self._picked, key="map")
-        return True
+        return self._connect_worker(
+            worker, finished=self._picked, key="adapter-pick",
+            label="요소 선택", stage="map",
+        )
 
     def _load_transient_credentials(self) -> tuple[str, str] | None:
         try:
-            return load_supplier_credentials(_slugify(str(self._inputs["supplierName"])))
+            return load_supplier_credentials(self._credential_key())
         except Exception as exc:
             self.set_field_errors({"form": f"로그인 정보 불러오기 실패: {sanitize_diagnostic(exc)}"})
             return None
+
+    def _credential_key(self) -> str:
+        return studio_credential_key(
+            str(self._inputs["supplierName"]), str(self._inputs["mainUrl"])
+        )
+
+    @Slot()
+    def shutdown(self) -> None:
+        self._shutting_down = True
+        if self._worker is not None:
+            worker = self._worker
+            self._worker = None
+            if worker not in self._retired_workers:
+                self._retired_workers.append(worker)
+        workers = list(dict.fromkeys(self._retired_workers))
+        for worker in workers:
+            if hasattr(worker, "requestInterruption"):
+                worker.requestInterruption()
+            self._clear_worker_secret(worker)
+        timer = QElapsedTimer()
+        timer.start()
+        for worker in workers:
+            if hasattr(worker, "isRunning") and worker.isRunning() and hasattr(worker, "wait"):
+                remaining = max(0, 500 - timer.elapsed())
+                worker.wait(remaining)
+        self._retired_workers = [
+            worker for worker in workers
+            if not hasattr(worker, "isRunning") or worker.isRunning()
+        ]
+        for worker in self._retired_workers:
+            if worker not in _SHUTDOWN_WORKERS:
+                _SHUTDOWN_WORKERS.append(worker)
+        self._busy = False
+        self._emit()
+
+    @staticmethod
+    def _clear_worker_secret(worker) -> None:
+        request = getattr(worker, "request", None)
+        if request is None and getattr(worker, "args", None):
+            request = worker.args[0]
+        if request is not None and hasattr(request, "password"):
+            request.password = None
 
     def _adapter_login_config(self) -> dict[str, str] | None:
         try:
