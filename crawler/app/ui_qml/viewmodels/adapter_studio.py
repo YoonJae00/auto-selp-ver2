@@ -79,6 +79,8 @@ class AdapterStudioViewModel(BaseViewModel):
         self._cancelled_operations: set[int] = set()
         self._shutting_down = False
         self._active_credential_key: str | None = None
+        self._active_credential_identity: tuple[str, str, str, bool] | None = None
+        self._active_credential_is_studio = False
         self._pending_hint = None
         self._mapping_hints: list[MappingHint] = []
         self._inputs = {
@@ -141,17 +143,47 @@ class AdapterStudioViewModel(BaseViewModel):
 
     @Slot("QVariantMap")
     def setConnectionInputs(self, values: Mapping[str, Any]) -> None:
+        previous_identity = self._credential_identity()
         for key in ("supplierName", "mainUrl", "listingUrl", "detailUrl", "needsLogin"):
             if key in values:
                 self._inputs[key] = values[key]
+        self._invalidate_credentials_for_identity_change(previous_identity)
         self._emit()
 
     @Slot("QVariantMap")
     def setLoginInputs(self, values: Mapping[str, Any]) -> None:
+        previous_identity = self._credential_identity()
         for key in ("loginUrl", "username", "password"):
             if key in values:
                 self._inputs[key] = str(values[key] or "")
+        self._invalidate_credentials_for_identity_change(previous_identity)
         self._emit()
+
+    def _credential_identity(self) -> tuple[str, str, str, bool]:
+        normalize = lambda value: unicodedata.normalize("NFKC", str(value)).strip().casefold()
+        return (
+            normalize(self._inputs["supplierName"]),
+            normalize(self._inputs["mainUrl"]),
+            normalize(self._inputs["loginUrl"]),
+            bool(self._inputs["needsLogin"]),
+        )
+
+    def _invalidate_credentials_for_identity_change(
+        self, previous_identity: tuple[str, str, str, bool]
+    ) -> None:
+        current_identity = self._credential_identity()
+        if previous_identity == current_identity:
+            return
+        if self._active_credential_key is None:
+            return
+        if self._active_credential_is_studio and self._active_credential_key.startswith("studio-"):
+            try:
+                delete_supplier_credentials(self._active_credential_key)
+            except Exception:
+                pass
+        self._active_credential_key = None
+        self._active_credential_identity = None
+        self._active_credential_is_studio = False
 
     @Slot(bool)
     def setAdvancedEditorOpen(self, open_: bool) -> None:
@@ -260,6 +292,8 @@ class AdapterStudioViewModel(BaseViewModel):
                 credential_key = self._credential_key()
                 save_supplier_credentials(credential_key, str(credentials[1]), str(credentials[2]))
                 self._active_credential_key = credential_key
+                self._active_credential_identity = self._credential_identity()
+                self._active_credential_is_studio = True
             except Exception as exc:
                 self._inputs["username"] = self._inputs["password"] = ""
                 self.set_field_errors({"form": f"로그인 정보 저장 실패: {sanitize_diagnostic(exc)}"})
@@ -448,11 +482,16 @@ class AdapterStudioViewModel(BaseViewModel):
         )
 
     def _load_transient_credentials(self) -> tuple[str, str] | None:
+        if not self._inputs["needsLogin"]:
+            return None
+        if (
+            self._active_credential_key is None
+            or self._active_credential_identity != self._credential_identity()
+        ):
+            return None
         try:
-            key = self._active_credential_key or self._credential_key()
+            key = self._active_credential_key
             credentials = load_supplier_credentials(key)
-            if credentials:
-                self._active_credential_key = key
             return credentials
         except Exception as exc:
             self.set_field_errors({"form": f"로그인 정보 불러오기 실패: {sanitize_diagnostic(exc)}"})
@@ -583,7 +622,12 @@ class AdapterStudioViewModel(BaseViewModel):
         return True
 
     def _migrate_credentials_to_runtime_slug(self, slug: str) -> bool:
-        if self._active_credential_key is None:
+        if not self._inputs["needsLogin"]:
+            return True
+        if (
+            self._active_credential_key is None
+            or self._active_credential_identity != self._credential_identity()
+        ):
             return True
         source_key = self._active_credential_key
         if source_key == slug:
@@ -613,6 +657,8 @@ class AdapterStudioViewModel(BaseViewModel):
         except Exception:
             pass
         self._active_credential_key = slug
+        self._active_credential_identity = self._credential_identity()
+        self._active_credential_is_studio = False
         return True
 
     @Slot()

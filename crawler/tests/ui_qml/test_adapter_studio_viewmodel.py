@@ -281,6 +281,9 @@ def test_test_and_picker_load_credentials_transiently(monkeypatch) -> None:
     vm = AdapterStudioViewModel(app_view_model=AppViewModel(), worker_factories=factories)
     vm.setConnectionInputs({"supplierName": "Test Shop", "mainUrl": "https://shop.example", "detailUrl": "https://shop.example/p/1", "needsLogin": True})
     vm.setLoginInputs({"loginUrl": "https://shop.example/login"})
+    vm._active_credential_key = vm._credential_key()
+    vm._active_credential_identity = vm._credential_identity()
+    vm._active_credential_is_studio = True
     vm.acceptGeneratedYaml(VALID_YAML)
 
     assert vm.testAll() is True
@@ -586,3 +589,97 @@ def test_credential_migration_failure_preserves_studio_key_and_dirty_state(tmp_p
     assert vm._active_credential_key == studio_key
     assert "어댑터 파일은 저장되었지만" in vm.fieldErrors["form"]
     assert "secret" not in vm.fieldErrors["form"]
+
+
+def test_changing_supplier_identity_does_not_copy_previous_studio_credentials(tmp_path, monkeypatch) -> None:
+    from app.ui_qml.viewmodels.adapter_studio import AdapterStudioViewModel
+
+    store = {}
+    deleted = []
+    monkeypatch.setattr("app.ui_qml.viewmodels.adapter_studio.save_supplier_credentials", lambda key, user, password: store.__setitem__(key, (user, password)))
+    monkeypatch.setattr("app.ui_qml.viewmodels.adapter_studio.load_supplier_credentials", lambda key: store.get(key))
+    monkeypatch.setattr("app.ui_qml.viewmodels.adapter_studio.delete_supplier_credentials", lambda key: deleted.append(key) or store.pop(key, None))
+    monkeypatch.setattr("app.ui_qml.viewmodels.adapter_studio.save_adapter", lambda slug, text: tmp_path / f"{slug}.yaml")
+    vm = AdapterStudioViewModel(app_view_model=AppViewModel(), worker_factories={"probe": lambda request: FakeWorker(request)})
+    vm.setConnectionInputs({"supplierName": "A Shop", "mainUrl": "https://a.example", "needsLogin": True})
+    vm.setLoginInputs({"loginUrl": "https://a.example/login", "username": "a", "password": "a-secret"})
+    assert vm.probe() is True
+    a_studio_key = vm._active_credential_key
+    vm.cancelProbe()
+
+    vm.setConnectionInputs({"supplierName": "B Shop", "mainUrl": "https://b.example", "needsLogin": True})
+    vm.setLoginInputs({"loginUrl": "https://b.example/login"})
+    vm.acceptGeneratedYaml(VALID_YAML)
+    vm.acceptValidation(successful_results(), vm.beginValidation())
+
+    assert vm.save() is True
+    assert a_studio_key in deleted
+    assert "b-shop" not in store
+    assert vm._active_credential_key is None
+
+
+def test_disabling_login_deletes_only_unsaved_studio_credentials(monkeypatch) -> None:
+    from app.ui_qml.viewmodels.adapter_studio import AdapterStudioViewModel
+
+    store = {}
+    deleted = []
+    monkeypatch.setattr("app.ui_qml.viewmodels.adapter_studio.save_supplier_credentials", lambda key, user, password: store.__setitem__(key, (user, password)))
+    monkeypatch.setattr("app.ui_qml.viewmodels.adapter_studio.delete_supplier_credentials", lambda key: deleted.append(key) or store.pop(key, None))
+    vm = AdapterStudioViewModel(app_view_model=AppViewModel(), worker_factories={"probe": lambda request: FakeWorker(request)})
+    vm.setConnectionInputs({"supplierName": "A Shop", "mainUrl": "https://a.example", "needsLogin": True})
+    vm.setLoginInputs({"loginUrl": "https://a.example/login", "username": "a", "password": "secret"})
+    assert vm.probe() is True
+    studio_key = vm._active_credential_key
+    vm.cancelProbe()
+
+    vm.setConnectionInputs({"needsLogin": False})
+
+    assert deleted == [studio_key]
+    assert vm._active_credential_key is None
+    assert vm._active_credential_identity is None
+
+
+def test_login_url_change_invalidates_unsaved_studio_key(monkeypatch) -> None:
+    from app.ui_qml.viewmodels.adapter_studio import AdapterStudioViewModel
+
+    deleted = []
+    monkeypatch.setattr("app.ui_qml.viewmodels.adapter_studio.save_supplier_credentials", lambda *_: None)
+    monkeypatch.setattr("app.ui_qml.viewmodels.adapter_studio.delete_supplier_credentials", lambda key: deleted.append(key))
+    vm = AdapterStudioViewModel(app_view_model=AppViewModel(), worker_factories={"probe": lambda request: FakeWorker(request)})
+    vm.setConnectionInputs({"supplierName": "A Shop", "mainUrl": "https://a.example", "needsLogin": True})
+    vm.setLoginInputs({"loginUrl": "https://a.example/login", "username": "a", "password": "secret"})
+    assert vm.probe() is True
+    studio_key = vm._active_credential_key
+    vm.cancelProbe()
+
+    vm.setLoginInputs({"loginUrl": "https://a.example/new-login"})
+
+    assert deleted == [studio_key]
+    assert vm._active_credential_key is None
+
+
+def test_form_reset_preserves_migrated_runtime_key_but_never_reuses_it(tmp_path, monkeypatch) -> None:
+    from app.ui_qml.viewmodels.adapter_studio import AdapterStudioViewModel
+
+    store = {}
+    deleted = []
+    monkeypatch.setattr("app.ui_qml.viewmodels.adapter_studio.save_supplier_credentials", lambda key, user, password: store.__setitem__(key, (user, password)))
+    monkeypatch.setattr("app.ui_qml.viewmodels.adapter_studio.load_supplier_credentials", lambda key: store.get(key))
+    monkeypatch.setattr("app.ui_qml.viewmodels.adapter_studio.delete_supplier_credentials", lambda key: deleted.append(key) or store.pop(key, None))
+    monkeypatch.setattr("app.ui_qml.viewmodels.adapter_studio.save_adapter", lambda slug, text: tmp_path / f"{slug}.yaml")
+    vm = AdapterStudioViewModel(app_view_model=AppViewModel(), worker_factories={"probe": lambda request: FakeWorker(request)})
+    vm.setConnectionInputs({"supplierName": "A Shop", "mainUrl": "https://a.example", "needsLogin": True})
+    vm.setLoginInputs({"loginUrl": "https://a.example/login", "username": "a", "password": "secret"})
+    assert vm.probe() is True
+    vm.cancelProbe()
+    vm.acceptGeneratedYaml(VALID_YAML)
+    vm.acceptValidation(successful_results(), vm.beginValidation())
+    assert vm.save() is True
+    assert "a-shop" in store
+
+    vm.setConnectionInputs({"supplierName": "B Shop", "mainUrl": "https://b.example", "needsLogin": True})
+
+    assert "a-shop" in store
+    assert "a-shop" not in deleted
+    assert vm._active_credential_key is None
+    assert vm._load_transient_credentials() is None
