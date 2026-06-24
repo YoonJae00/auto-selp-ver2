@@ -30,9 +30,6 @@ from app.workers.lifecycle import stop_workers
 
 
 MAPPING_ROLES = ("key", "label", "selector", "attribute", "transform", "status", "testValue", "testOk")
-_SHUTDOWN_WORKERS: list[object] = []
-
-
 def yaml_content_hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
@@ -543,9 +540,6 @@ class AdapterStudioViewModel(BaseViewModel):
                 worker.requestInterruption()
             self._clear_worker_secret(worker)
         self._retired_workers = stop_workers(workers)
-        for worker in self._retired_workers:
-            if worker not in _SHUTDOWN_WORKERS:
-                _SHUTDOWN_WORKERS.append(worker)
         self._busy = False
         self._emit()
 

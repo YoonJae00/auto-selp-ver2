@@ -284,7 +284,11 @@ class CrawlTab(BaseTab):
         self.discover_btn.setEnabled(not (self._discovery_worker and self._discovery_worker.isRunning()))
 
     def closeEvent(self, event) -> None:  # noqa: N802
+        self.shutdown()
+        event.accept()
+
+    def shutdown(self) -> None:
+        """Stop legacy workers; process-level lifecycle registry retains survivors."""
         stop_workers([self._discovery_worker, self._worker])
         self._discovery_worker = None
         self._worker = None
-        event.accept()

@@ -20,11 +20,13 @@ from app.ui.tabs.export_tab import ExportTab
 from app.ui.tabs.monitor_tab import MonitorTab
 from app.ui.tabs.settings_tab import SettingsTab
 from app.ui.tabs.suppliers_tab import SuppliersTab
+from app.workers.lifecycle import install_shutdown_hook
 
 
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
+        install_shutdown_hook()
         self.config: AppConfig = load_config()
 
         self.setWindowTitle("Auto-Selp Crawler")
@@ -39,7 +41,8 @@ class MainWindow(QMainWindow):
         tabs = QTabWidget(self)
         tabs.addTab(SuppliersTab(self), "도매처 관리")
         tabs.addTab(AdapterBuilderTab(self), "신규 사이트 등록")
-        tabs.addTab(CrawlTab(self), "상품 수집")
+        self.crawl_tab = CrawlTab(self)
+        tabs.addTab(self.crawl_tab, "상품 수집")
         tabs.addTab(MonitorTab(self), "재고 모니터링")
         tabs.addTab(ExportTab(self), "엑셀 저장")
         tabs.addTab(SettingsTab(self), "설정")
@@ -81,3 +84,7 @@ class MainWindow(QMainWindow):
 
     def show_status(self, message: str) -> None:
         self.statusBar().showMessage(message)
+
+    def closeEvent(self, event) -> None:  # noqa: N802
+        self.crawl_tab.shutdown()
+        event.accept()

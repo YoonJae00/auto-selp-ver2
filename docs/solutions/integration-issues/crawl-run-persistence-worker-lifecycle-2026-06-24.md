@@ -37,7 +37,9 @@ The crawler originally created its `CrawlRun` only after adapter loading and bro
 
 Create and commit the `CrawlRun(status="running")` inside a session-guarded `try/finally`, before adapter checks or browser setup. Once an engine object exists, always attempt `engine.close()` even when startup only partially succeeds. Persist `completed` or emit discovery results only after teardown succeeds; translate setup, crawl, and teardown exceptions into a sanitized `failed` run with `finished_at` when the database remains writable.
 
-At the view-model boundary, retain cancelled or completed workers until `isRunning()` becomes false. Shared task mutations use opaque owner tokens rather than task keys, so stale or same-key foreign signals are rejected. Shutdown requests cooperative cancellation and waits; only an unresponsive thread reaches the documented last-resort terminate-and-wait path.
+At the view-model boundary, retain cancelled or completed workers until `isRunning()` becomes false. Shared task mutations use opaque owner tokens rather than task keys, so stale or same-key foreign signals are rejected. Shutdown requests cooperative cancellation and waits; only an unresponsive thread reaches the documented last-resort terminate-and-wait path. Threads that survive those bounded attempts are registered in a process-lifetime registry and released automatically on `finished` or `destroyed`; the application shutdown hook makes one longer bounded drain attempt.
+
+Legacy QWidget screens expose an explicit `shutdown()` method. The top-level window invokes it from its own `closeEvent`, because relying only on a child widget's close event does not establish safe worker teardown ordering.
 
 ```python
 run = CrawlRun(status="running", ...)
@@ -68,6 +70,8 @@ The database record spans the complete observable operation when persistence is 
 - Test cancel-then-immediate-start with a worker whose `isRunning()` remains true during cleanup.
 - Invalidate operation IDs before shutdown cancellation and assert late result, error, and cancelled signals do not mutate shared state.
 - Reject same-key task acquisition when the opaque owner differs; a string key is a label, not an ownership capability.
+- Keep a process-owned strong reference to every thread that survives bounded termination, and test that deleting its view model cannot destroy the thread wrapper.
+- Trigger worker shutdown from the top-level window before accepting application close; child close events are only a secondary safety net.
 - Never persist success until all failure-producing teardown required by the operation has completed.
 
 ## Related Issues

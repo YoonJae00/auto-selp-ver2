@@ -239,6 +239,46 @@ def test_shutdown_uses_last_resort_for_worker_that_ignores_cancellation() -> Non
     assert worker.interrupted and worker.terminated and not worker.running
 
 
+def test_process_registry_retains_survivor_after_viewmodel_deletion(qt_app) -> None:
+    import gc
+    import weakref
+    from PySide6.QtCore import QObject, Signal
+    from app.ui_qml.viewmodels.crawl import CrawlViewModel
+    from app.workers.lifecycle import surviving_workers
+
+    class Survivor(QObject):
+        finished = Signal()
+        running = True
+        def requestInterruption(self): pass
+        def isRunning(self): return self.running
+        def wait(self, _timeout): return False
+        def terminate(self): pass
+
+    worker = Survivor()
+    vm = CrawlViewModel(supplier_loader=lambda: [])
+    vm._retired_workers = [worker]
+    vm.shutdown()
+    vm_ref = weakref.ref(vm)
+    del vm
+    gc.collect()
+
+    assert worker in surviving_workers()
+    assert vm_ref() is None
+    worker.running = False
+    worker.finished.emit()
+    assert worker not in surviving_workers()
+
+
+def test_main_window_close_invokes_crawl_shutdown() -> None:
+    from app.ui.main_window import MainWindow
+
+    calls = []
+    fake_window = SimpleNamespace(crawl_tab=SimpleNamespace(shutdown=lambda: calls.append("shutdown")))
+    event = SimpleNamespace(accept=lambda: calls.append("accepted"))
+    MainWindow.closeEvent(fake_window, event)
+    assert calls == ["shutdown", "accepted"]
+
+
 def test_crawl_screen_scrolls_and_swaps_start_cancel_controls() -> None:
     qml = (Path(__file__).parents[2] / "app" / "ui_qml" / "qml" / "screens" / "CrawlScreen.qml").read_text(encoding="utf-8")
     assert 'objectName: "crawlScrollView"' in qml
