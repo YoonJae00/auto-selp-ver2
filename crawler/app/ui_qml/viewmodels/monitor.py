@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from PySide6.QtCore import Property, QObject, Signal, Slot
-from sqlalchemy import func, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.orm import Session
 
 from app.db.models import CrawlRun, Product, StockChange, Supplier
@@ -45,9 +45,11 @@ class MonitorViewModel(BaseViewModel):
         self,
         parent: QObject | None = None,
         session_factory: Callable[[], Session] = get_session,
+        schedule_loader: Callable[[str], Mapping[str, Any] | None] | None = None,
     ) -> None:
         super().__init__(parent)
         self._session_factory = session_factory
+        self._schedule_loader = schedule_loader
         self._events = RoleListModel(EVENT_ROLES, parent=self)
         self._suppliers = RoleListModel(SUPPLIER_ROLES, parent=self)
         self._supplier_filter = ""
@@ -119,20 +121,30 @@ class MonitorViewModel(BaseViewModel):
         supplier = session.get(Supplier, supplier_id)
         if supplier is None:
             return {}
-        runs = session.execute(
+        latest = session.execute(
             select(CrawlRun).where(
                 CrawlRun.supplier_id == supplier_id, CrawlRun.run_type == "stock_check"
-            ).order_by(CrawlRun.started_at.desc())
-        ).scalars().all()
-        latest = runs[0] if runs else None
-        failure = next((run for run in runs if run.status == "failed" or run.error), None)
+            ).order_by(CrawlRun.started_at.desc(), CrawlRun.id.desc()).limit(1)
+        ).scalar_one_or_none()
+        failure = session.execute(
+            select(CrawlRun).where(
+                CrawlRun.supplier_id == supplier_id,
+                CrawlRun.run_type == "stock_check",
+                or_(CrawlRun.status == "failed", CrawlRun.error.is_not(None)),
+            ).order_by(CrawlRun.started_at.desc(), CrawlRun.id.desc()).limit(1)
+        ).scalar_one_or_none()
         last_at = (latest.finished_at or latest.started_at) if latest else None
-        next_at = (_aware(last_at) + timedelta(hours=supplier.monitor_interval_hours)) if supplier.monitor_enabled and last_at else None
+        estimated_next = (_aware(last_at) + timedelta(hours=supplier.monitor_interval_hours)) if supplier.monitor_enabled and last_at else None
+        scheduler_state = self._schedule_loader(supplier_id) if self._schedule_loader else None
+        real_next = scheduler_state.get("next_run") if scheduler_state else None
+        next_at = real_next or estimated_next
         return {
             "supplierId": supplier.id, "supplierName": supplier.name,
             "monitorEnabled": bool(supplier.monitor_enabled),
             "intervalHours": supplier.monitor_interval_hours,
-            "lastCheckAt": _iso(last_at), "nextCheckAt": _iso(next_at),
+            "lastCheckAt": _iso(last_at),
+            "nextCheckAt": _iso(next_at) if isinstance(next_at, datetime) else str(next_at or ""),
+            "nextCheckEstimated": bool(estimated_next and not real_next),
             "latestFailure": failure.error or "" if failure else "",
         }
 
@@ -153,6 +165,8 @@ class MonitorViewModel(BaseViewModel):
             known_ids = {row["id"] for row in rows}
             if self._selected_change_id not in known_ids:
                 self._selected_change_id = ""
+                if not self._supplier_filter:
+                    self._selected_supplier_id = ""
             if self._supplier_filter:
                 self._selected_supplier_id = self._supplier_filter
             elif self._selected_change_id:
@@ -184,6 +198,13 @@ class MonitorViewModel(BaseViewModel):
     def selectChange(self, change_id: str) -> None:
         self._selected_change_id = change_id if any(row["id"] == change_id for row in self._events._rows) else ""
         self.refresh()
+
+    @Slot(int)
+    def selectEventAt(self, index: int) -> None:
+        if not 0 <= index < len(self._events._rows):
+            self.selectChange("")
+            return
+        self.selectChange(str(self._events._rows[index]["id"]))
 
     def _acknowledge(self, selected_only: bool) -> None:
         try:

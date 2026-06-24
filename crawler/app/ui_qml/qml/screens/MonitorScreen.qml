@@ -21,13 +21,26 @@ Item {
         return new Date(value).toLocaleString(Qt.locale(), Locale.ShortFormat)
     }
 
+    Connections {
+        target: root.viewModel
+        function onStateChanged() {
+            if (root.appViewModel.detailPanelOpen
+                    && !root.viewModel.selectedSupplierSchedule.supplierId) {
+                root.appViewModel.set_detail_panel_open(false)
+            }
+        }
+    }
+
     ScrollView {
+        id: dashboardScroll
+        objectName: "monitorScrollView"
         anchors.fill: parent
         clip: true
-        contentWidth: availableWidth
+        contentWidth: Math.max(root.minimumContentWidth, availableWidth)
 
         ColumnLayout {
-            width: Math.max(root.minimumContentWidth, parent.width)
+            objectName: "monitorDashboard"
+            width: dashboardScroll.contentWidth
             spacing: 12
 
             GridLayout {
@@ -69,7 +82,7 @@ Item {
                 }
                 Item { Layout.fillWidth: true }
                 Text { objectName: "unreadMarkerLegend"; text: "● 굵은 글씨: 읽지 않음"; color: Ui.Theme.textMuted; font.pixelSize: 11 }
-                AppButton { text: "새로고침"; onClicked: root.viewModel.refresh() }
+                AppButton { objectName: "monitorRefreshButton"; text: "새로고침"; onClicked: root.viewModel.refresh() }
             }
 
             RowLayout {
@@ -86,6 +99,10 @@ Item {
                     model: root.viewModel.events
                     emptyTitle: "변경 이벤트가 없습니다"
                     emptyDescription: "필터를 바꾸거나 다음 재고 확인을 기다려 주세요."
+                    onRowActivated: index => {
+                        root.viewModel.selectEventAt(index)
+                        root.openScheduleDetail()
+                    }
                     delegate: Rectangle {
                         id: eventRow
                         required property var model
@@ -96,8 +113,7 @@ Item {
                         border.color: Ui.Theme.border
                         Accessible.role: Accessible.ListItem
                         Accessible.name: model.supplierName + " " + model.productName + " " + model.changeLabel + (model.acknowledged ? " 읽음" : " 읽지 않음")
-                        Keys.onReturnPressed: { root.viewModel.selectChange(model.id); root.openScheduleDetail() }
-                        MouseArea { anchors.fill: parent; onClicked: { eventTable.currentIndex = eventRow.index; root.viewModel.selectChange(eventRow.model.id); root.openScheduleDetail() } }
+                        MouseArea { anchors.fill: parent; onClicked: { eventTable.currentIndex = eventRow.index; eventTable.rowActivated(eventRow.index) } }
                         RowLayout {
                             anchors.fill: parent; anchors.margins: 9; spacing: 8
                             Text { text: eventRow.model.acknowledged ? "○" : "●"; color: eventRow.model.acknowledged ? Ui.Theme.textMuted : Ui.Theme.accent; Accessible.name: eventRow.model.acknowledged ? "읽음" : "읽지 않음" }
@@ -126,7 +142,7 @@ Item {
                     enabled: root.viewModel.selectedChangeId.length > 0
                     onClicked: root.viewModel.acknowledgeSelected()
                 }
-                AppButton { text: "표시된 항목 모두 읽음"; enabled: (root.viewModel.metrics.unread || 0) > 0; onClicked: root.viewModel.acknowledgeAll() }
+                AppButton { objectName: "monitorAckAllButton"; text: "표시된 항목 모두 읽음"; enabled: (root.viewModel.metrics.unread || 0) > 0; onClicked: root.viewModel.acknowledgeAll() }
             }
             Text { visible: text.length > 0; text: root.viewModel.fieldErrors.form || ""; color: Ui.Theme.dangerForeground; Accessible.role: Accessible.Alert }
         }

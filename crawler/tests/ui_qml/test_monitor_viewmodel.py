@@ -5,8 +5,13 @@ from datetime import datetime, timezone
 import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
+from PySide6.QtCore import QMetaObject, QObject, Qt, QUrl
+from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent
+from PySide6.QtTest import QTest
 
 from app.db.models import Base, CrawlRun, Product, StockChange, Supplier
+from app.ui_qml.application import QML_DIRECTORY
+from app.ui_qml.viewmodels.app import AppViewModel
 from app.ui_qml.viewmodels.monitor import MonitorViewModel
 
 
@@ -90,7 +95,102 @@ def test_schedule_uses_latest_stock_check_and_calculates_next(seeded) -> None:
     assert schedule["intervalHours"] == 6
     assert schedule["lastCheckAt"].endswith("+00:00")
     assert schedule["nextCheckAt"] == "2026-06-24T13:00:00+00:00"
+    assert schedule["nextCheckEstimated"] is True
     assert schedule["latestFailure"] == "network failed"
+
+
+def test_injected_scheduler_state_overrides_estimate_after_restart(seeded) -> None:
+    actual_next_run = datetime(2026, 6, 24, 9, 30, tzinfo=timezone.utc)
+    vm = MonitorViewModel(
+        session_factory=seeded,
+        schedule_loader=lambda supplier_id: {
+            "supplier_id": supplier_id,
+            "next_run": actual_next_run,
+        },
+    )
+    vm.setSupplierFilter("s1")
+
+    assert vm.selectedSupplierSchedule["nextCheckAt"] == actual_next_run.isoformat()
+    assert vm.selectedSupplierSchedule["nextCheckEstimated"] is False
+    assert vm.selectedSupplierSchedule["nextCheckAt"] != "2026-06-24T13:00:00+00:00"
+
+
+def test_filtering_out_selection_clears_stale_schedule(seeded) -> None:
+    vm = MonitorViewModel(session_factory=seeded)
+    vm.selectChange("c1")
+    assert vm.selectedSupplierSchedule["supplierId"] == "s1"
+
+    vm.setChangeType("restocked")
+
+    assert vm.selectedChangeId == ""
+    assert vm.selectedSupplierSchedule == {}
+
+
+def test_schedule_detail_queries_only_latest_rows(seeded) -> None:
+    statements: list[str] = []
+
+    class TrackingSession:
+        def __init__(self): self.inner = seeded()
+        def __enter__(self): return self
+        def __exit__(self, *_): self.inner.close()
+        def execute(self, statement, *args):
+            statements.append(str(statement))
+            return self.inner.execute(statement, *args)
+        def scalar(self, *args): return self.inner.scalar(*args)
+        def get(self, *args): return self.inner.get(*args)
+
+    vm = MonitorViewModel(session_factory=TrackingSession)
+    statements.clear()
+    vm.setSupplierFilter("s1")
+    history_queries = [
+        sql for sql in statements
+        if "FROM crawl_runs" in sql and "count(" not in sql.lower()
+    ]
+    assert len(history_queries) == 2
+    assert all("LIMIT" in sql for sql in history_queries)
+
+
+def test_monitor_table_enter_and_space_select_and_open_detail(qt_app, seeded) -> None:
+    engine = QQmlApplicationEngine()
+    engine.addImportPath(str(QML_DIRECTORY))
+    vm = MonitorViewModel(session_factory=seeded)
+    app_vm = AppViewModel()
+    engine.rootContext().setContextProperty("TestMonitorVM", vm)
+    engine.rootContext().setContextProperty("TestAppVM", app_vm)
+    component = QQmlComponent(engine)
+    component.setData(
+        b'import QtQuick\nimport QtQuick.Controls.Basic\nimport "screens" as Screens\n'
+        b'ApplicationWindow { width: 900; height: 620; visible: true; '
+        b'Screens.MonitorScreen { anchors.fill: parent; viewModel: TestMonitorVM; appViewModel: TestAppVM } }',
+        QUrl.fromLocalFile(str(QML_DIRECTORY / "MonitorKeyboardProbe.qml")),
+    )
+    window = component.create(engine.rootContext())
+    view = window.findChild(QObject, "dataTableView") if window else None
+
+    assert not component.errors()
+    assert window is not None and view is not None
+    QTest.qWaitForWindowExposed(window)
+    window.requestActivate()
+    QTest.qWaitForWindowActive(window)
+    view.setProperty("currentIndex", 0)
+    view.setProperty("focus", True)
+    assert QMetaObject.invokeMethod(view, "forceActiveFocus") is True
+    QTest.keyClick(window, Qt.Key_Return)
+    qt_app.processEvents()
+    assert vm.selectedChangeId == _rows(vm.events)[0]["id"]
+    assert app_vm.detailPanelOpen is True
+
+    vm.setChangeType("sold_out")
+    qt_app.processEvents()
+    assert vm.selectedChangeId == ""
+    assert app_vm.detailPanelOpen is False
+
+    vm.setChangeType("")
+    view.setProperty("currentIndex", 1)
+    QTest.keyClick(window, Qt.Key_Space)
+    qt_app.processEvents()
+    assert vm.selectedChangeId == _rows(vm.events)[1]["id"]
+    assert app_vm.detailPanelOpen is True
 
 
 def test_acknowledge_rolls_back_and_sanitizes_form_error(seeded) -> None:

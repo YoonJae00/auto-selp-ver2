@@ -1,6 +1,7 @@
 ---
 title: Shared responsive detail drawers for QML dashboard screens
 date: 2026-06-24
+last_updated: 2026-06-24
 category: docs/solutions/design-patterns
 module: crawler QML desktop UI
 problem_type: design_pattern
@@ -51,6 +52,10 @@ The screen should only decide when detail is relevant. Supplier-filter activatio
 
 Test the shared contract at both sides of the shell breakpoint. At a wide width, verify the wide drawer contains the route detail fields. At the minimum supported width, verify the overlay contains the same last-check, next-check, and failure fields. Preserve the shell's existing Escape, close-button, and focus-trap regression tests.
 
+Keep the screen's scroll extent tied to the dashboard minimum width, not only the viewport's current `availableWidth`. Opening a persistent drawer can shrink the central viewport below the dashboard's usable width; explicit `contentWidth: Math.max(minimumContentWidth, availableWidth)` preserves controls through horizontal scrolling instead of clipping them.
+
+Put keyboard activation at the reusable table boundary. `DataTable` emits one `rowActivated(index)` signal for pointer clicks, Enter, and Space, while route-specific screens translate the index through their view model and open the appropriate detail. This keeps virtualized delegates accessible without depending on a delegate item retaining focus.
+
 For dashboard metrics derived from different data domains, state filtering semantics explicitly. Monitor event metrics follow supplier and event-type filters, while failed schedule counts follow only the supplier filter because a schedule failure is not an event change type. A test should lock that distinction down.
 
 ## Why This Matters
@@ -63,6 +68,7 @@ A screen-local responsive panel can appear correct at the development width whil
 - When the shell already owns modal scrims, focus handling, or keyboard dismissal.
 - When multiple routes need specialized drawer bodies without duplicating drawer chrome.
 - When a metric combines event data with operational run or scheduler data.
+- When a persistent drawer reduces the remaining dashboard viewport below its minimum usable width.
 
 ## Examples
 

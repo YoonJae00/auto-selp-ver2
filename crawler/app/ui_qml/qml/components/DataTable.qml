@@ -13,6 +13,7 @@ GlassPanel {
     property string emptyDescription: "데이터가 준비되면 여기에 표시됩니다."
     property alias currentIndex: view.currentIndex
     readonly property alias count: view.count
+    signal rowActivated(int index)
 
     Accessible.name: accessibleName
     Accessible.role: Accessible.List
@@ -40,7 +41,10 @@ GlassPanel {
             }
             MouseArea {
                 anchors.fill: parent
-                onClicked: view.currentIndex = parent.index
+                onClicked: {
+                    view.currentIndex = parent.index
+                    root.rowActivated(parent.index)
+                }
             }
         }
     }
@@ -56,6 +60,14 @@ GlassPanel {
         boundsBehavior: Flickable.StopAtBounds
         reuseItems: true
         focus: true
+        Keys.onReturnPressed: event => {
+            if (currentIndex >= 0) root.rowActivated(currentIndex)
+            event.accepted = currentIndex >= 0
+        }
+        Keys.onSpacePressed: event => {
+            if (currentIndex >= 0) root.rowActivated(currentIndex)
+            event.accepted = currentIndex >= 0
+        }
         highlight: Rectangle {
             color: "transparent"
             border.color: Ui.Theme.accent

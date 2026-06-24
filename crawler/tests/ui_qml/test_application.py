@@ -126,6 +126,43 @@ def test_monitor_schedule_detail_uses_shared_wide_and_overlay_drawers(qt_app) ->
         assert field.property("text")
 
 
+def test_monitor_drawer_open_keeps_dashboard_horizontally_usable(qt_app) -> None:
+    engine = create_engine()
+    root = engine.rootObjects()[0]
+    app_vm = engine.property("appViewModel")
+    monitor = root.findChild(QObject, "monitorScreen")
+    scroll = monitor.findChild(QObject, "monitorScrollView")
+
+    app_vm.navigate("monitor")
+    app_vm.set_detail_panel_open(True)
+    qt_app.processEvents()
+
+    assert root.property("width") == 1180
+    assert scroll.property("contentWidth") >= monitor.property("minimumContentWidth")
+    assert scroll.property("contentWidth") >= scroll.property("availableWidth")
+    for name in ("monitorRefreshButton", "ackSelectedButton", "monitorAckAllButton"):
+        control = monitor.findChild(QObject, name)
+        assert control is not None
+        assert control.property("x") + control.property("width") <= control.parent().property("width")
+
+
+def test_monitor_schedule_labels_estimated_next_check(qt_app) -> None:
+    engine = create_engine()
+    component = QQmlComponent(engine)
+    component.setData(
+        b'import QtQuick\nimport "components" as Components\n'
+        b'Components.MonitorScheduleDetail { width: 300; height: 300; schedule: ({'
+        b'nextCheckEstimated: true, nextCheckAt: "2026-06-24T13:00:00+00:00"}) }',
+        QUrl.fromLocalFile(str(QML_DIRECTORY / "MonitorScheduleProbe.qml")),
+    )
+    detail = component.create(engine.rootContext())
+    next_check = detail.findChild(QObject, "monitorNextCheckText") if detail else None
+
+    assert not component.errors()
+    assert next_check is not None
+    assert next_check.property("text").startswith("예상 다음 확인")
+
+
 def test_theme_and_shared_control_can_be_instantiated(qt_app) -> None:
     engine = create_engine()
     component = QQmlComponent(engine)
@@ -295,8 +332,8 @@ def test_data_table_fallback_rows_are_pointer_selectable(qt_app) -> None:
     component.setData(
         b'''import QtQuick\nimport QtQuick.Controls.Basic\n'''
         b'''import "components" as Components\n'''
-        b'''ApplicationWindow { width: 300; height: 150; visible: true\n'''
-        b'''Components.DataTable { anchors.fill: parent; model: ["first", "second"] } }''',
+        b'''ApplicationWindow { id: probe; width: 300; height: 150; visible: true; property int activated: -1\n'''
+        b'''Components.DataTable { anchors.fill: parent; model: ["first", "second"]; onRowActivated: index => probe.activated = index } }''',
         QUrl.fromLocalFile(str(QML_DIRECTORY / "DataTableProbe.qml")),
     )
     window = component.create(engine.rootContext())
@@ -315,6 +352,18 @@ def test_data_table_fallback_rows_are_pointer_selectable(qt_app) -> None:
     qt_app.processEvents()
 
     assert view.property("currentIndex") == 1
+    assert window.property("activated") == 1
+
+    view.setProperty("focus", True)
+    assert QMetaObject.invokeMethod(view, "forceActiveFocus") is True
+    QTest.keyClick(window, Qt.Key_Return)
+    qt_app.processEvents()
+    assert window.property("activated") == 1
+
+    view.setProperty("currentIndex", 0)
+    QTest.keyClick(window, Qt.Key_Space)
+    qt_app.processEvents()
+    assert window.property("activated") == 0
 
 
 def test_task_panel_log_view_tracks_newest_entry(qt_app) -> None:
