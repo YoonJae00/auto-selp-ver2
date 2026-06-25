@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, QUrl, Signal
 
 from app.exporters.history import ExportHistoryStore
 from app.ui_qml.viewmodels.app import AppViewModel
@@ -51,6 +51,25 @@ def test_output_path_is_private_and_extension_is_enforced(tmp_path):
     vm.setOutputPath(str(tmp_path / "report"))
     assert not hasattr(vm, "outputPath")
     assert vm._output_path == tmp_path / "report.xlsx"
+
+
+def test_dialog_selected_file_suggests_default_and_validated_export_name(tmp_path):
+    vm = ExportViewModel(
+        supplier_loader=lambda: [SimpleNamespace(id="s1", name="One Supplier")],
+        scope_loader=lambda supplier_id: (1, 0, []),
+        exports_dir=tmp_path,
+    )
+
+    assert isinstance(vm.dialogSelectedFile, QUrl)
+    assert vm.dialogSelectedFile.toLocalFile() == str(tmp_path / "export.xlsx")
+
+    vm.setSupplierId("s1")
+    assert vm.validateScope() is True
+
+    suggested = Path(vm.dialogSelectedFile.toLocalFile())
+    assert suggested.parent == tmp_path
+    assert suggested.name.startswith("One_Supplier_")
+    assert suggested.suffix == ".xlsx"
 
 
 def test_history_is_newest_first_and_corrupt_is_safe(tmp_path):

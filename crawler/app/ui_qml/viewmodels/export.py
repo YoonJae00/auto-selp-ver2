@@ -7,7 +7,6 @@ import re
 from typing import Any
 
 from PySide6.QtCore import Property, QTimer, QUrl, Signal, Slot
-from PySide6.QtWidgets import QFileDialog
 from sqlalchemy import select
 
 from app.db.models import Product, Supplier
@@ -87,6 +86,7 @@ class ExportViewModel(BaseViewModel):
     warningAcknowledged = Property(bool, lambda self: self._warning_acknowledged, notify=stateChanged)
     busy = Property(bool, lambda self: self._busy, notify=stateChanged)
     destinationName = Property(str, lambda self: self._output_path.name if self._output_path else "", notify=stateChanged)
+    dialogSelectedFile = Property(QUrl, lambda self: QUrl.fromLocalFile(str(self._output_path or self._exports_dir / "export.xlsx")), notify=stateChanged)
     selectedIssueDetail = Property("QVariantMap", lambda self: dict(self._selected_issue_detail), notify=stateChanged)
 
     @Property(bool, notify=stateChanged)
@@ -165,6 +165,10 @@ class ExportViewModel(BaseViewModel):
 
     @Slot(str)
     def setOutputPath(self, path: str) -> None:
+        if isinstance(path, QUrl):
+            path = path.toLocalFile()
+        elif str(path).startswith("file:"):
+            path = QUrl(str(path)).toLocalFile()
         candidate = Path(path).expanduser()
         if candidate.suffix.lower() != ".xlsx":
             candidate = candidate.with_suffix(".xlsx")
@@ -174,13 +178,12 @@ class ExportViewModel(BaseViewModel):
     @Slot()
     def chooseOutputFile(self) -> None:
         initial = str(self._output_path or self._exports_dir / "export.xlsx")
-        if self._picker:
-            try:
-                selected = self._picker(initial)
-            except TypeError:
-                selected = self._picker()
-        else:
-            selected = QFileDialog.getSaveFileUrl(None, "Excel 내보내기", QUrl.fromLocalFile(initial), "Excel (*.xlsx)")[0]
+        if not self._picker:
+            return
+        try:
+            selected = self._picker(initial)
+        except TypeError:
+            selected = self._picker()
         if isinstance(selected, tuple):
             selected = selected[0]
         path = selected.toLocalFile() if isinstance(selected, QUrl) else str(selected or "")

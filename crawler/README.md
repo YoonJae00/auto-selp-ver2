@@ -9,7 +9,8 @@
 - **카테고리 크롤링**: 전체상품/카테고리 트리 선택 후 자동 수집 (의존 옵션 지원)
 - **품절 모니터링**: 주기적 재크롤링으로 품절/복구/가격변동 감지
 - **엑셀 내보내기**: Auto-Selp 표준 스키마(`products`/`product_options`) 엑셀 출력 → 기존 `/upload`와 연동
-- **Windows 지원**: 시스템 Edge/Chrome 사용, Inno Setup 인스크톨러 배포
+- **QML 데스크톱 UI**: 사이드바 내비게이션, 작업 공간, 공유 상세 패널, 시스템 테마/감소된 모션/적응형 효과 지원
+- **Windows 지원**: 시스템 Edge/Chrome 사용, PyInstaller + Inno Setup 인스톨러 배포
 
 ## 시스템 요구사항
 
@@ -42,42 +43,42 @@ source .venv/bin/activate
 python main.py
 ```
 
-첫 실행 시 설정 마법사가 나타납니다:
+첫 실행 시 앱 안의 초기 설정 화면이 표시됩니다:
 1. LLM 제공자(Gemini/OpenAI) 및 API 키 입력
 2. 브라우저 채널 확인 (Edge 권장)
-3. 데이터 저장 위치 확인
+3. 설정을 완료하면 사이드바 기반 작업 공간으로 이동
 
 ## 사용 순서
 
-### 1. 도매처 등록 (도매처 탭)
+### 1. 도매처 등록 (도매처 작업 공간)
 - "새 도매처 추가" 버튼
 - 도매처명, 웹사이트 URL, 로그인 계정 입력
 - 어댑터가 없으면 어댑터 빌더에서 생성
 
-### 2. 어댑터 생성 (어댑터 빌더 탭)
+### 2. 어댑터 생성 (어댑터 스튜디오)
 - 도매처명, 메인 URL, (선택) 목록/상세 URL 입력
 - "1. 사이트 프로브" → DOM 구조 자동 분석
 - "2. LLM 어댑터 생성" → Gemini/GPT가 YAML 어댑터 생성
 - YAML 에디터에서 내용 확인/수정
 - "3. 어댑터 저장"
 
-### 3. 크롤링 실행 (크롤링 탭)
+### 3. 크롤링 실행 (크롤링 작업 공간)
 - 도매처 선택 → "카테고리 탐색"
 - 카테고리 트리에서 크롤링할 항목 체크
 - 최대 페이지, 지연 설정
 - "크롤링 시작"
 
-### 4. 내보내기 (내보내기 탭)
+### 4. 내보내기 (내보내기 작업 공간)
 - 도매처 선택 (또는 전체)
 - "엑셀로 내보내기" → 파일 저장
 - 저장된 엑셀을 Auto-Selp `/upload` 페이지에서 업로드
 
-### 5. 품절 모니터링 (품절 모니터 탭)
+### 5. 품절 모니터링 (모니터 작업 공간)
 - 도매처 등록 시 "품절 모니터링 활성화" 체크
 - 주기(6/12/24시간) 설정
 - 품절/복구/가격변동 이력을 대시보드에서 확인
 
-## 설정 (설정 탭)
+## 설정 (설정 작업 공간)
 
 | 설정 | 설명 |
 | --- | --- |
@@ -101,11 +102,17 @@ iscc installer.iss
 
 GitHub Actions(`crawler-v*` 태그 푸시 시)에서 Windows 빌드 및 인스톨러 생성이 자동으로 이루어집니다.
 
+### Windows 검증 대상
+
+- Windows 10 64비트: Edge 설치 환경에서 실행, 초기 설정 화면, 사이드바 내비게이션, 크롤링/내보내기 기본 흐름 확인
+- Windows 11 64비트: 시스템 라이트/다크 테마 연동, 감소된 모션 설정, Mica/반투명 효과의 안전한 폴백 확인
+- Windows 10/11 공통: PyInstaller 배포본에서 QML 화면과 assets가 로드되고 `global.qss` 없이 시작되는지 확인
+
 ## 데이터 저장 위치
 
 | OS | 경로 |
 | --- | --- |
-| Windows | `%APPDATA%\auto-selp-crawler\` |
+| Windows | `%LOCALAPPDATA%\auto-selp-crawler\` |
 | macOS | `~/Library/Application Support/auto-selp-crawler/` |
 
 ## 보안
@@ -124,7 +131,7 @@ python -m pytest tests/ -v
 
 ## 기술 스택
 
-- PySide6 (Qt for Python) - GUI
+- PySide6 (Qt Quick/QML for Python) - GUI
 - Playwright - 브라우저 자동화
 - SQLAlchemy + SQLite - 로컬 저장
 - keyring - 자격증명 관리

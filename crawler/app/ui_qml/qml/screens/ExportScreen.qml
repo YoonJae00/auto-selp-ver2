@@ -2,6 +2,7 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import QtQuick.Controls.Basic
+import QtQuick.Dialogs
 import QtQuick.Layouts
 import "../components"
 import ".." as Ui
@@ -11,6 +12,14 @@ Item {
     objectName: "exportScreen"
     required property var viewModel
     readonly property int minimumContentWidth: 620
+    FileDialog {
+        id: exportFileDialog
+        title: "Excel 내보내기"
+        fileMode: FileDialog.SaveFile
+        defaultSuffix: "xlsx"
+        nameFilters: ["Excel (*.xlsx)"]
+        onAccepted: root.viewModel.setOutputPath(selectedFile)
+    }
 
     ScrollView {
         id: exportScroll
@@ -73,7 +82,14 @@ Item {
                     Text { text: "3. 대상"; color: Ui.Theme.text; font.bold: true; font.pixelSize: 16 }
                     RowLayout {
                         Text { Layout.fillWidth: true; text: root.viewModel.destinationName || "저장 위치를 선택하세요"; color: Ui.Theme.text; elide: Text.ElideMiddle }
-                        AppButton { objectName: "chooseExportFileButton"; text: "위치 선택"; onClicked: root.viewModel.chooseOutputFile() }
+                        AppButton {
+                            objectName: "chooseExportFileButton"
+                            text: "위치 선택"
+                            onClicked: {
+                                exportFileDialog.selectedFile = root.viewModel.dialogSelectedFile
+                                exportFileDialog.open()
+                            }
+                        }
                         AppButton { objectName: "startExportButton"; text: root.viewModel.busy ? "내보내는 중" : "내보내기"; enabled: root.viewModel.canExport; onClicked: root.viewModel.export() }
                     }
                     Text { visible: text.length > 0; text: root.viewModel.fieldErrors.form || ""; color: Ui.Theme.dangerForeground; Accessible.role: Accessible.Alert }

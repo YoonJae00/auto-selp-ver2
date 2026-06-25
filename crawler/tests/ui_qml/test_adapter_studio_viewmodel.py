@@ -203,12 +203,14 @@ def test_single_field_test_dispatches_field_and_updates_mapping(vm) -> None:
     assert app.activeTask.state == "completed"
 
 
-def test_legacy_builder_resolves_shared_worker_implementations() -> None:
-    from app.ui.tabs import adapter_builder_tab as legacy
-    from app.workers.adapter import PickerWorker, TestWorker
+def test_adapter_studio_uses_shared_worker_implementations_without_legacy_builder() -> None:
+    from app.ui_qml.viewmodels import adapter_studio
+    from app.workers.adapter import AdapterTestWorker, PickerWorker
 
-    assert legacy.PickerWorker is PickerWorker
-    assert legacy.TestWorker is TestWorker
+    assert adapter_studio.PickerWorker is PickerWorker
+    vm = adapter_studio.AdapterStudioViewModel()
+    assert vm._factories["test"] is AdapterTestWorker
+    assert not (Path(__file__).parents[2] / "app" / "ui" / "tabs" / "adapter_builder_tab.py").exists()
 
 
 def test_application_retains_studio_and_route_screen(qt_app) -> None:

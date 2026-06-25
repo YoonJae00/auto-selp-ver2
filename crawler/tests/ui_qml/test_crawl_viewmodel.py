@@ -138,40 +138,37 @@ def test_product_completion_cancel_and_late_signal_map_to_shared_task(monkeypatc
     assert vm.productCount == 1
 
 
-def test_legacy_tab_only_imports_ui_independent_shared_workers() -> None:
-    from app.ui.tabs import crawl_tab as legacy
+def test_qml_crawl_view_model_uses_ui_independent_shared_workers() -> None:
+    from app.ui_qml.viewmodels import crawl
     from app.workers.crawl import CrawlWorker
 
     app_root = Path(__file__).parents[2] / "app"
-    legacy_source = (app_root / "ui" / "tabs" / "crawl_tab.py").read_text(encoding="utf-8")
+    view_model_source = (app_root / "ui_qml" / "viewmodels" / "crawl.py").read_text(encoding="utf-8")
     worker_source = (app_root / "workers" / "crawl.py").read_text(encoding="utf-8")
 
-    assert legacy.CrawlWorker is CrawlWorker
-    assert "class CrawlWorker" not in legacy_source
-    assert "class DiscoverSignals" not in legacy_source
-    assert "threading.Thread" not in legacy_source
+    assert crawl.CrawlWorker is CrawlWorker
+    assert "class CrawlWorker" not in view_model_source
+    assert "class DiscoverSignals" not in view_model_source
+    assert "threading.Thread" not in view_model_source
     assert "QtWidgets" not in worker_source
+    assert not (app_root / "ui" / "tabs" / "crawl_tab.py").exists()
 
 
-def test_legacy_tab_blocks_double_discovery_and_stops_workers_on_close(qt_app, monkeypatch) -> None:
-    from app.ui.tabs import crawl_tab
+def test_crawl_view_model_blocks_double_discovery_and_stops_workers_on_shutdown(monkeypatch) -> None:
+    from app.ui_qml.viewmodels.crawl import CrawlViewModel
 
-    monkeypatch.setattr(crawl_tab.CrawlTab, "_refresh_suppliers", lambda self: None)
-    tab = crawl_tab.CrawlTab()
-    discovery, crawling = FakeWorker(None), FakeWorker(None)
-    discovery.isRunning = lambda: True
-    crawling.isRunning = lambda: True
-    tab._discovery_worker = discovery
-    tab._worker = None
-    tab._on_discover()
-    assert tab._discovery_worker is discovery
+    monkeypatch.setattr("app.ui_qml.viewmodels.crawl.adapter_exists", lambda _: True)
+    workers = []
+    vm = CrawlViewModel(supplier_loader=lambda: [supplier()],
+                        worker_factories={"discovery": lambda request: workers.append(FakeWorker(request)) or workers[-1]})
+    vm.selectSupplier("s1")
+    assert vm.discoverCategories() is True
+    assert vm.discoverCategories() is False
 
     stopped = []
-    monkeypatch.setattr(crawl_tab, "stop_workers", lambda workers: stopped.extend(workers) or [])
-    tab._worker = crawling
-    event = SimpleNamespace(accept=lambda: stopped.append("accepted"))
-    tab.closeEvent(event)
-    assert discovery in stopped and crawling in stopped and "accepted" in stopped
+    monkeypatch.setattr("app.ui_qml.viewmodels.crawl.stop_workers", lambda workers: stopped.extend(workers) or [])
+    vm.shutdown()
+    assert workers[0] in stopped
 
 
 def test_product_signal_updates_live_target() -> None:
@@ -272,14 +269,8 @@ def test_process_registry_retains_survivor_after_viewmodel_deletion(qt_app) -> N
     assert worker not in surviving_workers()
 
 
-def test_main_window_close_invokes_crawl_shutdown() -> None:
-    from app.ui.main_window import MainWindow
-
-    calls = []
-    fake_window = SimpleNamespace(crawl_tab=SimpleNamespace(shutdown=lambda: calls.append("shutdown")))
-    event = SimpleNamespace(accept=lambda: calls.append("accepted"))
-    MainWindow.closeEvent(fake_window, event)
-    assert calls == ["shutdown", "accepted"]
+def test_legacy_main_window_has_been_removed() -> None:
+    assert not (Path(__file__).parents[2] / "app" / "ui" / "main_window.py").exists()
 
 
 def test_crawl_screen_scrolls_and_swaps_start_cancel_controls() -> None:

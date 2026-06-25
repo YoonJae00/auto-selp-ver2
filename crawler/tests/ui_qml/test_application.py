@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from pathlib import Path
+import sys
 
 import pytest
 from PySide6.QtCore import QMetaObject, QObject, QPoint, Qt, QUrl, qInstallMessageHandler
@@ -9,6 +11,7 @@ from PySide6.QtQml import QQmlComponent
 from PySide6.QtTest import QTest
 
 from app.config import AppConfig
+from app.ui_qml import application as qml_application
 from app.ui_qml.application import QML_DIRECTORY, create_engine
 from app.ui_qml.viewmodels.settings import SettingsViewModel
 
@@ -40,6 +43,46 @@ def contrast_ratio(foreground: QColor, background: QColor) -> float:
 
     lighter, darker = sorted((luminance(foreground), luminance(background)), reverse=True)
     return (lighter + 0.05) / (darker + 0.05)
+
+
+def test_qml_directory_resolves_from_source_and_pyinstaller_bundle(monkeypatch, tmp_path) -> None:
+    assert hasattr(qml_application, "resolve_qml_directory")
+    resolve_qml_directory = qml_application.resolve_qml_directory
+    source_directory = resolve_qml_directory()
+    qml_files = sorted(source_directory.rglob("*.qml"))
+
+    assert source_directory == QML_DIRECTORY
+    assert (source_directory / "Main.qml").is_file()
+    assert qml_files
+    assert all(path.is_file() for path in qml_files)
+
+    bundle_root = tmp_path / "_MEI"
+    packaged_qml = bundle_root / "app" / "ui_qml" / "qml"
+    packaged_qml.mkdir(parents=True)
+    monkeypatch.setattr(sys, "_MEIPASS", str(bundle_root), raising=False)
+
+    assert resolve_qml_directory() == packaged_qml
+
+
+def test_windows_spec_packages_qml_and_assets_without_legacy_qss_or_widgets() -> None:
+    spec = Path(__file__).resolve().parents[2] / "build_windows.spec"
+    text = spec.read_text(encoding="utf-8")
+    dev_requirements = (Path(__file__).resolve().parents[2] / "requirements-dev.txt").read_text(encoding="utf-8")
+
+    assert '("app/ui_qml/qml", "app/ui_qml/qml")' in text
+    assert '("assets", "assets")' in text
+    assert "pyinstaller" in dev_requirements.lower()
+    assert "app/ui/styles/global.qss" not in text
+    assert "PySide6.QtWidgets" not in text
+    for module in (
+        "PySide6.QtCore",
+        "PySide6.QtGui",
+        "PySide6.QtQml",
+        "PySide6.QtQuick",
+        "PySide6.QtQuickControls2",
+        "PySide6.QtQuickDialogs2",
+    ):
+        assert module in text
 
 
 def test_qml_engine_loads_one_root_object(qt_app) -> None:

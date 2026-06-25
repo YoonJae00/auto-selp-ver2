@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import sys
 
 from PySide6.QtCore import QCoreApplication, QUrl
 from PySide6.QtQml import QQmlApplicationEngine
@@ -17,7 +18,14 @@ from app.ui_qml.viewmodels.export import ExportViewModel
 from app.ui_qml.window_effects import apply_backdrop_policy, detect_motion_enabled
 
 
-QML_DIRECTORY = Path(__file__).parent / "qml"
+def resolve_qml_directory() -> Path:
+    bundle_root = getattr(sys, "_MEIPASS", None)
+    if bundle_root:
+        return Path(bundle_root) / "app" / "ui_qml" / "qml"
+    return Path(__file__).parent / "qml"
+
+
+QML_DIRECTORY = resolve_qml_directory()
 
 
 def _shutdown_view_models(adapter_studio, crawl, export=None, *, drain=drain_surviving_workers) -> None:
