@@ -42,10 +42,9 @@ def validate_export_scope(session: Session, supplier_id: str, *, issue_limit: in
     blocking_count = sum(field_counts[:3])
     warning_count = sum(field_counts[3:])
     option_count = int(session.scalar(select(func.count(ProductOption.id)).join(Product).where(scope)) or 0)
-    fingerprint_source = (supplier_id, product_count, option_count, *field_counts, str(aggregates[7] or ""))
-    fingerprint = sha256(repr(fingerprint_source).encode("utf-8")).hexdigest()
-
     if product_count == 0:
+        fingerprint_source = (supplier_id, product_count, option_count, *field_counts, str(aggregates[7] or ""), ())
+        fingerprint = sha256(repr(fingerprint_source).encode("utf-8")).hexdigest()
         return ExportScopeValidation(0, option_count, 1, 0, fingerprint, [{
             "severity": "error", "code": "empty_scope", "message": "내보낼 상품이 없습니다.",
             "productId": "", "productCode": "",
@@ -53,7 +52,7 @@ def validate_export_scope(session: Session, supplier_id: str, *, issue_limit: in
 
     candidates = list(session.scalars(select(Product).where(
         scope, or_(*error_fields, *warning_fields),
-    ).order_by(Product.supplier_product_code, Product.id).limit(issue_limit + 1)))
+    ).order_by(Product.supplier_product_code, Product.id)))
     issues: list[dict[str, str]] = []
     for product in candidates:
         common = {"productId": product.id, "productCode": product.supplier_product_code or ""}
@@ -68,6 +67,9 @@ def validate_export_scope(session: Session, supplier_id: str, *, issue_limit: in
             if value is None or value == "":
                 issues.append({**common, "severity": severity, "code": f"missing_{field}", "message": f"{label}이(가) 없습니다."})
     issues.sort(key=lambda row: (row["severity"] != "error", row["productCode"], row["code"]))
+    issue_identity = tuple((row["severity"], row["code"], row["productId"], row["productCode"]) for row in issues)
+    fingerprint_source = (supplier_id, product_count, option_count, *field_counts, str(aggregates[7] or ""), issue_identity)
+    fingerprint = sha256(repr(fingerprint_source).encode("utf-8")).hexdigest()
     displayed = issues[:issue_limit]
     if blocking_count + warning_count > len(displayed):
         hidden_errors = blocking_count > sum(row["severity"] == "error" for row in displayed)

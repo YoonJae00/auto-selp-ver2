@@ -1,6 +1,7 @@
 ---
 title: Make QML export startup atomic and reuse the shell detail drawer
 date: 2026-06-24
+last_updated: 2026-06-25
 category: integration-issues
 module: crawler QML export
 problem_type: integration_issue
@@ -35,9 +36,10 @@ The export view model treated worker construction, shared-task acquisition, sign
 - A worker-factory exception propagated before the view model could provide a sanitized inline error.
 - A `worker.start()` exception occurred after task acquisition, leaving a running shared task unless every acquired state field was explicitly rolled back.
 - Clicking one of several issues for the same product could show the wrong issue when selection was identified only by product code.
-- Export details were unavailable in the shell's wide drawer and its 900-pixel overlay mode.
-- A blocking issue beyond the first 50 displayed rows could be missed, and database changes after UI validation could cross the write boundary.
-- Custom destinations and failed or cancelled attempts disappeared from directory-derived history.
+  - Export details were unavailable in the shell's wide drawer and its 900-pixel overlay mode.
+  - A blocking issue beyond the first 50 displayed rows could be missed, and database changes after UI validation could cross the write boundary.
+  - A warning acknowledgement could remain valid when the same warning count moved from one product to another.
+  - Custom destinations and failed or cancelled attempts disappeared from directory-derived history.
 
 ## What Didn't Work
 
@@ -74,7 +76,7 @@ except Exception as exc:
 
 For validation detail, pass the virtualized row index to the view model. Reject out-of-range rows and summary rows without a product ID, load only the referenced `Product` through an injected session factory, and expose a compact `selectedIssueDetail` map containing product fields plus the exact issue message and severity. Opening detail toggles `AppVM.detailPanelOpen` without changing `currentRoute`.
 
-Separate validation truth from its presentation. `validate_export_scope(session, supplier_id)` uses aggregate conditional counts over the complete supplier scope for blocking and warning totals, derives a fingerprint, and loads at most 50 representative issue rows plus a summary. `canExport` uses the aggregate counts, never the sample. The view model revalidates immediately before task acquisition and preserves warning acknowledgement only when the fingerprint is unchanged. The worker repeats authoritative validation in the same database session immediately before calling the exporter, closing the final mutation window for blocking errors.
+Separate validation truth from its presentation. `validate_export_scope(session, supplier_id)` uses aggregate conditional counts over the complete supplier scope for blocking and warning totals, derives a fingerprint, and loads at most 50 representative issue rows plus a summary. The fingerprint must include full-scope issue identity, not just counts or timestamps: `(severity, code, productId, productCode)` for every validation issue. Otherwise same-count changes, such as a missing origin moving from one product to another, can preserve a stale warning acknowledgement. `canExport` uses the aggregate counts, never the sample. The view model revalidates immediately before task acquisition and preserves warning acknowledgement only when the fingerprint is unchanged. The worker repeats authoritative validation in the same database session immediately before calling the exporter, closing the final mutation window for blocking errors.
 
 Persist attempts in a bounded JSON operation log using temp-file plus atomic replace. Record `pending` before startup and update the same attempt to `success`, `failed`, or `cancelled`, including custom destination, supplier scope, row count, and sanitized error. Reading a corrupt store returns an empty history and the next write repairs it; history no longer depends on workbook inspection or one destination directory.
 
@@ -97,6 +99,7 @@ An issue index preserves identity even when multiple findings reference one prod
 - Put an explicit placeholder at supplier index zero and bind the ComboBox index back to view-model selection so the visual scope cannot disagree with the command scope.
 - Make virtualized issue rows and their list keyboard-focusable; Enter, Return, Space, pointer taps, and accessibility press actions must share one activation signal.
 - Place a blocking issue beyond the display cap in tests and mutate the database between UI validation and export in both view-model and worker tests.
+- Add a same-count issue-move regression test for validation fingerprints; aggregate counts and `max(last_seen_at)` are insufficient evidence that a warning acknowledgement is still reviewing the same issues.
 
 ## Related Issues
 

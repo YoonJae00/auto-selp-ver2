@@ -103,6 +103,29 @@ def test_view_model_rejects_scope_mutation_after_ui_validation(tmp_path):
     assert app.activeTask.state == "idle"
 
 
+def test_validation_fingerprint_changes_when_same_field_warning_moves_product(tmp_path):
+    session, _ = _session(tmp_path)
+    seen_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    first = _product(1, origin=None, last_seen_at=seen_at)
+    second = _product(2, last_seen_at=seen_at)
+    session.add_all([first, second])
+    session.commit()
+
+    initial = validate_export_scope(session, "s1")
+    first.origin = "KR"
+    second.origin = None
+    first.last_seen_at = seen_at
+    second.last_seen_at = seen_at
+    session.commit()
+    session.execute(Product.__table__.update().where(Product.id.in_([first.id, second.id])).values(last_seen_at=seen_at))
+    session.commit()
+    moved = validate_export_scope(session, "s1")
+
+    assert initial.warning_count == moved.warning_count == 1
+    assert initial.product_count == moved.product_count == 2
+    assert initial.fingerprint != moved.fingerprint
+
+
 def test_history_store_tracks_custom_destination_and_terminal_outcomes(tmp_path):
     store = ExportHistoryStore(tmp_path / "history.json", limit=10)
     custom = tmp_path / "elsewhere" / "custom.xlsx"
