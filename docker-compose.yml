@@ -95,7 +95,7 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      - ./kipris_wrapper.py:/wrapper/kipris_wrapper.py
+      - ./services/kipris/kipris_wrapper.py:/wrapper/kipris_wrapper.py
 
 volumes:
   postgres_data:
