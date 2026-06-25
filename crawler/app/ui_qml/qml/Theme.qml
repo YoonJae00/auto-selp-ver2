@@ -30,5 +30,9 @@ QtObject {
     readonly property int radiusLarge: 12
     readonly property int motionFast: 120
     readonly property int motionNormal: 180
-    property bool motionEnabled: true
+    property bool motionEnabled: {
+        // qmllint disable unqualified
+        return typeof InitialMotionEnabled === "boolean" ? InitialMotionEnabled : true
+        // qmllint enable unqualified
+    }
 }

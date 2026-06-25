@@ -349,6 +349,27 @@ def test_theme_and_shared_control_can_be_instantiated(qt_app) -> None:
     assert probe.findChild(QObject, "probeTable") is not None
 
 
+def test_shared_controls_keep_primary_hit_targets_at_least_44px(qt_app) -> None:
+    engine = create_engine()
+    component = QQmlComponent(engine)
+    component.setData(
+        b'''import QtQuick\nimport "components" as Components\n'''
+        b'''Item { Components.AppButton { objectName: "probeButton"; text: "Save" }\n'''
+        b'''Components.AppTextField { objectName: "probeField"; placeholderText: "Search" } }''',
+        QUrl.fromLocalFile(str(QML_DIRECTORY / "HitTargetProbe.qml")),
+    )
+
+    probe = component.create(engine.rootContext())
+    button = probe.findChild(QObject, "probeButton") if probe else None
+    field = probe.findChild(QObject, "probeField") if probe else None
+
+    assert not component.errors()
+    assert button is not None
+    assert field is not None
+    assert button.property("implicitHeight") >= 44
+    assert field.property("implicitHeight") >= 44
+
+
 def test_shell_animations_follow_disabled_motion_theme(qt_app) -> None:
     engine = create_engine()
     component = QQmlComponent(engine)

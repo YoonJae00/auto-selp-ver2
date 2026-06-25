@@ -19,6 +19,7 @@ ApplicationWindow {
     property var firstRunViewModel: null
     property var appViewModel: null
     property bool firstRunRequired: true
+    property string backdropPolicy: "color"
 
     Component.onCompleted: {
         // qmllint disable unqualified

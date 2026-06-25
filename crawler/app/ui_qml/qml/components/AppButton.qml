@@ -6,9 +6,10 @@ Button {
     id: control
     property bool selected: false
 
-    implicitHeight: 38
+    implicitHeight: 44
     implicitWidth: Math.max(72, contentItem.implicitWidth + 24)
     hoverEnabled: true
+    Accessible.role: Accessible.Button
     Accessible.name: text
     ToolTip.visible: hovered && ToolTip.text.length > 0
     ToolTip.delay: 500

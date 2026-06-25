@@ -14,6 +14,7 @@ from app.ui_qml.viewmodels.first_run import FirstRunViewModel
 from app.workers.lifecycle import drain_surviving_workers
 from app.ui_qml.viewmodels.crawl import CrawlViewModel
 from app.ui_qml.viewmodels.export import ExportViewModel
+from app.ui_qml.window_effects import apply_backdrop_policy, detect_motion_enabled
 
 
 QML_DIRECTORY = Path(__file__).parent / "qml"
@@ -51,6 +52,7 @@ def create_engine() -> QQmlApplicationEngine:
     engine.rootContext().setContextProperty("ExportVM", export_view_model)
     engine.rootContext().setContextProperty("SettingsVM", settings_view_model)
     engine.rootContext().setContextProperty("FirstRunVM", first_run_view_model)
+    engine.rootContext().setContextProperty("InitialMotionEnabled", detect_motion_enabled(application))
     engine.setProperty("appViewModel", app_view_model)
     engine.setProperty("suppliersViewModel", suppliers_view_model)
     engine.setProperty("adapterStudioViewModel", adapter_studio_view_model)
@@ -62,4 +64,10 @@ def create_engine() -> QQmlApplicationEngine:
     engine.load(QUrl.fromLocalFile(str(QML_DIRECTORY / "Main.qml")))
     if not engine.rootObjects():
         raise RuntimeError("Failed to load the QML application")
+    try:
+        backdrop = apply_backdrop_policy(engine.rootObjects()[0])
+    except Exception:
+        backdrop = None
+    if backdrop is not None:
+        engine.rootObjects()[0].setProperty("backdropPolicy", backdrop.value)
     return engine

@@ -4,7 +4,9 @@ import ".." as Ui
 
 TextField {
     id: control
-    implicitHeight: 40
+    implicitHeight: 44
+    Accessible.role: Accessible.EditableText
+    Accessible.name: placeholderText
     color: enabled ? Ui.Theme.text : Ui.Theme.textMuted
     placeholderTextColor: Ui.Theme.textMuted
     selectionColor: Ui.Theme.accent
