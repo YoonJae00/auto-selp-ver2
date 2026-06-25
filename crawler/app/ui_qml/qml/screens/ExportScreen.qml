@@ -36,6 +36,7 @@ Item {
                             Layout.preferredWidth: 260
                             model: root.viewModel.suppliers
                             textRole: "name"; valueRole: "id"
+                            Binding on currentIndex { value: root.viewModel.selectedSupplierIndex }
                             Accessible.name: "내보낼 도매처"
                             onActivated: root.viewModel.setSupplierId(currentValue)
                         }

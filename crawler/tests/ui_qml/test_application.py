@@ -180,6 +180,46 @@ def test_export_warning_acknowledgement_tracks_view_model_resets(qt_app) -> None
     assert export_vm.warningAcknowledged is True
 
 
+def test_export_supplier_combo_starts_at_placeholder_and_tracks_vm_reset(qt_app) -> None:
+    engine = create_engine()
+    root = engine.rootObjects()[0]
+    export_vm = engine.property("exportViewModel")
+    combo = root.findChild(QObject, "exportSupplierFilter")
+    assert export_vm.selectedSupplierId == ""
+    assert combo.property("currentIndex") == 0
+    export_vm._suppliers.resetRows([{"id": "", "name": "도매처 선택"}, {"id": "s1", "name": "One"}])
+    export_vm._supplier_ids = {"s1"}
+    export_vm._supplier_names = {"s1": "One"}
+    export_vm.setSupplierId("s1")
+    qt_app.processEvents()
+    assert combo.property("currentIndex") == 1
+
+    export_vm.setSupplierId("")
+    qt_app.processEvents()
+    assert combo.property("currentIndex") == 0
+
+
+def test_export_validation_issue_opens_drawer_from_keyboard(qt_app) -> None:
+    from types import SimpleNamespace
+
+    engine = create_engine()
+    root = engine.rootObjects()[0]
+    app_vm = engine.property("appViewModel")
+    export_vm = engine.property("exportViewModel")
+    issue = {"severity": "warning", "code": "missing_origin", "message": "원산지 누락", "productId": "p1", "productCode": "P-1"}
+    export_vm._issues.resetRows([issue])
+    product = SimpleNamespace(id="p1", supplier_product_code="P-1", raw_product_name="Product", supplier_name="Supplier", supplier_status="available", supply_price=1200)
+    export_vm._session_factory = lambda: SimpleNamespace(get=lambda model, product_id: product, close=lambda: None)
+    app_vm.navigate("export")
+    qt_app.processEvents()
+    validation_list = root.findChild(QObject, "exportValidationList")
+    validation_list.setProperty("currentIndex", 0)
+    assert QMetaObject.invokeMethod(validation_list, "forceActiveFocus") is True
+    QTest.keyClick(root, Qt.Key.Key_Return)
+    qt_app.processEvents()
+    assert app_vm.detailPanelOpen is True
+    assert root.findChild(QObject, "detailDrawerWide").findChild(QObject, "exportIssueCode").property("text") == "P-1"
+
 def test_monitor_drawer_open_keeps_dashboard_horizontally_usable(qt_app) -> None:
     engine = create_engine()
     root = engine.rootObjects()[0]

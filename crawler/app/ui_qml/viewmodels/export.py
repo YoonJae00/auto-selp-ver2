@@ -6,13 +6,14 @@ from pathlib import Path
 import re
 from typing import Any
 
-from openpyxl import load_workbook
 from PySide6.QtCore import Property, QTimer, QUrl, Signal, Slot
 from PySide6.QtWidgets import QFileDialog
-from sqlalchemy import func, or_, select
+from sqlalchemy import select
 
-from app.db.models import Product, ProductOption, Supplier
+from app.db.models import Product, Supplier
 from app.db.session import get_session
+from app.exporters.history import ExportHistoryStore
+from app.exporters.validation import ExportScopeValidation, validate_export_scope
 from app.paths import exports_dir as default_exports_dir
 from app.ui_qml.models.list_model import ListModel
 from app.ui_qml.viewmodels.base import BaseViewModel, sanitize_diagnostic
@@ -31,56 +32,16 @@ def _load_suppliers() -> list[Supplier]:
         session.close()
 
 
-def _load_scope(supplier_id: str) -> tuple[int, int, list[dict[str, str]]]:
-    session = get_session()
-    try:
-        product_filter = Product.supplier_id == supplier_id
-        product_count = int(session.scalar(select(func.count(Product.id)).where(product_filter)) or 0)
-        option_count = int(session.scalar(
-            select(func.count(ProductOption.id)).join(Product).where(product_filter)
-        ) or 0)
-        issues: list[dict[str, str]] = []
-        if not product_count:
-            return 0, option_count, issues
-        # Bound representative rows so validation remains responsive for very large scopes.
-        candidates = list(session.scalars(select(Product).where(
-            product_filter,
-            or_(
-                Product.raw_product_name == "", Product.supplier_product_code == "",
-                Product.supplier_status == "", Product.origin.is_(None),
-                Product.supply_price.is_(None), Product.main_image_url.is_(None),
-            ),
-        ).order_by(Product.supplier_product_code).limit(50)))
-        for product in candidates:
-            common = {"productId": product.id, "productCode": product.supplier_product_code or ""}
-            for field, value, severity, label in (
-                ("raw_product_name", product.raw_product_name, "error", "상품명"),
-                ("supplier_product_code", product.supplier_product_code, "error", "상품 코드"),
-                ("supplier_status", product.supplier_status, "error", "상품 상태"),
-                ("origin", product.origin, "warning", "원산지"),
-                ("supply_price", product.supply_price, "warning", "공급가"),
-                ("main_image_url", product.main_image_url, "warning", "대표 이미지"),
-            ):
-                if value is None or value == "":
-                    issues.append({**common, "severity": severity, "code": f"missing_{field}", "message": f"{label}이(가) 없습니다."})
-        issues.sort(key=lambda row: (row["severity"] != "error", row["productCode"], row["code"]))
-        if len(issues) > 50 or len(candidates) == 50:
-            issues = issues[:49]
-            issues.append({"severity": "warning", "code": "more_issues", "message": "추가 누락 항목이 있을 수 있습니다.", "productId": "", "productCode": ""})
-        return product_count, option_count, issues
-    finally:
-        session.close()
-
-
 class ExportViewModel(BaseViewModel):
     stateChanged = Signal()
 
     def __init__(self, parent=None, *, app_view_model=None,
                  supplier_loader: Callable[[], list[Any]] = _load_suppliers,
-                 scope_loader: Callable[[str], tuple[int, int, list[dict[str, str]]]] = _load_scope,
+                 scope_loader: Callable[[str], Any] | None = None,
                  exports_dir: Path | None = None, picker: Callable[[str], Any] | None = None,
-                 worker_factory: Callable[[ExportRequest], Any] = ExportWorker,
-                 session_factory: Callable[[], Any] = get_session) -> None:
+                 worker_factory: Callable[[ExportRequest], Any] | None = None,
+                 session_factory: Callable[[], Any] = get_session,
+                 history_store: ExportHistoryStore | None = None) -> None:
         super().__init__(parent)
         self._app = app_view_model
         self._scope_loader = scope_loader
@@ -88,10 +49,13 @@ class ExportViewModel(BaseViewModel):
         self._picker = picker
         self._worker_factory = worker_factory
         self._session_factory = session_factory
+        self._history_store = history_store or ExportHistoryStore(self._exports_dir / ".export_history.json")
         self._supplier_ids: set[str] = set()
         self._supplier_names: dict[str, str] = {}
         self._supplier_id = ""
         self._product_count = self._option_count = 0
+        self._blocking_count = self._warning_count = 0
+        self._validation_fingerprint = ""
         self._issues = ListModel(ISSUE_ROLES, parent=self)
         self._history = ListModel(("fileName", "path", "exportedAt", "rowCount", "outcome"), parent=self)
         self._suppliers = ListModel(("id", "name"), parent=self)
@@ -104,11 +68,12 @@ class ExportViewModel(BaseViewModel):
         self._retired_workers: list[Any] = []
         self._operation_id = 0
         self._task_owner: object | None = None
+        self._attempt_id = ""
         self._shutting_down = False
         suppliers = supplier_loader()
-        rows = [{"id": str(item.id), "name": item.name} for item in suppliers]
-        self._supplier_ids = {row["id"] for row in rows}
-        self._supplier_names = {row["id"]: row["name"] for row in rows}
+        rows = [{"id": "", "name": "도매처 선택"}, *[{"id": str(item.id), "name": item.name} for item in suppliers]]
+        self._supplier_ids = {row["id"] for row in rows if row["id"]}
+        self._supplier_names = {row["id"]: row["name"] for row in rows if row["id"]}
         self._suppliers.resetRows(rows)
         self.refreshHistory()
 
@@ -116,6 +81,7 @@ class ExportViewModel(BaseViewModel):
     issues = Property(object, lambda self: self._issues, constant=True)
     history = Property(object, lambda self: self._history, constant=True)
     selectedSupplierId = Property(str, lambda self: self._supplier_id, notify=stateChanged)
+    selectedSupplierIndex = Property(int, lambda self: next((index for index, row in enumerate(self._suppliers._rows) if row["id"] == self._supplier_id), 0), notify=stateChanged)
     productCount = Property(int, lambda self: self._product_count, notify=stateChanged)
     optionCount = Property(int, lambda self: self._option_count, notify=stateChanged)
     warningAcknowledged = Property(bool, lambda self: self._warning_acknowledged, notify=stateChanged)
@@ -125,11 +91,8 @@ class ExportViewModel(BaseViewModel):
 
     @Property(bool, notify=stateChanged)
     def canExport(self) -> bool:
-        rows = self._issues._rows
-        errors = any(row["severity"] == "error" for row in rows)
-        warnings = any(row["severity"] == "warning" for row in rows)
         retired_running = any(getattr(worker, "isRunning", lambda: False)() for worker in self._retired_workers)
-        return bool(self._validated and self._supplier_id and self._output_path and not self._busy and not retired_running and not errors and (not warnings or self._warning_acknowledged))
+        return bool(self._validated and self._supplier_id and self._output_path and not self._busy and not retired_running and not self._blocking_count and (not self._warning_count or self._warning_acknowledged))
 
     def _emit(self) -> None:
         self.stateChanged.emit()
@@ -142,6 +105,8 @@ class ExportViewModel(BaseViewModel):
             return
         self._supplier_id = value
         self._product_count = self._option_count = 0
+        self._blocking_count = self._warning_count = 0
+        self._validation_fingerprint = ""
         self._issues.resetRows([])
         self._warning_acknowledged = self._validated = False
         if self._selected_issue_detail and self._app:
@@ -153,18 +118,19 @@ class ExportViewModel(BaseViewModel):
     @Slot(result=bool)
     def validateScope(self) -> bool:
         if not self._supplier_id:
-            counts = (0, 0)
-            issues = [{"severity": "error", "code": "supplier_required", "message": "도매처를 선택하세요.", "productId": "", "productCode": ""}]
+            result = ExportScopeValidation(0, 0, 1, 0, "", [{"severity": "error", "code": "supplier_required", "message": "도매처를 선택하세요.", "productId": "", "productCode": ""}])
         else:
             try:
-                product_count, option_count, issues = self._scope_loader(self._supplier_id)
+                result = self._load_validation()
             except Exception as exc:
-                product_count, option_count = 0, 0
-                issues = [{"severity": "error", "code": "validation_failed", "message": sanitize_diagnostic(exc), "productId": "", "productCode": ""}]
-            counts = (product_count, option_count)
-            if product_count == 0:
-                issues.insert(0, {"severity": "error", "code": "empty_scope", "message": "내보낼 상품이 없습니다.", "productId": "", "productCode": ""})
-        self._product_count, self._option_count = counts
+                result = ExportScopeValidation(0, 0, 1, 0, "", [{"severity": "error", "code": "validation_failed", "message": sanitize_diagnostic(exc), "productId": "", "productCode": ""}])
+            if result.product_count == 0 and not result.blocking_count and not any(issue["code"] == "validation_failed" for issue in result.issues):
+                result.issues.insert(0, {"severity": "error", "code": "empty_scope", "message": "내보낼 상품이 없습니다.", "productId": "", "productCode": ""})
+                result = ExportScopeValidation(result.product_count, result.option_count, result.blocking_count + 1, result.warning_count, result.fingerprint, result.issues)
+        self._product_count, self._option_count = result.product_count, result.option_count
+        self._blocking_count, self._warning_count = result.blocking_count, result.warning_count
+        self._validation_fingerprint = result.fingerprint
+        issues = result.issues
         issues.sort(key=lambda row: row.get("severity") != "error")
         self._issues.resetRows(issues)
         self._warning_acknowledged = False
@@ -174,7 +140,23 @@ class ExportViewModel(BaseViewModel):
             supplier_name = re.sub(r"[^\w.-]+", "_", self._supplier_names.get(self._supplier_id, self._supplier_id)).strip("._") or "supplier"
             self._output_path = self._exports_dir / f"{supplier_name}_{stamp}.xlsx"
         self._emit()
-        return not any(row["severity"] == "error" for row in issues)
+        return not self._blocking_count
+
+    def _load_validation(self) -> ExportScopeValidation:
+        if self._scope_loader is not None:
+            loaded = self._scope_loader(self._supplier_id)
+            if isinstance(loaded, ExportScopeValidation):
+                return loaded
+            product_count, option_count, issues = loaded
+            blocking = sum(row.get("severity") == "error" for row in issues)
+            warnings = sum(row.get("severity") == "warning" for row in issues)
+            fingerprint = repr((product_count, option_count, [(row.get("severity"), row.get("code"), row.get("productId")) for row in issues]))
+            return ExportScopeValidation(product_count, option_count, blocking, warnings, fingerprint, list(issues))
+        session = self._session_factory()
+        try:
+            return validate_export_scope(session, self._supplier_id)
+        finally:
+            session.close()
 
     @Slot(bool)
     def acknowledgeWarnings(self, acknowledged: bool = True) -> None:
@@ -209,15 +191,38 @@ class ExportViewModel(BaseViewModel):
     def export(self) -> bool:
         if not self.canExport or self._shutting_down or self._worker is not None:
             return False
-        request = ExportRequest(self._supplier_id, self._output_path)
+        previous_fingerprint = self._validation_fingerprint
+        acknowledged = self._warning_acknowledged
         try:
-            worker = self._worker_factory(request)
+            fresh = self._load_validation()
         except Exception as exc:
             self.set_field_errors({"form": sanitize_diagnostic(exc)})
+            return False
+        if fresh.fingerprint != previous_fingerprint:
+            self._product_count, self._option_count = fresh.product_count, fresh.option_count
+            self._blocking_count, self._warning_count = fresh.blocking_count, fresh.warning_count
+            self._issues.resetRows(fresh.issues)
+            self._validation_fingerprint = fresh.fingerprint
+            self._warning_acknowledged = False
+            self.set_field_errors({"form": "내보내기 범위가 변경되었습니다. 다시 검토해 주세요."})
+            self._emit()
+            return False
+        self._warning_acknowledged = acknowledged
+        request = ExportRequest(self._supplier_id, self._output_path)
+        self._attempt_id = self._history_store.begin(
+            self._supplier_id, self._supplier_names.get(self._supplier_id, self._supplier_id), self._output_path
+        )
+        try:
+            worker = self._worker_factory(request) if self._worker_factory else ExportWorker(request, session_factory=self._session_factory)
+        except Exception as exc:
+            safe = sanitize_diagnostic(exc)
+            self._history_store.finish(self._attempt_id, "failed", error=safe)
+            self.set_field_errors({"form": safe})
             self._emit()
             return False
         owner = object()
         if self._app and not self._app.acquire_task("export", "Excel 내보내기", owner):
+            self._history_store.finish(self._attempt_id, "failed", error="다른 작업이 실행 중입니다.")
             self.set_field_errors({"form": "다른 작업이 종료될 때까지 기다려 주세요."})
             return False
         self._operation_id += 1
@@ -225,11 +230,11 @@ class ExportViewModel(BaseViewModel):
         self._task_owner = owner
         self._worker = worker
         self._busy = True
-        worker.complete.connect(lambda path: self._on_complete(operation, path))
-        worker.error.connect(lambda message: self._on_error(operation, message))
-        worker.cancelled.connect(lambda: self._on_cancelled(operation))
-        self._emit()
         try:
+            worker.complete.connect(lambda path: self._on_complete(operation, path))
+            worker.error.connect(lambda message: self._on_error(operation, message))
+            worker.cancelled.connect(lambda: self._on_cancelled(operation))
+            self._emit()
             worker.start()
         except Exception as exc:
             safe = sanitize_diagnostic(exc)
@@ -239,6 +244,7 @@ class ExportViewModel(BaseViewModel):
             self._retired_workers.extend(stop_workers([worker], timeout_ms=100))
             if self._app and failed_owner is not None:
                 self._app.fail_owned_task(failed_owner, safe)
+            self._history_store.finish(self._attempt_id, "failed", error=safe)
             self._task_owner = None
             self.set_field_errors({"form": safe})
             self._emit()
@@ -267,6 +273,7 @@ class ExportViewModel(BaseViewModel):
         self._busy = False
         self._retire()
         if self._app and self._task_owner is not None: self._app.complete_owned_task(self._task_owner)
+        self._history_store.finish(self._attempt_id, "success", row_count=self._product_count)
         self._task_owner = None
         self.refreshHistory()
         self.validateScope()
@@ -276,6 +283,7 @@ class ExportViewModel(BaseViewModel):
         self._busy = False
         self._retire()
         safe = sanitize_diagnostic(message)
+        self._history_store.finish(self._attempt_id, "failed", error=safe)
         self.set_field_errors({"form": safe})
         if self._app and self._task_owner is not None: self._app.fail_owned_task(self._task_owner, safe)
         self._task_owner = None
@@ -285,25 +293,14 @@ class ExportViewModel(BaseViewModel):
         if not self._current(operation): return
         self._busy = False
         self._retire()
+        self._history_store.finish(self._attempt_id, "cancelled")
         if self._app and self._task_owner is not None: self._app.cancel_owned_task(self._task_owner)
         self._task_owner = None
         self._emit()
 
     @Slot()
     def refreshHistory(self) -> None:
-        rows = []
-        self._exports_dir.mkdir(parents=True, exist_ok=True)
-        files = sorted(self._exports_dir.glob("*.xlsx"), key=lambda path: (-path.stat().st_mtime_ns, path.name))[:10]
-        for path in files:
-            count, outcome = 0, "success"
-            try:
-                workbook = load_workbook(path, read_only=True, data_only=True)
-                sheet = workbook["products"]
-                count = max(0, sheet.max_row - 1)
-                workbook.close()
-            except Exception:
-                outcome = "unreadable"
-            rows.append({"fileName": path.name, "path": str(path), "exportedAt": datetime.fromtimestamp(path.stat().st_mtime).isoformat(timespec="seconds"), "rowCount": count, "outcome": outcome})
+        rows = self._history_store.latest()
         self._history.resetRows(rows)
         self._emit()
 

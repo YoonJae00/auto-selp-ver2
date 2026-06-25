@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from types import SimpleNamespace
 
-from openpyxl import Workbook
 from PySide6.QtCore import QObject, Signal
 
+from app.exporters.history import ExportHistoryStore
 from app.ui_qml.viewmodels.app import AppViewModel
 from app.ui_qml.viewmodels.export import ExportViewModel
 from app.workers.export import ExportRequest, ExportWorker
@@ -55,21 +54,15 @@ def test_output_path_is_private_and_extension_is_enforced(tmp_path):
 
 
 def test_history_is_newest_first_and_corrupt_is_safe(tmp_path):
-    old = tmp_path / "old.xlsx"
-    wb = Workbook()
-    wb.active.title = "products"
-    wb.active.append(["header"])
-    wb.active.append(["one"])
-    wb.save(old)
-    bad = tmp_path / "bad.xlsx"
-    bad.write_text("not excel")
-    os.utime(old, (100, 100))
-    os.utime(bad, (200, 200))
-
-    vm = ExportViewModel(supplier_loader=lambda: [], exports_dir=tmp_path)
+    store = ExportHistoryStore(tmp_path / "history.json")
+    old = store.begin("s1", "One", tmp_path / "old.xlsx")
+    store.finish(old, "success", row_count=1)
+    new = store.begin("s1", "One", tmp_path / "new.xlsx")
+    store.finish(new, "failed", error="broken")
+    vm = ExportViewModel(supplier_loader=lambda: [], exports_dir=tmp_path, history_store=store)
     rows = _rows(vm.history)
-    assert [row["fileName"] for row in rows] == ["bad.xlsx", "old.xlsx"]
-    assert rows[0]["outcome"] == "unreadable"
+    assert [row["fileName"] for row in rows] == ["new.xlsx", "old.xlsx"]
+    assert rows[0]["outcome"] == "failed"
     assert rows[1]["rowCount"] == 1
 
 
@@ -82,7 +75,10 @@ def test_worker_uses_atomic_replace_and_typed_request(tmp_path):
         seen.append((supplier_id, path))
         path.write_bytes(b"complete")
 
-    worker = ExportWorker(request, session_factory=lambda: SimpleNamespace(close=lambda: None), exporter=exporter)
+    worker = ExportWorker(
+        request, session_factory=lambda: SimpleNamespace(close=lambda: None), exporter=exporter,
+        validator=lambda session, supplier_id: SimpleNamespace(blocking_count=0),
+    )
     worker.run()
     assert final.read_bytes() == b"complete"
     assert seen[0][0] == "s1"
@@ -190,3 +186,49 @@ def test_worker_start_exception_fails_owned_task_and_allows_retry(tmp_path):
     assert "hunter2" not in app.activeTask.errorMessage
     assert vm.export() is True
     assert vm.busy is True
+
+
+def test_worker_signal_connection_exception_rolls_back_and_allows_retry(tmp_path):
+    class BrokenSignal:
+        def connect(self, callback):
+            raise RuntimeError("connect failed token=secret")
+
+    broken = _WorkerSignals()
+    broken.complete = BrokenSignal()
+    workers = [broken, _WorkerSignals()]
+    app = AppViewModel()
+    vm = _ready_vm(tmp_path, app, lambda request: workers.pop(0))
+
+    assert vm.export() is False
+    assert vm.busy is False
+    assert vm._worker is None and vm._task_owner is None
+    assert app.activeTask.state == "failed"
+    assert "secret" not in app.activeTask.errorMessage
+    assert vm.export() is True
+
+
+def test_view_model_persists_custom_destination_success_failure_and_cancel(tmp_path):
+    app = AppViewModel()
+    workers = [_WorkerSignals(), _WorkerSignals(), _WorkerSignals()]
+    vm = _ready_vm(tmp_path, app, lambda request: workers.pop(0))
+    custom = tmp_path / "custom" / "report.xlsx"
+    vm.setOutputPath(str(custom))
+
+    first = workers[0]
+    assert vm.export() is True
+    first.complete.emit(str(custom))
+    assert _rows(vm.history)[0]["path"] == str(custom)
+    assert _rows(vm.history)[0]["outcome"] == "success"
+
+    second = workers[0]
+    assert vm.export() is True
+    second.error.emit("password=hunter2")
+    vm.refreshHistory()
+    assert _rows(vm.history)[0]["outcome"] == "failed"
+    assert "hunter2" not in _rows(vm.history)[0]["error"]
+
+    third = workers[0]
+    assert vm.export() is True
+    third.cancelled.emit()
+    vm.refreshHistory()
+    assert _rows(vm.history)[0]["outcome"] == "cancelled"

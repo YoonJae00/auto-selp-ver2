@@ -28,7 +28,7 @@ tags:
 
 ## Problem
 
-The export view model treated worker construction, shared-task acquisition, signal wiring, and thread start as if they could not fail. It also handled validation issue clicks as navigation commands, losing the selected issue context and bypassing the shell's responsive detail presentation.
+The export view model treated worker construction, shared-task acquisition, signal wiring, and thread start as if they could not fail. Its validation decision came from a bounded display sample rather than authoritative full-scope aggregates, and recent history was inferred by scanning one directory. It also handled validation issue clicks as navigation commands, losing the selected issue context and bypassing the shell's responsive detail presentation.
 
 ## Symptoms
 
@@ -36,6 +36,8 @@ The export view model treated worker construction, shared-task acquisition, sign
 - A `worker.start()` exception occurred after task acquisition, leaving a running shared task unless every acquired state field was explicitly rolled back.
 - Clicking one of several issues for the same product could show the wrong issue when selection was identified only by product code.
 - Export details were unavailable in the shell's wide drawer and its 900-pixel overlay mode.
+- A blocking issue beyond the first 50 displayed rows could be missed, and database changes after UI validation could cross the write boundary.
+- Custom destinations and failed or cancelled attempts disappeared from directory-derived history.
 
 ## What Didn't Work
 
@@ -46,7 +48,7 @@ The export view model treated worker construction, shared-task acquisition, sign
 
 ## Solution
 
-Treat startup as a small transaction. Validate the command, construct the typed worker before acquiring the task, then acquire with a fresh opaque owner, connect signals, publish busy state, and call `start()`. If construction fails, sanitize and expose the error without acquiring. If start fails after acquisition, clear busy/current references, run bounded worker cleanup, fail the task with the same owner, clear that owner, and return `False` so retry remains possible.
+Treat startup as a small transaction. Validate the command, construct the typed worker before acquiring the task, then acquire with a fresh opaque owner. Signal connections, publishing busy state, and `start()` belong to one rollback-protected block because even a test double or deleted Qt object can fail during `connect`. If construction fails, sanitize and expose the error without acquiring. If connection or start fails after acquisition, clear busy/current references, run bounded worker cleanup, fail the task with the same owner, clear that owner, and return `False` so retry remains possible.
 
 ```python
 try:
@@ -72,6 +74,10 @@ except Exception as exc:
 
 For validation detail, pass the virtualized row index to the view model. Reject out-of-range rows and summary rows without a product ID, load only the referenced `Product` through an injected session factory, and expose a compact `selectedIssueDetail` map containing product fields plus the exact issue message and severity. Opening detail toggles `AppVM.detailPanelOpen` without changing `currentRoute`.
 
+Separate validation truth from its presentation. `validate_export_scope(session, supplier_id)` uses aggregate conditional counts over the complete supplier scope for blocking and warning totals, derives a fingerprint, and loads at most 50 representative issue rows plus a summary. `canExport` uses the aggregate counts, never the sample. The view model revalidates immediately before task acquisition and preserves warning acknowledgement only when the fingerprint is unchanged. The worker repeats authoritative validation in the same database session immediately before calling the exporter, closing the final mutation window for blocking errors.
+
+Persist attempts in a bounded JSON operation log using temp-file plus atomic replace. Record `pending` before startup and update the same attempt to `success`, `failed`, or `cancelled`, including custom destination, supplier scope, row count, and sanitized error. Reading a corrupt store returns an empty history and the next write repairs it; history no longer depends on workbook inspection or one destination directory.
+
 Define the export detail body as a route-specific `Component`. The application shell chooses the route's title and body once, then supplies that same component to both `DetailDrawer` instances. This extends the shared-drawer pattern without adding another breakpoint, scrim, focus trap, or Escape handler.
 
 ## Why This Works
@@ -88,6 +94,9 @@ An issue index preserves identity even when multiple findings reference one prod
 - Pass stable row identity from virtualized delegates and reject summary rows before querying the database.
 - Test route detail content on both sides of the shell breakpoint, including title, exact issue message, and representative product fields.
 - Clear selected detail and close the panel when its export scope becomes stale.
+- Put an explicit placeholder at supplier index zero and bind the ComboBox index back to view-model selection so the visual scope cannot disagree with the command scope.
+- Make virtualized issue rows and their list keyboard-focusable; Enter, Return, Space, pointer taps, and accessibility press actions must share one activation signal.
+- Place a blocking issue beyond the display cap in tests and mutate the database between UI validation and export in both view-model and worker tests.
 
 ## Related Issues
 

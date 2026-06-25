@@ -10,6 +10,7 @@ from PySide6.QtCore import QThread, Signal
 
 from app.db.session import get_session
 from app.exporters.excel import export_to_excel
+from app.exporters.validation import validate_export_scope
 
 
 @dataclass(frozen=True)
@@ -29,11 +30,13 @@ class ExportWorker(QThread):
         *,
         session_factory: Callable[[], Any] = get_session,
         exporter: Callable[..., Path] = export_to_excel,
+        validator: Callable[..., Any] = validate_export_scope,
     ) -> None:
         super().__init__()
         self.request = request
         self._session_factory = session_factory
         self._exporter = exporter
+        self._validator = validator
 
     cancel = QThread.requestInterruption
 
@@ -48,6 +51,9 @@ class ExportWorker(QThread):
                 return
             output.parent.mkdir(parents=True, exist_ok=True)
             session = self._session_factory()
+            validation = self._validator(session, request.supplier_id)
+            if validation.blocking_count:
+                raise ValueError(f"내보내기 검증 오류 {validation.blocking_count}건을 먼저 해결하세요.")
             self._exporter(session, request.supplier_id, temporary)
             if self.isInterruptionRequested():
                 self.cancelled.emit()
