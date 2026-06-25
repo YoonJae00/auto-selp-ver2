@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+data/*.db
+data/exports/
+adapters_data/*.yaml
+!adapters_data/.gitkeep
+dist/
+build/
+*.spec.bak
+.env
