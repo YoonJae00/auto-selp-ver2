@@ -9,6 +9,8 @@ from app.ui_qml.viewmodels.app import AppViewModel
 from app.ui_qml.viewmodels.adapter_studio import AdapterStudioViewModel
 from app.ui_qml.viewmodels.suppliers import SuppliersViewModel
 from app.ui_qml.viewmodels.monitor import MonitorViewModel
+from app.ui_qml.viewmodels.settings import SettingsViewModel
+from app.ui_qml.viewmodels.first_run import FirstRunViewModel
 from app.workers.lifecycle import drain_surviving_workers
 from app.ui_qml.viewmodels.crawl import CrawlViewModel
 from app.ui_qml.viewmodels.export import ExportViewModel
@@ -34,6 +36,8 @@ def create_engine() -> QQmlApplicationEngine:
     crawl_view_model = CrawlViewModel(engine, app_view_model=app_view_model)
     monitor_view_model = MonitorViewModel(engine)
     export_view_model = ExportViewModel(engine, app_view_model=app_view_model)
+    settings_view_model = SettingsViewModel(engine)
+    first_run_view_model = FirstRunViewModel(engine)
     application = QCoreApplication.instance()
     if application is not None:
         application.aboutToQuit.connect(
@@ -45,12 +49,16 @@ def create_engine() -> QQmlApplicationEngine:
     engine.rootContext().setContextProperty("CrawlVM", crawl_view_model)
     engine.rootContext().setContextProperty("MonitorVM", monitor_view_model)
     engine.rootContext().setContextProperty("ExportVM", export_view_model)
+    engine.rootContext().setContextProperty("SettingsVM", settings_view_model)
+    engine.rootContext().setContextProperty("FirstRunVM", first_run_view_model)
     engine.setProperty("appViewModel", app_view_model)
     engine.setProperty("suppliersViewModel", suppliers_view_model)
     engine.setProperty("adapterStudioViewModel", adapter_studio_view_model)
     engine.setProperty("crawlViewModel", crawl_view_model)
     engine.setProperty("monitorViewModel", monitor_view_model)
     engine.setProperty("exportViewModel", export_view_model)
+    engine.setProperty("settingsViewModel", settings_view_model)
+    engine.setProperty("firstRunViewModel", first_run_view_model)
     engine.load(QUrl.fromLocalFile(str(QML_DIRECTORY / "Main.qml")))
     if not engine.rootObjects():
         raise RuntimeError("Failed to load the QML application")

@@ -2,12 +2,15 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 
+import pytest
 from PySide6.QtCore import QMetaObject, QObject, QPoint, Qt, QUrl, qInstallMessageHandler
 from PySide6.QtGui import QColor
 from PySide6.QtQml import QQmlComponent
 from PySide6.QtTest import QTest
 
+from app.config import AppConfig
 from app.ui_qml.application import QML_DIRECTORY, create_engine
+from app.ui_qml.viewmodels.settings import SettingsViewModel
 
 
 @contextmanager
@@ -92,6 +95,73 @@ def test_monitor_view_model_is_retained_and_monitor_route_is_real_screen(qt_app)
     assert monitor.findChild(QObject, "monitorEventsTable") is not None
     assert monitor.findChild(QObject, "unreadMarkerLegend") is not None
     assert monitor.findChild(QObject, "ackSelectedButton").property("accessibleName")
+
+
+def test_settings_view_models_are_retained_and_settings_route_is_real_screen(qt_app) -> None:
+    engine = create_engine()
+    root = engine.rootObjects()[0]
+    app_vm = engine.property("appViewModel")
+
+    app_vm.navigate("settings")
+    qt_app.processEvents()
+    settings = root.findChild(QObject, "settingsScreen")
+
+    assert b"settingsViewModel" in engine.dynamicPropertyNames()
+    assert b"firstRunViewModel" in engine.dynamicPropertyNames()
+    assert settings is not None
+    assert settings.property("minimumContentWidth") == 620
+    assert settings.findChild(QObject, "settingsSaveButton") is not None
+    assert settings.findChild(QObject, "settingsBrowserSection") is not None
+
+
+def test_settings_secret_inputs_clear_after_successful_save(qt_app, monkeypatch) -> None:
+    saved_keys: dict[str, str] = {}
+
+    def make_settings(parent=None):
+        return SettingsViewModel(
+            parent,
+            config_loader=lambda: AppConfig(),
+            config_saver=lambda _config: None,
+            key_loader=lambda provider: saved_keys.get(provider),
+            key_saver=lambda provider, key: saved_keys.__setitem__(provider, key),
+            key_deleter=lambda provider: saved_keys.pop(provider, None),
+        )
+
+    monkeypatch.setattr("app.ui_qml.application.SettingsViewModel", make_settings)
+    engine = create_engine()
+    root = engine.rootObjects()[0]
+    app_vm = engine.property("appViewModel")
+    app_vm.navigate("settings")
+    qt_app.processEvents()
+    settings = root.findChild(QObject, "settingsScreen")
+    gemini = settings.findChild(QObject, "geminiApiKeyInput")
+    openai = settings.findChild(QObject, "openaiApiKeyInput")
+    save = settings.findChild(QObject, "settingsSaveButton")
+    gemini.setProperty("text", "gemini-secret")
+    openai.setProperty("text", "openai-secret")
+
+    assert QMetaObject.invokeMethod(save, "click") is True
+    qt_app.processEvents()
+
+    assert saved_keys == {"gemini": "gemini-secret", "openai": "openai-secret"}
+    assert gemini.property("text") == ""
+    assert openai.property("text") == ""
+
+
+def test_qml_engine_tests_do_not_touch_real_keyring(qt_app, monkeypatch) -> None:
+    def fail_keyring_access(*_args, **_kwargs):
+        pytest.fail("QML engine tests must not touch the real keyring")
+
+    monkeypatch.setattr("app.credentials.store.keyring.get_password", fail_keyring_access)
+    engine = create_engine()
+    root = engine.rootObjects()[0]
+    app_vm = engine.property("appViewModel")
+
+    app_vm.navigate("settings")
+    qt_app.processEvents()
+
+    assert engine.property("settingsViewModel").geminiKeyConfigured is False
+    assert root.findChild(QObject, "settingsScreen") is not None
 
 
 def test_monitor_schedule_detail_uses_shared_wide_and_overlay_drawers(qt_app) -> None:

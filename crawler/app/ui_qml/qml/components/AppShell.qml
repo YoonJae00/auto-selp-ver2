@@ -39,10 +39,14 @@ Item {
                                                    : null
 
     function syncViewModel() {
+        var wasOverlayOpen = detailPanelOpen && !wideDetailMode
         currentRoute = viewModel.currentRoute
         sidebarCollapsed = viewModel.sidebarCollapsed
         taskPanelOpen = viewModel.taskPanelOpen
         detailPanelOpen = viewModel.detailPanelOpen
+        if (wasOverlayOpen && !detailPanelOpen && contentStack) {
+            contentStack.forceActiveFocus()
+        }
     }
 
     Component.onCompleted: syncViewModel()
@@ -76,6 +80,7 @@ Item {
             }
 
             StackLayout {
+                id: contentStack
                 objectName: "contentStack"
                 Layout.fillWidth: true
                 Layout.fillHeight: true
@@ -112,7 +117,12 @@ Item {
                     viewModel: ExportVM
                     // qmllint enable unqualified
                 }
-                PlaceholderScreen { title: "설정" }
+                Screens.SettingsScreen {
+                    objectName: "settingsScreen"
+                    // qmllint disable unqualified
+                    viewModel: SettingsVM
+                    // qmllint enable unqualified
+                }
             }
 
             TaskPanel {
