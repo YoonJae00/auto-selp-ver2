@@ -6,8 +6,8 @@ This checklist is the release gate for the crawler QML desktop UI. Do not mark t
 
 | Platform | OS build | Display scale | Package version | Result | Fallback used | Evidence |
 | --- | --- | --- | --- | --- | --- | --- |
-| macOS local verification | TBD | 100% | dev | PENDING | color fallback or native effect | Local source run |
-| macOS local verification | TBD | 200% | dev | PENDING | color fallback or native effect | Local source run |
+| macOS local verification | macOS 26 | 100% | 3a6f38f | PASS | color fallback or native effect | User manual verification on macOS 26 |
+| macOS local verification | macOS 26 | 200% | 3a6f38f | PASS | color fallback or native effect | User manual verification on macOS 26 |
 | Windows 10 verification | TBD | 100% | release artifact | PENDING | native backdrop or color fallback | Installed package |
 | Windows 10 verification | TBD | 125% | release artifact | PENDING | native backdrop or color fallback | Installed package |
 | Windows 10 verification | TBD | 150% | release artifact | PENDING | native backdrop or color fallback | Installed package |
@@ -21,51 +21,51 @@ Each matrix cell must be PASS, FAIL, or PENDING. Evidence must name the platform
 
 | Check | macOS 100% | macOS 200% | Windows 10 100% | Windows 10 125% | Windows 10 150% | Windows 10 200% | Windows 11 100% | Windows 11 125% | Windows 11 150% | Windows 11 200% | Evidence |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Startup | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | launch log or screenshot |
-| Shutdown | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | app closes without stranded task |
-| Dark/light theme | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | screenshots for both themes |
-| Transparency or Mica fallback | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | fallback name and screenshot |
-| Move, resize, minimize, maximize, and restore | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | screen recording or notes |
-| Korean text rendering | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | screenshot |
-| Korean input | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | typed field screenshot |
-| First run | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | setup completion evidence |
-| Keychain | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | save/load/remove result |
-| Suppliers workflow | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | create/edit/delete smoke result |
-| Adapter Studio workflow | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | probe/generate/save smoke result |
-| Crawl workflow | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | category/product smoke result |
-| Export workflow | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | xlsx output evidence |
-| Monitor workflow | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | schedule/event smoke result |
-| Settings workflow | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | settings save evidence |
-| Active-task navigation | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | task remains visible after route change |
-| Cancellation | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | cancellation result |
-| Minimum size | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | minimum-size screenshot |
-| Frozen launch | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | packaged/frozen launch result |
-| Successful crawl/export smoke flow | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | crawl completes and exported workbook opens |
+| Startup | PASS | PASS | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | macOS 26 user manual verification |
+| Shutdown | PASS | PASS | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | macOS 26 user manual verification |
+| Dark/light theme | PASS | PASS | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | macOS 26 user manual verification |
+| Transparency or Mica fallback | PASS | PASS | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | macOS 26 user manual verification |
+| Move, resize, minimize, maximize, and restore | PASS | PASS | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | macOS 26 user manual verification |
+| Korean text rendering | PASS | PASS | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | macOS 26 user manual verification |
+| Korean input | PASS | PASS | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | macOS 26 user manual verification |
+| First run | PASS | PASS | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | macOS 26 user manual verification |
+| Keychain | PASS | PASS | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | macOS 26 user manual verification |
+| Suppliers workflow | PASS | PASS | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | macOS 26 user manual verification |
+| Adapter Studio workflow | PASS | PASS | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | macOS 26 user manual verification |
+| Crawl workflow | PASS | PASS | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | macOS 26 user manual verification |
+| Export workflow | PASS | PASS | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | macOS 26 user manual verification |
+| Monitor workflow | PASS | PASS | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | macOS 26 user manual verification |
+| Settings workflow | PASS | PASS | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | macOS 26 user manual verification |
+| Active-task navigation | PASS | PASS | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | macOS 26 user manual verification |
+| Cancellation | PASS | PASS | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | macOS 26 user manual verification |
+| Minimum size | PASS | PASS | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | macOS 26 user manual verification |
+| Frozen launch | PASS | PASS | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | macOS 26 user manual verification |
+| Successful crawl/export smoke flow | PASS | PASS | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | PENDING | macOS 26 user manual verification |
 
 ## macOS local verification
 
 Record the OS build, Python version, display scale, package version or commit SHA, and whether the app ran from source or an installer-equivalent frozen launch.
 
-- [ ] Startup
-- [ ] Shutdown
-- [ ] Dark/light theme changes
-- [ ] Transparency or Mica fallback
-- [ ] Move, resize, minimize, maximize, and restore
-- [ ] Korean input
-- [ ] First run
-- [ ] Keychain
-- [ ] Suppliers workflow
-- [ ] Adapter Studio workflow
-- [ ] Crawl workflow
-- [ ] Export workflow
-- [ ] Monitor workflow
-- [ ] Settings workflow
-- [ ] Active-task navigation
-- [ ] Cancellation
-- [ ] Minimum size
-- [ ] 100% display scale
-- [ ] 200% display scale
-- [ ] Frozen launch
+- [x] Startup
+- [x] Shutdown
+- [x] Dark/light theme changes
+- [x] Transparency or Mica fallback
+- [x] Move, resize, minimize, maximize, and restore
+- [x] Korean input
+- [x] First run
+- [x] Keychain
+- [x] Suppliers workflow
+- [x] Adapter Studio workflow
+- [x] Crawl workflow
+- [x] Export workflow
+- [x] Monitor workflow
+- [x] Settings workflow
+- [x] Active-task navigation
+- [x] Cancellation
+- [x] Minimum size
+- [x] 100% display scale
+- [x] 200% display scale
+- [x] Frozen launch
 
 ## Windows 10 verification
 
