@@ -12,6 +12,7 @@ htmlcov/
 # Agent
 .agent/
 .antigravitycli/
+.slim/deepwork/
 
 # Node
 node_modules/

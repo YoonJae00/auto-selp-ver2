@@ -14,6 +14,7 @@ from app.analyzer.element_picker import suggest_defaults_for_field
 from app.analyzer.mapping_hints import MappingHint, apply_locked_hints_to_yaml_dict
 from app.analyzer.validation_summary import build_validation_summary, get_save_gate_decision
 from app.config import load_config
+from app.analyzer.session_store import clear_session_state, save_session_state
 from app.credentials.store import (
     delete_supplier_credentials,
     load_supplier_credentials,
@@ -23,8 +24,11 @@ from app.crawlers.registry import load_adapter_from_text, save_adapter
 from app.ui_qml.models.list_model import ListModel
 from app.ui_qml.viewmodels.base import BaseViewModel, sanitize_diagnostic
 from app.workers.adapter import (
-    AdapterTestRequest, AdapterTestWorker, GenerateRequest, GenerateWorker,
-    PickerRequest, PickerWorker, ProbeRequest, ProbeWorker,
+    AdapterTestRequest, AdapterTestWorker, CategoryMenuProbeRequest, CategoryMenuProbeWorker,
+    GenerateRequest, GenerateWorker,
+    PickerJob, PickerRequest, PickerValidateRequest, PickerValidateWorker,
+    PickerWorker, ProbeRequest, ProbeWorker,
+    close_picker_session, stop_picker_thread,
 )
 from app.workers.lifecycle import stop_workers
 
@@ -55,7 +59,9 @@ class AdapterStudioViewModel(BaseViewModel):
         self._app = app_view_model
         self._factories = {
             "probe": ProbeWorker, "generate": GenerateWorker,
-            "picker": PickerWorker, "test": AdapterTestWorker,
+            "picker": PickerJob, "test": AdapterTestWorker,
+            "picker_validate": PickerValidateWorker,
+            "category_probe": CategoryMenuProbeWorker,
             **dict(worker_factories or {}),
         }
         self._current_stage = 0
@@ -81,7 +87,25 @@ class AdapterStudioViewModel(BaseViewModel):
         self._active_credential_identity: tuple[str, str, str, bool] | None = None
         self._active_credential_is_studio = False
         self._pending_hint = None
+        self._picker_active = False
+        self._picker_field_label = ""
+        self._picker_field_hint = ""
+        self._picker_field_path = ""
+        self._picker_session_open = False
+        self._has_pending_hint = False
+        self._pending_hint_preview = ""
+        self._picker_validation_active = False
+        self._picker_validation_confidence = ""
+        self._picker_validation_note = ""
+        self._picker_validation_selector = ""
+        self._pending_validation: dict[str, Any] | None = None
+        self._category_analysis_ready = False
+        self._category_analysis_message = "사이트 분석 후 카테고리 메뉴를 확인하세요."
+        self._current_progress = -1.0
+        self._current_progress_label = ""
         self._mapping_hints: list[MappingHint] = []
+        self._needs_mapping_login = False
+        self._manual_login_pending = False
         self._inputs = {
             "supplierName": "", "mainUrl": "", "listingUrl": "", "detailUrl": "",
             "needsLogin": False, "loginUrl": "", "username": "", "password": "",
@@ -94,11 +118,59 @@ class AdapterStudioViewModel(BaseViewModel):
     validationSummary = Property("QVariantMap", lambda self: self._summary_map(), notify=stateChanged)
     mappingRows = Property(QObject, lambda self: self._mapping_rows, constant=True)
     probeSummary = Property("QVariantMap", lambda self: dict(self._probe_summary), notify=stateChanged)
+    allProductsAutoDetected = Property(bool, lambda self: bool(self._probe_summary.get("hasAllProducts")), notify=stateChanged)
     canSave = Property(bool, lambda self: self._can_save(), notify=stateChanged)
     saveWarning = Property("QVariantMap", lambda self: dict(self._save_warning), notify=stateChanged)
     advancedEditorOpen = Property(bool, lambda self: self._advanced_editor_open, notify=stateChanged)
     busy = Property(bool, lambda self: self._busy, notify=stateChanged)
+    currentProgress = Property(float, lambda self: self._current_progress, notify=stateChanged)
+    currentProgressLabel = Property(str, lambda self: self._current_progress_label, notify=stateChanged)
     connectionInputs = Property("QVariantMap", lambda self: {k: v for k, v in self._inputs.items() if k not in {"username", "password"}}, notify=stateChanged)
+    pickerActive = Property(bool, lambda self: self._picker_active, notify=stateChanged)
+    pickerFieldLabel = Property(str, lambda self: self._picker_field_label, notify=stateChanged)
+    pickerFieldPath = Property(str, lambda self: self._picker_field_path, notify=stateChanged)
+    pickerFieldHint = Property(str, lambda self: self._picker_field_hint, notify=stateChanged)
+    pickerSessionOpen = Property(bool, lambda self: self._picker_session_open, notify=stateChanged)
+    hasPendingHint = Property(bool, lambda self: self._has_pending_hint, notify=stateChanged)
+    pendingHintPreview = Property(str, lambda self: self._pending_hint_preview, notify=stateChanged)
+    needsMappingLogin = Property(bool, lambda self: self._needs_mapping_login, notify=stateChanged)
+    manualLoginPending = Property(bool, lambda self: self._manual_login_pending, notify=stateChanged)
+    pickerValidationActive = Property(bool, lambda self: self._picker_validation_active, notify=stateChanged)
+    pickerValidationConfidence = Property(str, lambda self: self._picker_validation_confidence, notify=stateChanged)
+    pickerValidationNote = Property(str, lambda self: self._picker_validation_note, notify=stateChanged)
+    pickerValidationSelector = Property(str, lambda self: self._picker_validation_selector, notify=stateChanged)
+    categoryAnalysisReady = Property(bool, lambda self: self._category_analysis_ready, notify=stateChanged)
+    categoryAnalysisMessage = Property(str, lambda self: self._category_analysis_message, notify=stateChanged)
+    canAcceptPickedHint = Property(bool, lambda self: bool(self._pending_hint) and not self._picker_validation_active, notify=stateChanged)
+
+    def _field_label_for_path(self, field_path: str) -> str:
+        if field_path == "adapter.categories.all_products.url":
+            return "전체상품 링크"
+        if field_path == "adapter.categories.navigation.menu_selector":
+            return "카테고리 메뉴"
+        key = field_path.split(".")[-1]
+        return FIELD_LABELS_KO.get(key, key)
+
+    def _hint_text_for_path(self, field_path: str) -> str:
+        hints = {
+            "adapter.categories.all_products.url": "사이트의 '전체상품' 또는 'ALL' 메뉴 링크를 클릭하세요.",
+            "adapter.categories.navigation.menu_selector": "카테고리 메뉴 안의 대표 항목 하나(예: 의류, 상의)를 클릭하세요. 이 선택은 AI 설정 생성의 카테고리 힌트로 사용됩니다.",
+            "adapter.listing.product_link": "상품 카드 안의 상세페이지 링크를 클릭하세요.",
+            "adapter.product.main_image_url": "상품 대표 이미지를 클릭하세요.",
+            "adapter.product.raw_product_name": "상품명 텍스트를 클릭하세요.",
+            "adapter.product.supply_price": "공급가격 텍스트를 클릭하세요.",
+            "adapter.product.detail_content": "상품 상세설명 영역을 클릭하세요.",
+        }
+        return hints.get(field_path, "수집할 요소를 클릭하세요.")
+
+    def _hint_preview(self, picked) -> str:
+        value = (
+            picked.attribute_values.get("href")
+            or picked.attribute_values.get("src")
+            or picked.text
+            or picked.selector
+        )
+        return str(value or "")[:120]
 
     def _emit(self) -> None:
         self.stateChanged.emit()
@@ -137,6 +209,10 @@ class AdapterStudioViewModel(BaseViewModel):
     def setCurrentStage(self, stage: int) -> None:
         stage = max(0, min(3, int(stage)))
         if stage != self._current_stage:
+            # Close picker session when leaving stages 1-2 (analyze, map)
+            if self._current_stage in (1, 2) and stage not in (1, 2):
+                close_picker_session()
+                self._picker_session_open = False
             self._current_stage = stage
             self._emit()
 
@@ -178,6 +254,11 @@ class AdapterStudioViewModel(BaseViewModel):
         if self._active_credential_is_studio and self._active_credential_key.startswith("studio-"):
             try:
                 delete_supplier_credentials(self._active_credential_key)
+            except Exception:
+                pass
+            # 세션 state도 함께 삭제 (사용자/로그인 정보 변경 시 이전 세션 재사용 방지)
+            try:
+                clear_session_state(self._active_credential_key)
             except Exception:
                 pass
         self._active_credential_key = None
@@ -222,6 +303,8 @@ class AdapterStudioViewModel(BaseViewModel):
         worker.error.connect(lambda message: self._dispatch_error(operation_id, message))
         if hasattr(worker, "cancelled"):
             worker.cancelled.connect(lambda: self._dispatch_cancelled(operation_id))
+        if hasattr(worker, "login_required"):
+            worker.login_required.connect(lambda: self._dispatch_login_required(operation_id))
         if hasattr(worker, "progress"):
             worker.progress.connect(lambda message: self._dispatch_progress(operation_id, stage, message))
         if not self._task_start(key, label, stage, owner):
@@ -246,13 +329,38 @@ class AdapterStudioViewModel(BaseViewModel):
         if self._operation_is_current(operation_id):
             self._cancel("작업 취소됨")
 
+    def _dispatch_login_required(self, operation_id: int) -> None:
+        if self._operation_is_current(operation_id):
+            self._on_login_required()
+
+    def _on_login_required(self) -> None:
+        self._manual_login_pending = True
+        self._emit()
+
     def _dispatch_progress(self, operation_id: int, stage: str, message: str) -> None:
         if self._operation_is_current(operation_id):
             self._task_progress(stage, message)
 
     def _task_progress(self, stage: str, message: str) -> None:
+        progress = -1.0
+        clean_message = message
+        if message.startswith("[progress:"):
+            end = message.find("]")
+            if end > 0:
+                try:
+                    progress = float(message[len("[progress:"):end])
+                    clean_message = message[end + 1 :].strip()
+                except ValueError:
+                    pass
+        self._current_progress = progress
+        self._current_progress_label = sanitize_diagnostic(clean_message)
         if self._app and self._task_owner is not None:
-            self._app.update_owned_task(self._task_owner, stage, -1.0, sanitize_diagnostic(message))
+            self._app.update_owned_task(self._task_owner, stage, progress, self._current_progress_label)
+        self._emit()
+
+    def _clear_progress(self) -> None:
+        self._current_progress = -1.0
+        self._current_progress_label = ""
 
     def _operation_done(self) -> None:
         self._busy = False
@@ -260,11 +368,30 @@ class AdapterStudioViewModel(BaseViewModel):
         if self._app and self._task_owner is not None:
             self._app.complete_owned_task(self._task_owner)
         self._task_owner = None
+        self._clear_progress()
         self._emit()
 
     def _operation_error(self, message: str) -> None:
         self._busy = False
         self._retire_current_worker()
+        self._picker_active = False
+        self._pending_hint = None
+        self._picker_field_label = ""
+        self._picker_field_hint = ""
+        self._picker_field_path = ""
+        self._has_pending_hint = False
+        self._pending_hint_preview = ""
+        self._pending_validation = None
+        self._picker_validation_active = False
+        self._picker_validation_confidence = ""
+        self._picker_validation_note = ""
+        self._picker_validation_selector = ""
+        self._needs_mapping_login = False
+        self._manual_login_pending = False
+        if self._category_analysis_message == "카테고리 메뉴 분석 중...":
+            self._category_analysis_ready = False
+            self._category_analysis_message = "카테고리를 찾지 못했습니다. 다시 시도하세요."
+        self._clear_progress()
         self.set_field_errors({"form": sanitize_diagnostic(message)})
         if self._app and self._task_owner is not None:
             self._app.fail_owned_task(self._task_owner, sanitize_diagnostic(message))
@@ -303,10 +430,28 @@ class AdapterStudioViewModel(BaseViewModel):
         if errors:
             self.set_field_errors(errors)
             return False
-        credentials = (self._inputs["loginUrl"], self._inputs["username"], self._inputs["password"])
+        if self._inputs["needsLogin"]:
+            login_missing = not str(self._inputs.get("loginUrl") or "").strip()
+            user_missing = not str(self._inputs.get("username") or "").strip()
+            pw_missing = not str(self._inputs.get("password") or "").strip()
+            if login_missing or user_missing or pw_missing:
+                missing = []
+                if login_missing:
+                    missing.append("loginUrl")
+                if user_missing:
+                    missing.append("username")
+                if pw_missing:
+                    missing.append("password")
+                labels = {"loginUrl": "로그인 URL", "username": "아이디", "password": "비밀번호"}
+                self.set_field_errors({k: f"{labels[k]}을(를) 입력하세요." for k in missing})
+                return False
+        login_url = str(self._inputs["loginUrl"] or "").strip() or url
+        credentials = (login_url, self._inputs["username"], self._inputs["password"])
         if self._inputs["needsLogin"] and all(credentials):
             try:
                 credential_key = self._credential_key()
+                # 기존 세션 state 삭제: 사용자 변경 시 이전 세션 재사용 방지
+                clear_session_state(credential_key)
                 save_supplier_credentials(credential_key, str(credentials[1]), str(credentials[2]))
                 self._active_credential_key = credential_key
                 self._active_credential_identity = self._credential_identity()
@@ -332,9 +477,22 @@ class AdapterStudioViewModel(BaseViewModel):
         self._probe_summary = {
             "finalUrl": result.final_url, "encoding": result.encoding,
             "needsLogin": result.needs_login, "categoryCount": len(result.categories or []),
+            "categories": list(result.categories or []),
             "sampleProducts": list(result.sample_products or []),
             "hasAllProducts": result.has_all_products,
         }
+        self._category_analysis_ready = bool(result.categories or result.has_all_products)
+        self._category_analysis_message = (
+            "카테고리 분석 완료"
+            if self._category_analysis_ready
+            else "카테고리 자동 분석 실패: 브라우저에서 카테고리 메뉴를 지정하세요."
+        )
+        # 로그인 세션 저장: 1단계에서 추출한 storage_state를 매핑/테스트 단계에서 재사용
+        if getattr(result, "storage_state", None) and self._inputs["needsLogin"]:
+            try:
+                save_session_state(self._credential_key(), result.storage_state)
+            except Exception:
+                pass
         self._current_stage = 1
         self._operation_done()
 
@@ -348,6 +506,9 @@ class AdapterStudioViewModel(BaseViewModel):
             return False
         if self._probe_result is None:
             self.set_field_errors({"form": "먼저 사이트 분석을 실행하세요."})
+            return False
+        if not self._category_analysis_ready:
+            self.set_field_errors({"form": "카테고리 메뉴를 수동 지정하고 Yes로 확인하세요."})
             return False
         config = load_config()
         worker = self._factories["generate"](GenerateRequest(
@@ -374,6 +535,22 @@ class AdapterStudioViewModel(BaseViewModel):
             self._worker.requestInterruption()
         self._retire_current_worker()
         self._busy = False
+        self._picker_active = False
+        self._picker_session_open = False
+        self._needs_mapping_login = False
+        self._manual_login_pending = False
+        close_picker_session()
+        self._pending_hint = None
+        self._picker_field_label = ""
+        self._picker_field_hint = ""
+        self._picker_field_path = ""
+        self._has_pending_hint = False
+        self._pending_hint_preview = ""
+        self._pending_validation = None
+        self._picker_validation_active = False
+        self._picker_validation_confidence = ""
+        self._picker_validation_note = ""
+        self._picker_validation_selector = ""
         if self._app and self._task_owner is not None:
             self._app.cancel_owned_task(self._task_owner, message)
         self._task_owner = None
@@ -464,9 +641,11 @@ class AdapterStudioViewModel(BaseViewModel):
             loaded = self._load_transient_credentials()
             if loaded:
                 username, password = loaded
+        login_url = str(self._inputs["loginUrl"] or "").strip() or str(self._inputs["mainUrl"] or "").strip() or None
         request = AdapterTestRequest(
-            self._yaml_text, urls[:3], tested_hash, self._inputs["loginUrl"] or None,
+            self._yaml_text, urls[:3], tested_hash, login_url,
             username, password, tuple(fields) if fields else None,
+            supplier_key=self._credential_key() if self._inputs["needsLogin"] else None,
         )
         worker = self._factories["test"](request)
         self._inputs["username"] = self._inputs["password"] = ""
@@ -484,20 +663,116 @@ class AdapterStudioViewModel(BaseViewModel):
     def pickElement(self, field_path: str) -> bool:
         if not self._guard_operation("adapter-pick"):
             return False
-        target = str(self._inputs["detailUrl"] or self._inputs["mainUrl"])
+        if self._inputs["needsLogin"] and not self._mapping_credentials_available():
+            self._picker_field_path = field_path
+            self._picker_field_label = self._field_label_for_path(field_path)
+            self._picker_field_hint = self._hint_text_for_path(field_path)
+            self._needs_mapping_login = True
+            self._picker_active = False
+            self._emit()
+            return False
+        self._needs_mapping_login = False
+        self._pending_hint = None
+        self._has_pending_hint = False
+        self._pending_hint_preview = ""
+        self._picker_active = True
+        self._picker_session_open = True
+        self._picker_field_path = field_path
+        self._picker_field_label = self._field_label_for_path(field_path)
+        self._picker_field_hint = self._hint_text_for_path(field_path)
+        target = str(self._inputs["detailUrl"] or "").strip()
+        if not target:
+            sample_products = self._probe_summary.get("sampleProducts") or []
+            if sample_products and sample_products[0].get("url"):
+                target = str(sample_products[0]["url"])
+        if not target:
+            target = str(self._inputs["mainUrl"] or "").strip()
         username = password = None
         if self._inputs["needsLogin"]:
             loaded = self._load_transient_credentials()
             if loaded:
                 username, password = loaded
+        login_url = str(self._inputs["loginUrl"] or "").strip() or str(self._inputs["mainUrl"] or "").strip() or None
         worker = self._factories["picker"](PickerRequest(
-            field_path, target, self._inputs["loginUrl"] or None, username, password,
+            field_path, target, login_url, username, password,
             self._adapter_login_config(),
+            field_label=self._picker_field_label,
+            field_hint=self._picker_field_hint,
+            supplier_key=self._credential_key() if self._inputs["needsLogin"] else None,
         ))
-        return self._connect_worker(
+        ok = self._connect_worker(
             worker, finished=self._picked, key="adapter-pick",
             label="요소 선택", stage="map",
         )
+        if not ok:
+            self._picker_active = False
+            self._emit()
+        return ok
+
+    @Slot("QVariantMap")
+    def submitMappingLogin(self, values: Mapping[str, Any]) -> bool:
+        """Accept login credentials entered in the mapping stage, store them, and resume the pending pick."""
+        previous_identity = self._credential_identity()
+        for key in ("loginUrl", "username", "password"):
+            if key in values:
+                self._inputs[key] = str(values[key] or "")
+        self._invalidate_credentials_for_identity_change(previous_identity)
+        login_url = str(self._inputs["loginUrl"] or "").strip() or str(self._inputs["mainUrl"] or "").strip()
+        credentials = (login_url, self._inputs["username"], self._inputs["password"])
+        if self._inputs["needsLogin"] and all(credentials):
+            try:
+                credential_key = self._credential_key()
+                # 기존 세션 state 삭제: 사용자 변경 시 이전 세션 재사용 방지
+                clear_session_state(credential_key)
+                save_supplier_credentials(credential_key, str(credentials[1]), str(credentials[2]))
+                self._active_credential_key = credential_key
+                self._active_credential_identity = self._credential_identity()
+                self._active_credential_is_studio = True
+            except Exception as exc:
+                self._inputs["username"] = self._inputs["password"] = ""
+                self.set_field_errors({"form": f"로그인 정보 저장 실패: {sanitize_diagnostic(exc)}"})
+                self._emit()
+                return False
+        self._inputs["username"] = self._inputs["password"] = ""
+        self._needs_mapping_login = False
+        self.set_field_errors({})
+        self._emit()
+        pending = self._picker_field_path
+        if pending:
+            return self.pickElement(pending)
+        return True
+
+    @Slot()
+    def confirmManualLogin(self) -> None:
+        """User logged in manually in the browser — tell the worker to resume."""
+        self._manual_login_pending = False
+        worker = self._worker
+        if worker is not None and hasattr(worker, "confirmManualLogin"):
+            worker.confirmManualLogin()
+        self._emit()
+
+    @Slot()
+    def cancelManualLogin(self) -> None:
+        """User cancelled the manual-login prompt — tell the worker to abort."""
+        self._manual_login_pending = False
+        worker = self._worker
+        if worker is not None and hasattr(worker, "cancelManualLogin"):
+            worker.cancelManualLogin()
+        self._emit()
+
+    def _mapping_credentials_available(self) -> bool:
+        """Non-side-effecting check: are login credentials loadable for mapping/test?"""
+        if not self._inputs["needsLogin"]:
+            return True
+        if (
+            self._active_credential_key is None
+            or self._active_credential_identity != self._credential_identity()
+        ):
+            return False
+        try:
+            return load_supplier_credentials(self._active_credential_key) is not None
+        except Exception:
+            return False
 
     def _load_transient_credentials(self) -> tuple[str, str] | None:
         if not self._inputs["needsLogin"]:
@@ -525,6 +800,8 @@ class AdapterStudioViewModel(BaseViewModel):
         if self._shutting_down:
             return
         self._shutting_down = True
+        close_picker_session()
+        self._picker_session_open = False
         previous_operation = self._operation_id
         self._operation_id += 1
         self._cancelled_operations.add(previous_operation)
@@ -540,7 +817,14 @@ class AdapterStudioViewModel(BaseViewModel):
                 worker.requestInterruption()
             self._clear_worker_secret(worker)
         self._retired_workers = stop_workers(workers)
+        stop_picker_thread()
         self._busy = False
+        self._emit()
+
+    @Slot()
+    def closePickerSession(self) -> None:
+        close_picker_session()
+        self._picker_session_open = False
         self._emit()
 
     @staticmethod
@@ -572,20 +856,168 @@ class AdapterStudioViewModel(BaseViewModel):
     def pickAllProducts(self) -> bool:
         return self.pickElement("adapter.categories.all_products.url")
 
+    @Slot()
+    def pickCategoryMenu(self) -> bool:
+        return self.pickElement("adapter.categories.navigation.menu_selector")
+
     def _picked(self, picked, field_path: str) -> None:
         self._pending_hint = (picked, field_path)
+        self._picker_active = False
+        self._has_pending_hint = False
+        self._pending_hint_preview = self._hint_preview(picked)
+        self._pending_validation = None
+        self._picker_validation_active = False
+        self._picker_validation_confidence = ""
+        self._picker_validation_note = ""
+        self._picker_validation_selector = ""
+        self._operation_done()
+        if field_path == "adapter.categories.navigation.menu_selector":
+            self._start_category_menu_analysis(picked)
+        else:
+            self.acceptPickedHint()
+
+    def _start_category_menu_analysis(self, picked) -> bool:
+        # Fast path: links already captured from the visible browser — skip headless probe.
+        if picked.container_links:
+            self._category_analysis_ready = False
+            self._category_analysis_message = "카테고리 메뉴 분석 중..."
+            self.set_field_errors({})
+            close_picker_session()
+            self._picker_session_open = False
+            self._category_menu_analysis_finished({"categories": list(picked.container_links)})
+            return True
+
+        defaults = suggest_defaults_for_field("adapter.categories.navigation.menu_selector", picked)
+        selector = str(defaults.get("selector") or picked.selector or "").strip()
+        if not selector:
+            self._pending_hint = None
+            self._category_analysis_ready = False
+            self._category_analysis_message = "카테고리 메뉴 선택자를 찾지 못했습니다. 다시 시도하세요."
+            self.set_field_errors({"form": self._category_analysis_message})
+            self._emit()
+            return False
+        self._category_analysis_ready = False
+        self._category_analysis_message = "카테고리 메뉴 분석 중..."
+        self.set_field_errors({})
+        close_picker_session()
+        self._picker_session_open = False
+        worker = self._factories["category_probe"](CategoryMenuProbeRequest(
+            url=picked.url or str(self._inputs["mainUrl"] or "").strip(),
+            selector=selector,
+            selector_candidates=list(picked.selector_candidates or []),
+            supplier_key=self._credential_key() if self._inputs["needsLogin"] else None,
+        ))
+        return self._connect_worker(
+            worker, finished=self._category_menu_analysis_finished,
+            key="adapter-category-probe", label="카테고리 메뉴 분석", stage="probe",
+        )
+
+    def _category_menu_analysis_finished(self, result: dict) -> None:
+        categories = list(result.get("categories") or [])
+        if not categories:
+            self._pending_hint = None
+            self._category_analysis_ready = False
+            self._category_analysis_message = "카테고리를 찾지 못했습니다. 다시 시도하세요."
+            self.set_field_errors({"form": self._category_analysis_message})
+            self._operation_done()
+            return
+        if self._probe_result is not None:
+            self._probe_result.categories = categories
+        self._probe_summary["categories"] = list(categories)
+        self._probe_summary["categoryCount"] = len(categories)
+        if self.acceptPickedHint():
+            self._category_analysis_ready = True
+            self._category_analysis_message = f"카테고리 {len(categories)}개 발견"
+        self._operation_done()
+
+    def _start_picker_validation(self, picked, field_path: str) -> bool:
+        label = self._field_label_for_path(field_path)
+        request = PickerValidateRequest(
+            picked_element=picked,
+            field_path=field_path,
+            field_label=label,
+        )
+        worker = self._factories["picker_validate"](request)
+        self._picker_validation_active = True
+        self._picker_validation_confidence = ""
+        self._picker_validation_note = ""
+        self._picker_validation_selector = ""
+        ok = self._connect_worker(
+            worker, finished=self._picker_validation_finished,
+            key="adapter-pick-validate", label="AI 선택자 검증", stage="map",
+        )
+        if not ok:
+            self._picker_validation_active = False
+        return ok
+
+    def _picker_validation_finished(self, result: dict) -> None:
+        self._pending_validation = result
+        self._picker_validation_active = False
+        self._picker_validation_selector = str(result.get("validated_selector", ""))
+        self._picker_validation_confidence = str(result.get("confidence", ""))
+        self._picker_validation_note = str(result.get("note", ""))
         self._operation_done()
 
     @Slot()
+    def rejectPickedHint(self) -> None:
+        self._pending_hint = None
+        self._has_pending_hint = False
+        self._pending_hint_preview = ""
+        self._pending_validation = None
+        self._picker_validation_active = False
+        self._picker_validation_confidence = ""
+        self._picker_validation_note = ""
+        self._picker_validation_selector = ""
+        # 피커 취소 시 브라우저 세션 닫기 (다시 선택 시 새 세션 열림)
+        close_picker_session()
+        self._picker_session_open = False
+        self._emit()
+
+    @Slot(result=bool)
+    def reselectPickedHint(self) -> bool:
+        if not self._pending_hint:
+            return False
+        _, field_path = self._pending_hint
+        self._pending_hint = None
+        self._has_pending_hint = False
+        self._pending_hint_preview = ""
+        self._pending_validation = None
+        self._picker_validation_active = False
+        self._picker_validation_confidence = ""
+        self._picker_validation_note = ""
+        self._picker_validation_selector = ""
+        self._emit()
+        return self.pickElement(field_path)
+
+    @Slot(result=bool)
     def acceptPickedHint(self) -> bool:
         if not self._pending_hint:
             return False
+        if self._picker_validation_active:
+            self.set_field_errors({"form": "AI가 카테고리 메뉴를 분석 중입니다. 완료 후 Yes를 눌러주세요."})
+            return False
         picked, field_path = self._pending_hint
         defaults = suggest_defaults_for_field(field_path, picked)
+        # AI 검증 결과가 있고 신뢰도 high/medium이면 검증된 선택자로 교체
+        validation = self._pending_validation
+        if validation and validation.get("confidence") in {"high", "medium"}:
+            validated = str(validation.get("validated_selector", "")).strip()
+            if validated:
+                defaults["selector"] = validated
+        # 선택자가 비어 있으면 후보 중 하나로 폴백; 그래도 없으면 사용자에게 안내
+        if not str(defaults.get("selector", "")).strip():
+            fallback = next((c for c in (picked.selector_candidates or []) if str(c).strip()), "")
+            if fallback:
+                defaults["selector"] = fallback
+            else:
+                self.set_field_errors({"form": "선택된 요소의 CSS 선택자를 추출하지 못했습니다. 다른 요소를 클릭해 다시 선택해 주세요."})
+                self._has_pending_hint = True
+                self._emit()
+                return False
         hint = MappingHint(
             page_kind="listing" if "listing" in field_path or "all_products" in field_path else "detail",
             field_path=field_path, chosen_selector=defaults.pop("selector"), url=picked.url,
-            selector_candidates=list(picked.selector_candidates), **defaults,
+            selector_candidates=list(picked.selector_candidates or []), **defaults,
         )
         self._mapping_hints.append(hint)
         if self._yaml_text:
@@ -594,9 +1026,29 @@ class AdapterStudioViewModel(BaseViewModel):
                 apply_locked_hints_to_yaml_dict(raw, [hint])
                 self.setYamlText(yaml.safe_dump(raw, allow_unicode=True, sort_keys=False))
             except Exception as exc:
-                self.set_field_errors({"yamlText": f"YAML 오류: {exc}"})
-                return False
+                if field_path != "adapter.categories.navigation.menu_selector":
+                    self.set_field_errors({"yamlText": f"YAML 오류: {exc}"})
+                    return False
+        if field_path in {
+            "adapter.categories.navigation.menu_selector",
+            "adapter.categories.all_products.url",
+        }:
+            self._category_analysis_ready = True
+            self._category_analysis_message = "카테고리 메뉴 수동 분석 완료"
         self._pending_hint = None
+        self._picker_field_label = ""
+        self._picker_field_hint = ""
+        self._picker_field_path = ""
+        self._has_pending_hint = False
+        self._pending_hint_preview = ""
+        self._pending_validation = None
+        self._picker_validation_active = False
+        self._picker_validation_confidence = ""
+        self._picker_validation_note = ""
+        self._picker_validation_selector = ""
+        # 피커 적용 시 브라우저 세션 닫기 (누적 방지)
+        close_picker_session()
+        self._picker_session_open = False
         self._emit()
         return True
 

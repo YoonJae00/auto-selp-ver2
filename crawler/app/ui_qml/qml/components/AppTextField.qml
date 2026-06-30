@@ -4,15 +4,17 @@ import ".." as Ui
 
 TextField {
     id: control
-    implicitHeight: 44
+    property string size: "default"
+
+    implicitHeight: size === "compact" ? 32 : 44
     Accessible.role: Accessible.EditableText
     Accessible.name: placeholderText
     color: enabled ? Ui.Theme.text : Ui.Theme.textMuted
     placeholderTextColor: Ui.Theme.textMuted
     selectionColor: Ui.Theme.accent
     selectedTextColor: "white"
-    leftPadding: 12
-    rightPadding: 12
+    leftPadding: size === "compact" ? 8 : 12
+    rightPadding: size === "compact" ? 8 : 12
 
     background: Rectangle {
         color: control.enabled ? Ui.Theme.surfaceRaised : Ui.Theme.surface

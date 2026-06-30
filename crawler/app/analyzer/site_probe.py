@@ -6,6 +6,7 @@ from typing import Any, Callable
 from urllib.parse import urljoin
 
 from app.analyzer.html_reducer import reduce_html
+from app.analyzer.login_helper import _safe_goto, perform_login
 
 
 @dataclass
@@ -67,20 +68,6 @@ def normalize_sample_products(base_url: str, products: list[dict], links: list[s
 ProgressCallback = Callable[[str], None]
 
 
-async def _safe_goto(page, url: str, wait_until: str = "domcontentloaded") -> bool:
-    try:
-        await page.goto(url, wait_until=wait_until, timeout=15_000)
-        await page.wait_for_timeout(1500)
-        return True
-    except Exception:
-        try:
-            await page.goto(url, wait_until="commit", timeout=10_000)
-            await page.wait_for_timeout(2000)
-            return True
-        except Exception:
-            return False
-
-
 async def probe_site(
     main_url: str,
     sample_listing_url: str | None = None,
@@ -119,117 +106,15 @@ async def probe_site(
 
             # Login if credentials provided
             if login_url and username and password:
-                _log(f"로그인 페이지로 이동: {login_url}")
-                if not await _safe_goto(page, login_url):
-                    _log("로그인 페이지 접속 실패")
-                    return ProbeResult(
-                        main_url=main_url, final_url=main_url, encoding="utf-8",
-                        needs_login=True, login_form_html="", listing_html="", detail_html="",
-                        categories=[], sample_products=[],
-                        login_url=login_url,
-                    )
-
-                _log("로그인 입력 필드 탐색 중...")
                 try:
-                    # Find password field first, then find the nearest text/email input
-                    password_input = await page.query_selector("input[type='password']")
-                    if not password_input:
-                        _log("로그인 폼을 찾을 수 없습니다")
+                    success = await perform_login(page, login_url, username, password, on_progress=_log)
+                    if not success:
                         return ProbeResult(
                             main_url=main_url, final_url=page.url, encoding="utf-8",
                             needs_login=True, login_form_html="", listing_html="", detail_html="",
                             categories=[], sample_products=[],
                             login_url=login_url,
                         )
-
-                    # Find the form containing the password field
-                    form = await password_input.evaluate("el => el.closest('form')")
-                    if form:
-                        # Find text/email input in the same form
-                        id_input = await page.query_selector("form input[type='text'], form input[type='email'], form input[name*='id'], form input[name*='user'], form input[name*='member']")
-                    else:
-                        id_input = await page.query_selector("input[type='text'], input[type='email']")
-
-                    if not id_input:
-                        _log("아이디 입력 필드를 찾을 수 없습니다")
-                        return ProbeResult(
-                            main_url=main_url, final_url=page.url, encoding="utf-8",
-                            needs_login=True, login_form_html="", listing_html="", detail_html="",
-                            categories=[], sample_products=[],
-                            login_url=login_url,
-                        )
-
-                    _log("로그인 정보 입력 중...")
-                    await id_input.fill(username)
-                    await password_input.fill(password)
-
-                    # Find and click submit button
-                    _log("로그인 제출 중...")
-                    submit_selectors = [
-                        "form button[type='submit']",
-                        "form input[type='submit']",
-                        "form input[type='image']",
-                        "form button:has-text('로그인')",
-                        "form a:has-text('로그인')",
-                        "form img[src*='login']",
-                        "button[type='submit']",
-                        "input[type='submit']",
-                        "input[type='image']",
-                    ]
-                    submitted = False
-                    for sel in submit_selectors:
-                        try:
-                            btn = await page.query_selector(sel)
-                            if btn:
-                                await btn.click()
-                                submitted = True
-                                break
-                        except Exception:
-                            continue
-
-                    if not submitted:
-                        # Try pressing Enter in the password field
-                        try:
-                            await password_input.press("Enter")
-                            submitted = True
-                        except Exception:
-                            pass
-
-                    if not submitted:
-                        _log("로그인 버튼을 찾을 수 없습니다")
-                        return ProbeResult(
-                            main_url=main_url, final_url=page.url, encoding="utf-8",
-                            needs_login=True, login_form_html="", listing_html="", detail_html="",
-                            categories=[], sample_products=[],
-                            login_url=login_url,
-                        )
-
-                    # Wait for navigation
-                    await page.wait_for_timeout(3000)
-                    _log("로그인 처리 대기 중...")
-
-                    # Check if login succeeded
-                    login_success = False
-                    try:
-                        logout_indicators = [
-                            "a[href*='logout']",
-                            "img[src*='logout']",
-                            "a:has-text('로그아웃')",
-                            "a:has-text('LOGOUT')",
-                        ]
-                        for sel in logout_indicators:
-                            el = await page.query_selector(sel)
-                            if el:
-                                login_success = True
-                                break
-                    except Exception:
-                        pass
-
-                    if login_success:
-                        _log("로그인 성공")
-                    else:
-                        _log("로그인 성공 여부를 확인할 수 없습니다. 계속 진행합니다.")
-
                 except Exception as exc:
                     _log(f"로그인 중 오류: {exc}")
                     return ProbeResult(

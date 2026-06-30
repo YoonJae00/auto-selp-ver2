@@ -2,7 +2,7 @@
 
 from app.workers.adapter import (
     AdapterTestRequest, AdapterTestWorker, GenerateRequest, GenerateWorker,
-    PickerRequest, PickerWorker, ProbeRequest, ProbeWorker, TestWorker,
+    PickerJob, PickerRequest, PickerWorker, ProbeRequest, ProbeWorker, TestWorker,
 )
 
-__all__ = ["AdapterTestRequest", "AdapterTestWorker", "GenerateRequest", "GenerateWorker", "PickerRequest", "PickerWorker", "ProbeRequest", "ProbeWorker", "TestWorker"]
+__all__ = ["AdapterTestRequest", "AdapterTestWorker", "GenerateRequest", "GenerateWorker", "PickerJob", "PickerRequest", "PickerWorker", "ProbeRequest", "ProbeWorker", "TestWorker"]

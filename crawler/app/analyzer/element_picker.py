@@ -5,6 +5,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.analyzer.login_helper import perform_login as _perform_login_shared
 from app.crawlers.engine import create_engine
 
 
@@ -26,6 +27,7 @@ class PickedElement:
     element_id: str = ""
     classes: list[str] = field(default_factory=list)
     match_counts: dict[str, int] = field(default_factory=dict)
+    container_links: list[dict] = field(default_factory=list)
 
 
 def sanitize_value(value: Any, limit: int = MAX_TEXT) -> str:
@@ -97,6 +99,8 @@ def suggest_defaults_for_field(field_path: str, picked: PickedElement) -> dict[s
         result["attribute"] = "href"
         result["observed_value"] = attrs.get("href", "")
         result["selector"] = attrs.get("href", picked.selector)
+    elif field_path == "adapter.categories.navigation.menu_selector":
+        result["observed_value"] = picked.text or picked.selector
     return result
 
 
@@ -105,6 +109,10 @@ PICKER_SCRIPT = r"""
   const safeAttrs = ['href', 'src', 'data-src', 'value', 'alt', 'title'];
   const sensitiveRe = /csrf|token|secret|key|password|session|auth/i;
   const oldOutline = new WeakMap();
+  const tip = document.createElement('div');
+  tip.id = '__picker-tip';
+  tip.style.cssText = 'position:fixed;z-index:2147483646;padding:4px 8px;background:rgba(20,20,20,0.92);color:#fff;font:11px/1.3 monospace;border-radius:4px;pointer-events:none;display:none;max-width:320px;word-break:break-all';
+  document.body.appendChild(tip);
   const cssEscape = (window.CSS && CSS.escape) ? CSS.escape : (s) => String(s).replace(/[^a-zA-Z0-9_-]/g, '\\$&');
   function nthPath(el) {
     const parts = [];
@@ -133,13 +141,51 @@ PICKER_SCRIPT = r"""
     document.removeEventListener('mouseover', over, true);
     document.removeEventListener('mouseout', out, true);
     document.removeEventListener('click', click, true);
+    if (tip.parentNode) tip.parentNode.removeChild(tip);
+    const ov = document.getElementById('__picker-overlay');
+    if (ov && ov.parentNode) ov.parentNode.removeChild(ov);
   }
-  function over(e) { if (!oldOutline.has(e.target)) oldOutline.set(e.target, e.target.style.outline || ''); e.target.style.outline = '3px solid #2f80ed'; }
-  function out(e) { if (oldOutline.has(e.target)) e.target.style.outline = oldOutline.get(e.target); }
-  function click(e) {
-    e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation(); cleanup();
+  function isOverlayEl(el) {
+    return !!el && (el.id === '__picker-overlay' || (typeof el.closest === 'function' && el.closest('#__picker-overlay')));
+  }
+  function removeConfirm() {
+    const existing = document.getElementById('__picker-confirm');
+    if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
+  }
+  function isPickerUi(el) {
+    return !!el && typeof el.closest === 'function' && (el.closest('#__picker-overlay') || el.closest('#__picker-confirm'));
+  }
+  function over(e) {
     const el = e.target;
+    if (isPickerUi(el) || !el || el.nodeType !== 1 || !el.tagName) return;
+    if (!oldOutline.has(el)) oldOutline.set(el, el.style.outline || '');
+    el.style.outline = '2px solid #2f80ed';
+    const tag = el.tagName.toLowerCase();
+    const cls = (el.classList && el.classList[0]) ? '.' + el.classList[0] : '';
+    const id = el.id ? '#' + el.id : '';
+    tip.textContent = tag + id + cls + ' — 클릭해서 지정';
+    tip.style.left = Math.min(e.clientX + 12, window.innerWidth - 200) + 'px';
+    tip.style.top = Math.max(e.clientY - 28, 32) + 'px';
+    tip.style.display = 'block';
+  }
+  function out(e) {
+    const el = e.target;
+    if (isPickerUi(el)) return;
+    if (el && oldOutline.has(el)) el.style.outline = oldOutline.get(el);
+    tip.style.display = 'none';
+  }
+  function click(e) {
+    const el = e.target;
+    if (isPickerUi(el)) return;
+    e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+    if (window.__pickerCancelled) { cleanup(); resolve(null); return; }
+    // Clicking the instruction overlay (incl. the cancel button) cancels the picker.
+    if (isOverlayEl(el)) { cleanup(); resolve(null); return; }
+    // Ignore clicks on non-element targets (e.g., the document) — keep the picker alive.
+    if (!el || el.nodeType !== 1 || !el.tagName) return;
     const cand = candidates(el);
+    // Ignore clicks that yield no usable selector — keep the picker alive.
+    if (!cand.length) return;
     const counts = {};
     for (const sel of cand) { try { counts[sel] = document.querySelectorAll(sel).length; } catch (_) { counts[sel] = 9999; } }
     const attrs = {};
@@ -153,7 +199,7 @@ PICKER_SCRIPT = r"""
     attrs.name = el.getAttribute('name') || '';
     attrs.id = el.id || '';
     attrs.type = el.getAttribute('type') || '';
-    resolve({
+    const picked = {
       url: location.href,
       selectorCandidates: cand,
       matchCounts: counts,
@@ -163,12 +209,65 @@ PICKER_SCRIPT = r"""
       tagName: el.tagName.toLowerCase(),
       elementId: el.id || '',
       classes: Array.from(el.classList || []).slice(0, 10),
-    });
+    };
+    removeConfirm();
+    const box = document.createElement('div');
+    box.id = '__picker-confirm';
+    box.style.cssText = [
+      'position:fixed','left:50%','top:72px','transform:translateX(-50%)','z-index:2147483647',
+      'width:min(420px,calc(100vw - 32px))','padding:14px','border-radius:10px',
+      'background:#111827','color:#fff','box-shadow:0 12px 32px rgba(0,0,0,0.35)',
+      'font:13px/1.45 -apple-system,system-ui,sans-serif'
+    ].join(';');
+    const preview = (picked.text || picked.attributeValues.href || picked.attributeValues.src || cand[0] || '').trim().slice(0, 140);
+    box.innerHTML = '<div style="font-weight:700;margin-bottom:6px">이 요소가 맞나요?</div>'
+      + '<div style="opacity:.82;word-break:break-all;margin-bottom:12px"></div>'
+      + '<div style="display:flex;gap:8px;justify-content:flex-end"></div>';
+    box.children[1].textContent = preview || cand[0];
+    const buttons = box.children[2];
+    const no = document.createElement('button');
+    no.textContent = 'No';
+    no.style.cssText = 'padding:6px 14px;border:0;border-radius:7px;background:#374151;color:#fff;font-weight:700;cursor:pointer';
+    no.onclick = (ev) => { ev.preventDefault(); ev.stopPropagation(); removeConfirm(); };
+    const yes = document.createElement('button');
+    yes.textContent = 'Yes';
+    yes.style.cssText = 'padding:6px 14px;border:0;border-radius:7px;background:#2f80ed;color:#fff;font-weight:700;cursor:pointer';
+    yes.onclick = (ev) => { ev.preventDefault(); ev.stopPropagation(); cleanup(); resolve(picked); };
+    buttons.appendChild(no);
+    buttons.appendChild(yes);
+    document.body.appendChild(box);
   }
+  window.__pickerCancelled = false;
   document.addEventListener('mouseover', over, true);
   document.addEventListener('mouseout', out, true);
   document.addEventListener('click', click, true);
 })
+"""
+
+
+INSTRUCTION_OVERLAY_SCRIPT = r"""
+([fieldLabel, fieldHint]) => {
+  if (document.getElementById('__picker-overlay')) return;
+  const bar = document.createElement('div');
+  bar.id = '__picker-overlay';
+  bar.style.cssText = [
+    'position:fixed','top:0','left:0','right:0','z-index:2147483647',
+    'display:flex','align-items:center','justify-content:space-between',
+    'padding:10px 16px','font:13px/1.4 -apple-system,system-ui,sans-serif',
+    'color:#fff','background:#2f80ed','box-shadow:0 2px 8px rgba(0,0,0,0.25)',
+    'pointer-events:none'
+  ].join(';');
+  const left = document.createElement('span');
+  left.textContent = '📋 「' + fieldLabel + '」 선택중 — ' + fieldHint;
+  left.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+  const btn = document.createElement('button');
+  btn.textContent = '취소';
+  btn.style.cssText = 'margin-left:12px;padding:4px 12px;border:0;border-radius:6px;background:rgba(255,255,255,0.25);color:#fff;font:600 13px/1 system-ui,sans-serif;cursor:pointer;pointer-events:auto';
+  btn.onclick = () => { window.__pickerCancelled = true; };
+  bar.appendChild(left);
+  bar.appendChild(btn);
+  document.body.appendChild(bar);
+}
 """
 
 
@@ -219,56 +318,9 @@ def resolve_login_selectors(login_config: dict[str, str] | None) -> dict[str, An
     }
 
 
-async def _perform_login(page, login_url: str, username: str, password: str, selectors: dict[str, str]) -> None:
-    await page.goto(login_url, wait_until="domcontentloaded", timeout=15000)
-    await page.wait_for_timeout(1000)
-
-    # Fill username
-    for sel in selectors["id_candidates"]:
-        try:
-            el = await page.wait_for_selector(sel, state="visible", timeout=5000)
-            if el:
-                await el.fill(username)
-                break
-        except Exception:
-            continue
-
-    # Fill password
-    for sel in selectors["password_candidates"]:
-        try:
-            el = await page.wait_for_selector(sel, state="visible", timeout=5000)
-            if el:
-                await el.fill(password)
-                break
-        except Exception:
-            continue
-
-    # Click submit
-    submitted = False
-    for sel in selectors["submit_candidates"]:
-        try:
-            btn = await page.wait_for_selector(sel, state="visible", timeout=5000)
-            if btn:
-                await btn.click()
-                submitted = True
-                break
-        except Exception:
-            continue
-
-    if not submitted:
-        return
-
-    try:
-        await page.wait_for_load_state("domcontentloaded", timeout=10000)
-    except Exception:
-        await page.wait_for_timeout(3000)
-
-    # Verify login (optional)
-    if selectors["success_indicator"]:
-        try:
-            await page.wait_for_selector(selectors["success_indicator"], state="visible", timeout=5000)
-        except Exception:
-            pass
+async def _perform_login(page, login_url: str, username: str, password: str, login_config: dict[str, str] | None = None) -> bool:
+    """Shared login via the robust login_helper.  Preserved as a thin wrapper for callers."""
+    return await _perform_login_shared(page, login_url, username, password, login_config=login_config)
 
 
 async def pick_element(url: str, login_url: str | None = None, username: str | None = None, password: str | None = None, login_config: dict[str, str] | None = None, timeout_ms: int = 60_000) -> PickedElement:
@@ -276,8 +328,7 @@ async def pick_element(url: str, login_url: str | None = None, username: str | N
         page = await engine.new_page()
         try:
             if login_url and username and password:
-                selectors = resolve_login_selectors(login_config)
-                await _perform_login(page, login_url, username, password, selectors)
+                await _perform_login(page, login_url, username, password, login_config)
             await page.goto(url, wait_until="domcontentloaded", timeout=20000)
             await page.wait_for_timeout(1000)
             raw = await asyncio.wait_for(page.evaluate(PICKER_SCRIPT), timeout=timeout_ms / 1000)

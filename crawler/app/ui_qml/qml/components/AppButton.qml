@@ -5,9 +5,10 @@ import ".." as Ui
 Button {
     id: control
     property bool selected: false
+    property string size: "default"
 
-    implicitHeight: 44
-    implicitWidth: Math.max(72, contentItem.implicitWidth + 24)
+    implicitHeight: size === "compact" ? 28 : 44
+    implicitWidth: Math.max(size === "compact" ? 56 : 72, contentItem.implicitWidth + (size === "compact" ? 16 : 24))
     hoverEnabled: true
     Accessible.role: Accessible.Button
     Accessible.name: text
@@ -18,7 +19,7 @@ Button {
         text: control.text
         color: !control.enabled ? Ui.Theme.textMuted
               : control.selected ? Ui.Theme.accent : Ui.Theme.text
-        font.pixelSize: 13
+        font.pixelSize: control.size === "compact" ? 12 : 13
         font.weight: control.selected ? Font.DemiBold : Font.Normal
         horizontalAlignment: Text.AlignHCenter
         verticalAlignment: Text.AlignVCenter

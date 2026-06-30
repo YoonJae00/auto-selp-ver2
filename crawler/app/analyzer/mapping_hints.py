@@ -16,6 +16,7 @@ ALLOWED_HINT_PATHS = {
     "adapter.product.supplier_status",
     "adapter.listing.product_link",
     "adapter.categories.all_products.url",
+    "adapter.categories.navigation.menu_selector",
 }
 
 PRODUCT_DEFAULTS: dict[str, dict[str, Any]] = {
@@ -90,6 +91,8 @@ def format_mapping_hints_for_prompt(hints: list[MappingHint] | None) -> str:
 
 
 def _hint_fields(hint: MappingHint) -> dict[str, Any]:
+    if hint.field_path == "adapter.categories.navigation.menu_selector":
+        return {"menu_selector": hint.chosen_selector}
     data: dict[str, Any] = {"selector": hint.chosen_selector}
     for key in ("attribute", "html", "multiple", "transform", "fallback", "fallback_from"):
         value = getattr(hint, key)
@@ -136,4 +139,12 @@ def apply_locked_hints_to_yaml_dict(data: dict[str, Any], hints: list[MappingHin
             existing_raw = all_products
             existing = existing_raw if isinstance(existing_raw, dict) else {}
             all_products.update({**ALL_PRODUCTS_URL_DEFAULTS, **existing, "url": hint.chosen_selector})
+        elif hint.field_path == "adapter.categories.navigation.menu_selector":
+            categories = adapter.setdefault("categories", {})
+            if not isinstance(categories, dict):
+                raise ValueError("adapter.categories must be a dict")
+            nav = categories.setdefault("navigation", {})
+            if not isinstance(nav, dict):
+                raise ValueError("adapter.categories.navigation must be a dict")
+            nav["menu_selector"] = hint.chosen_selector
     return data

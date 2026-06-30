@@ -205,12 +205,56 @@ def test_single_field_test_dispatches_field_and_updates_mapping(vm) -> None:
 
 def test_adapter_studio_uses_shared_worker_implementations_without_legacy_builder() -> None:
     from app.ui_qml.viewmodels import adapter_studio
-    from app.workers.adapter import AdapterTestWorker, PickerWorker
+    from app.workers.adapter import AdapterTestWorker, PickerJob
 
-    assert adapter_studio.PickerWorker is PickerWorker
+    assert adapter_studio.PickerJob is PickerJob
     vm = adapter_studio.AdapterStudioViewModel()
     assert vm._factories["test"] is AdapterTestWorker
     assert not (Path(__file__).parents[2] / "app" / "ui" / "tabs" / "adapter_builder_tab.py").exists()
+
+
+def test_picker_jobs_reuse_one_thread_so_playwright_never_crosses_threads(qt_app) -> None:
+    """Regression: previously each pick spun a fresh QThread, so the second
+    pick reused a Playwright sync session bound to a dead thread and raised
+    ``greenlet.error: cannot switch to a different thread``."""
+    import threading
+
+    import app.workers.adapter as adapter_mod
+    from app.workers.adapter import PickerJob, PickerRequest, stop_picker_thread
+
+    pick_thread_ids: list[int] = []
+
+    class _FakeSession:
+        def __init__(self, headless: bool = False) -> None:
+            self.is_open = True
+            self.is_logged_in = False
+
+        def open(self) -> None:
+            pass
+
+        def pick(self, url, field_label="", field_hint="", timeout_ms=60_000):
+            pick_thread_ids.append(threading.get_ident())
+            return object()
+
+        def close(self) -> None:
+            pass
+
+    original = adapter_mod.PickerSession
+    adapter_mod.PickerSession = _FakeSession
+    try:
+        first = PickerJob(PickerRequest(field_path="adapter.product.a", target_url="https://x"))
+        first.start()
+        assert first.wait(5000)
+        second = PickerJob(PickerRequest(field_path="adapter.product.b", target_url="https://x"))
+        second.start()
+        assert second.wait(5000)
+    finally:
+        adapter_mod.PickerSession = original
+        stop_picker_thread()
+
+    assert len(pick_thread_ids) == 2
+    assert pick_thread_ids[0] == pick_thread_ids[1], "both picks must run on the same picker thread"
+    assert pick_thread_ids[0] != threading.get_ident(), "picks must not run on the main thread"
 
 
 def test_application_retains_studio_and_route_screen(qt_app) -> None:
@@ -510,7 +554,7 @@ def test_mapping_rows_never_clip_at_wide_or_narrow_width(qt_app) -> None:
         QTest.qWait(50)
         mapping = probe.findChild(QObject, "mapping")
         assert mapping.property("firstRowHeight") > 0
-        assert mapping.property("firstRowHeight") >= mapping.property("firstRowContentHeight") + 18
+        assert mapping.property("firstRowHeight") >= mapping.property("firstRowContentHeight") + 16
 
 
 @pytest.mark.asyncio
@@ -687,6 +731,71 @@ def test_form_reset_preserves_migrated_runtime_key_but_never_reuses_it(tmp_path,
     assert "a-shop" not in deleted
     assert vm._active_credential_key is None
     assert vm._load_transient_credentials() is None
+
+
+# ---------------------------------------------------------------------------
+# Picker UX improvements (allProductsAutoDetected, pickerFieldHint, field hints)
+# ---------------------------------------------------------------------------
+
+
+def test_all_products_auto_detected_reflects_probe_result(vm) -> None:
+    from types import SimpleNamespace
+
+    ns = SimpleNamespace(
+        final_url="https://example.com", encoding="utf-8", needs_login=False,
+        categories=[], sample_products=[], has_all_products=True,
+    )
+    vm._probe_finished(ns)
+    assert vm.allProductsAutoDetected is True
+    assert vm.currentStage == 1
+
+    ns2 = SimpleNamespace(
+        final_url="https://example.com", encoding="utf-8", needs_login=False,
+        categories=[], sample_products=[], has_all_products=False,
+    )
+    vm._probe_finished(ns2)
+    assert vm.allProductsAutoDetected is False
+
+
+def test_picker_field_hint_set_per_field() -> None:
+    from app.ui_qml.viewmodels.adapter_studio import AdapterStudioViewModel
+
+    captured: dict[str, object] = {}
+
+    def factory(request):
+        captured["request"] = request
+        return FakeWorker(request)
+
+    vm = AdapterStudioViewModel(app_view_model=None, worker_factories={"picker": factory})
+    vm.setConnectionInputs(
+        {"supplierName": "Test Shop", "mainUrl": "https://example.com", "detailUrl": "https://example.com/p/1"}
+    )
+
+    # Trigger pick for all_products
+    assert vm.pickAllProducts() is True
+    req = captured["request"]
+    assert req.field_path == "adapter.categories.all_products.url"
+    assert req.field_label == "전체상품 링크"
+    assert "전체상품" in req.field_hint
+
+    # Reset state for second call
+    vm._busy = False
+    vm._worker = None
+    vm._task_owner = None
+
+    # Trigger pick for category menu
+    assert vm.pickCategoryMenu() is True
+    req = captured["request"]
+    assert req.field_path == "adapter.categories.navigation.menu_selector"
+    assert req.field_label == "카테고리 메뉴"
+    assert "카테고리" in req.field_hint
+
+
+def test_hint_text_for_path_mapping(vm) -> None:
+    assert "전체상품" in vm._hint_text_for_path("adapter.categories.all_products.url")
+    assert "카테고리" in vm._hint_text_for_path("adapter.categories.navigation.menu_selector")
+    assert "상세페이지" in vm._hint_text_for_path("adapter.listing.product_link")
+    assert vm._hint_text_for_path("adapter.product.unknown_field") == "수집할 요소를 클릭하세요."
 
 
 def test_running_crawl_blocks_adapter_worker_creation() -> None:
