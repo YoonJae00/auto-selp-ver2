@@ -749,10 +749,12 @@ class AdapterTestWorker(_AsyncWorker):
         if extractor.selector:
             if extractor.multiple:
                 elements = await page.query_selector_all(extractor.selector)
-                values = [await self._read_test_element(el, extractor) or "" for el in elements[:5]]
-                value = ", ".join(item[:50] for item in values if item) or None
-                if value:
-                    return value
+                # ponytail: reads all matched elements for an accurate count; cap if a selector ever matches hundreds
+                reads = [await self._read_test_element(el, extractor) or "" for el in elements]
+                values = [item for item in reads if item]
+                if values:
+                    preview = ", ".join(item[:50] for item in values[:5])
+                    return f"{len(values)}개 · {preview}"
             else:
                 element = await page.query_selector(extractor.selector)
                 if element:

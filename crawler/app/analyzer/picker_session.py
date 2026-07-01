@@ -598,11 +598,11 @@ class PickerSession:
             for k, v in (raw.get("matchCounts") or {}).items()
             if str(k) in candidates
         }
-        if field_path == "adapter.product.detail_content":
-            detail_selector = self._detail_image_selector(page, candidates)
-            if detail_selector:
-                candidates = [detail_selector]
-                counts = {detail_selector: 1}
+        if field_path in {"adapter.product.detail_content", "adapter.product.extra_image_urls"}:
+            broad_selector = self._detail_image_selector(page, candidates)
+            if broad_selector:
+                candidates = [broad_selector]
+                counts = {broad_selector: 1}
         elif field_path in {"adapter.options.groups.0.values_selector", "adapter.options.option_price_delta"}:
             option_selector = self._similar_option_selector(page, candidates)
             if option_selector:
