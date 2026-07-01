@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 from typing import Any, AsyncIterator
 from urllib.parse import urljoin
@@ -14,12 +15,16 @@ from app.analyzer.adapter_schema import (
 from app.credentials.store import load_supplier_credentials
 from app.crawlers.base import BaseAdapter, CategoryEntry, CrawlResult, StockSnapshotData
 from app.crawlers.engine import PlaywrightEngine
+from app.diagnostics import log_exception
 from app.schema.standard import (
     StandardOption,
     StandardProduct,
     build_option_display_name,
     derive_option_price_delta,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 def _extract_number(text: str | None) -> int | None:
@@ -77,6 +82,22 @@ def _map_supplier_status(status_value: Any, mapping: dict[str, str], default: st
     return default if default == "available" else "unknown"
 
 
+def _supported_image_url(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    url = value.strip()
+    if not url:
+        return None
+    path = url.split("?", 1)[0].split("#", 1)[0].lower()
+    return url if path.endswith((".jpg", ".jpeg", ".png", ".webp")) else None
+
+
+def _image_csv(value: Any) -> str | None:
+    values = value if isinstance(value, list) else ([value] if value else [])
+    images = [img for img in (_supported_image_url(item) for item in values) if img]
+    return ",".join(images) or None
+
+
 class YAMLAdapter(BaseAdapter):
     def __init__(
         self,
@@ -100,13 +121,16 @@ class YAMLAdapter(BaseAdapter):
 
         # Try to load credentials from keyring
         if not self.supplier_slug:
+            logger.warning("login skipped: missing supplier credential key supplier=%s", self.supplier_name)
             return False
         creds = load_supplier_credentials(self.supplier_slug)
         if not creds:
+            logger.warning("login skipped: missing credentials supplier=%s", self.supplier_name)
             return False
         username, password = creds
 
         try:
+            logger.info("login started supplier=%s url=%s", self.supplier_name, login_config.login_url)
             await page.goto(login_config.login_url, wait_until="domcontentloaded", timeout=15_000)
             await page.wait_for_timeout(1500)
 
@@ -158,6 +182,7 @@ class YAMLAdapter(BaseAdapter):
             # Check success
             if login_config.success_indicator:
                 success_el = await page.query_selector(login_config.success_indicator)
+                logger.info("login finished supplier=%s success=%s", self.supplier_name, success_el is not None)
                 return success_el is not None
 
             # Check common logout indicators
@@ -173,10 +198,13 @@ class YAMLAdapter(BaseAdapter):
             if login_config.failure_indicator:
                 fail_el = await page.query_selector(login_config.failure_indicator)
                 if fail_el:
+                    logger.info("login finished supplier=%s success=False", self.supplier_name)
                     return False
 
+            logger.info("login finished supplier=%s success=True", self.supplier_name)
             return True
-        except Exception:
+        except Exception as exc:
+            log_exception(logger, f"login failed supplier={self.supplier_name}", exc)
             return False
 
     async def discover_categories(self) -> list[CategoryEntry]:
@@ -284,6 +312,7 @@ class YAMLAdapter(BaseAdapter):
 
             page = await self.engine.new_page()
             try:
+                logger.info("crawl list page supplier=%s category=%s page=%d url=%s", self.supplier_name, category_id, page_num, list_url)
                 await page.goto(list_url, wait_until=config.browser.wait_until)
                 if pagination.stop_indicator:
                     stop = await page.query_selector(pagination.stop_indicator)
@@ -291,6 +320,7 @@ class YAMLAdapter(BaseAdapter):
                         break
 
                 product_links = await self._extract_product_links(page)
+                logger.info("crawl list links supplier=%s category=%s page=%d links=%d", self.supplier_name, category_id, page_num, len(product_links))
                 if not product_links:
                     break
 
@@ -322,6 +352,7 @@ class YAMLAdapter(BaseAdapter):
     async def _crawl_product(self, url: str, category_path: str) -> CrawlResult | None:
         page = await self.engine.new_page()
         try:
+            logger.info("crawl product supplier=%s url=%s", self.supplier_name, url)
             await page.goto(url, wait_until=self.adapter.adapter.browser.wait_until)
             product_config = self.adapter.adapter.product
 
@@ -345,16 +376,14 @@ class YAMLAdapter(BaseAdapter):
             supply_price = _extract_number(str(supply_price_raw)) if isinstance(supply_price_raw, str) else supply_price_raw
 
             main_image = fields.get("main_image_url")
-            if isinstance(main_image, str):
-                main_image = main_image.strip() or None
+            main_image = _supported_image_url(main_image)
 
-            detail = fields.get("detail_content")
-            if not isinstance(detail, str):
-                detail = None
+            detail = _image_csv(fields.get("detail_content"))
 
             extra_images = fields.get("extra_image_urls")
             if not isinstance(extra_images, list):
                 extra_images = [extra_images] if extra_images else []
+            extra_images = [img for img in (_supported_image_url(item) for item in extra_images) if img]
 
             raw_meta: dict[str, Any] = {
                 "url": url,
@@ -376,7 +405,7 @@ class YAMLAdapter(BaseAdapter):
                 main_image_url=main_image if isinstance(main_image, str) else None,
                 detail_content=detail,
                 supplier_category=category_path,
-                extra_image_urls=[img for img in extra_images if isinstance(img, str)],
+                extra_image_urls=extra_images,
                 brand_name=str(fields.get("brand_name")).strip() if fields.get("brand_name") else None,
                 manufacturer=str(fields.get("manufacturer")).strip() if fields.get("manufacturer") else None,
                 model_name=str(fields.get("model_name")).strip() if fields.get("model_name") else None,
@@ -384,7 +413,16 @@ class YAMLAdapter(BaseAdapter):
             )
 
             options = await self._extract_options(page, product.supplier_product_code, supply_price)
+            logger.info(
+                "crawl product extracted supplier=%s code=%s options=%d",
+                self.supplier_name,
+                product.supplier_product_code,
+                len(options),
+            )
             return CrawlResult(product=product, options=options)
+        except Exception as exc:
+            log_exception(logger, f"crawl product failed supplier={self.supplier_name} url={url}", exc)
+            raise
         finally:
             await page.close()
 
@@ -413,12 +451,21 @@ class YAMLAdapter(BaseAdapter):
             if extractor.fallback:
                 return _apply_transform(extractor.fallback, extractor.transform)
             return None
-        except Exception:
+        except Exception as exc:
+            logger.warning("field extraction failed selector=%s: %s", extractor.selector, exc)
             if extractor.fallback:
                 return _apply_transform(extractor.fallback, extractor.transform)
             return None
 
     async def _extract_field_fallback_from(self, page, extractor: FieldExtractor) -> str | None:
+        if extractor.fallback_from == "url":
+            if extractor.url_pattern:
+                import re
+                url = page.url
+                m = re.search(extractor.url_pattern, url)
+                return m.group(1) if m and m.lastindex else None
+            return None
+
         if extractor.fallback_from == "maxq":
             maxq = await page.query_selector("input[name='maxq']")
             if not maxq:
@@ -666,7 +713,8 @@ class YAMLAdapter(BaseAdapter):
                 supplier_status=mapped_status,
                 supply_price=price,
             )
-        except Exception:
+        except Exception as exc:
+            logger.warning("stock product failed supplier=%s url=%s: %s", self.supplier_name, url, exc)
             return None
         finally:
             await page.close()

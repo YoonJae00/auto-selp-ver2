@@ -14,6 +14,7 @@ ALLOWED_HINT_PATHS = {
     "adapter.product.main_image_url",
     "adapter.product.detail_content",
     "adapter.product.supplier_status",
+    "adapter.options.groups.0.values_selector",
     "adapter.listing.product_link",
     "adapter.categories.all_products.url",
     "adapter.categories.navigation.menu_selector",
@@ -22,10 +23,12 @@ ALLOWED_HINT_PATHS = {
 PRODUCT_DEFAULTS: dict[str, dict[str, Any]] = {
     "supply_price": {"transform": "extract_number"},
     "main_image_url": {"attribute": "src", "fallback_attribute": "data-src"},
-    "detail_content": {"html": True},
+    "extra_image_urls": {"attribute": "src", "fallback_attribute": "data-src", "multiple": True},
+    "detail_content": {"attribute": "src", "fallback_attribute": "data-src", "multiple": True},
 }
 LISTING_PRODUCT_LINK_DEFAULTS = {"attribute": "href"}
 ALL_PRODUCTS_URL_DEFAULTS = {"available": True}
+OPTION_GROUP_DEFAULTS = {"name": "옵션"}
 
 
 @dataclass
@@ -122,6 +125,19 @@ def apply_locked_hints_to_yaml_dict(data: dict[str, Any], hints: list[MappingHin
             existing_raw = product.get(name)
             existing = existing_raw if isinstance(existing_raw, dict) else {}
             product[name] = {**PRODUCT_DEFAULTS.get(name, {}), **existing, **fields}
+        elif hint.field_path == "adapter.options.groups.0.values_selector":
+            options = adapter.setdefault("options", {})
+            if not isinstance(options, dict):
+                raise ValueError("adapter.options must be a dict")
+            groups = options.setdefault("groups", [])
+            if not isinstance(groups, list):
+                raise ValueError("adapter.options.groups must be a list")
+            if not groups:
+                groups.append(dict(OPTION_GROUP_DEFAULTS))
+            existing = groups[0] if isinstance(groups[0], dict) else {}
+            groups[0] = {**OPTION_GROUP_DEFAULTS, **existing, "values_selector": hint.chosen_selector}
+            options.setdefault("detection", "dom")
+            options.setdefault("type", "combination")
         elif hint.field_path == "adapter.listing.product_link":
             listing = adapter.setdefault("listing", {})
             if not isinstance(listing, dict):

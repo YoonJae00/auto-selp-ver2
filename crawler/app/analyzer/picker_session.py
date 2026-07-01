@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 import shutil
 import tempfile
 from pathlib import Path
@@ -9,7 +10,8 @@ from playwright.sync_api import Browser, BrowserContext, Page, sync_playwright
 
 from app.analyzer.element_picker import (
     INSTRUCTION_OVERLAY_SCRIPT,
-    PICKER_SCRIPT,
+    MAPPING_PREVIEW_SCRIPT,
+    PICKER_INSTALL_SCRIPT,
     PickedElement,
     choose_best_selector,
     resolve_login_selectors,
@@ -161,7 +163,12 @@ class PickerSession:
 
     @property
     def is_open(self) -> bool:
-        return self._browser is not None and self._page is not None
+        try:
+            if self._browser is None or self._page is None or self._page.is_closed():
+                return False
+            return any(not page.is_closed() for page in self._browser.pages)
+        except Exception:
+            return False
 
     @property
     def is_logged_in(self) -> bool:
@@ -214,6 +221,14 @@ class PickerSession:
         self._browser.set_default_navigation_timeout(20_000)
         self._browser.set_default_timeout(20_000)
 
+        # Install the picker listeners before any page script runs on every future
+        # navigation/frame, so we win the capture-phase race against sites that
+        # register their own window/document click blockers on load.
+        try:
+            self._browser.add_init_script(PICKER_INSTALL_SCRIPT)
+        except Exception:
+            pass
+
         # storage_state 주입 (1단계 probe에서 추출한 세션)
         if storage_state:
             try:
@@ -250,14 +265,20 @@ class PickerSession:
             self._page = self._browser.new_page()
 
     def _ensure_page(self) -> Page:
-        """Return a live page, re-creating if needed (e.g. user closed the tab)."""
+        """Return a live page, re-creating if needed (e.g. user closed the tab or browser)."""
         if self._page is None or self._page.is_closed():
-            if self._browser is not None:
-                if self._browser.pages:
-                    self._page = self._browser.pages[0]
+            try:
+                if self._browser is not None:
+                    if self._browser.pages:
+                        self._page = self._browser.pages[0]
+                    else:
+                        self._page = self._browser.new_page()
                 else:
-                    self._page = self._browser.new_page()
-            else:
+                    self.open()
+                    assert self._page is not None
+            except Exception:
+                # 브라우저 프로세스 자체가 죽었을 때 → 완전 재시작
+                self.close()
                 self.open()
                 assert self._page is not None
         return self._page
@@ -512,7 +533,14 @@ class PickerSession:
         # Login failed — do NOT mark as logged in
         return False
 
-    def pick(self, url: str, field_label: str = "", field_hint: str = "", timeout_ms: int = 60_000) -> PickedElement:
+    def pick(
+        self,
+        url: str,
+        field_label: str = "",
+        field_hint: str = "",
+        timeout_ms: int = 60_000,
+        field_path: str = "",
+    ) -> PickedElement:
         """Navigate to *url* (if different from current) and run the picker script.
 
         Returns a PickedElement parsed from the user's click.
@@ -550,7 +578,7 @@ class PickerSession:
         # ponytail: bump timeout to 120s only for this interactive evaluate — user may take >20s to find the element
         page.set_default_timeout(120_000)
         try:
-            raw = page.evaluate(PICKER_SCRIPT)
+            raw = self._evaluate_picker(page, timeout_ms)
             if raw is None:
                 raise RuntimeError("picker cancelled")
         finally:
@@ -570,6 +598,12 @@ class PickerSession:
             for k, v in (raw.get("matchCounts") or {}).items()
             if str(k) in candidates
         }
+        if field_path == "adapter.product.detail_content":
+            detail_selector = self._detail_image_selector(page, candidates)
+            if detail_selector:
+                candidates = [detail_selector]
+                counts = {detail_selector: 1}
+
         return PickedElement(
             url=sanitize_value(raw.get("url"), 300),
             selector=choose_best_selector(candidates, counts),
@@ -583,6 +617,120 @@ class PickerSession:
             match_counts=counts,
             container_links=list(raw.get("containerLinks") or []),
         )
+
+    def _detail_image_selector(self, page: Page, candidates: list[str]) -> str:
+        return str(page.evaluate(
+            r"""
+            (candidates) => {
+              const cssEscape = (window.CSS && CSS.escape)
+                ? CSS.escape
+                : (s) => String(s).replace(/[^a-zA-Z0-9_-]/g, '\\$&');
+              function nthPath(el) {
+                const parts = [];
+                for (let node = el; node && node.nodeType === 1 && parts.length < 6; node = node.parentElement) {
+                  const tag = node.tagName.toLowerCase();
+                  const siblings = Array.prototype.filter.call(
+                    node.parentElement ? node.parentElement.children : [],
+                    (x) => x.tagName === node.tagName
+                  );
+                  parts.unshift(`${tag}:nth-of-type(${siblings.indexOf(node) + 1})`);
+                }
+                return parts.join(' > ');
+              }
+              function selectorFor(el) {
+                const tag = el.tagName.toLowerCase();
+                if (el.id) return `#${cssEscape(el.id)}`;
+                const classes = Array.prototype.slice.call(el.classList || []).slice(0, 2).filter(Boolean);
+                if (classes.length) {
+                  const sel = `${tag}.${classes.map(cssEscape).join('.')}`;
+                  try { if (document.querySelectorAll(sel).length === 1) return sel; } catch (_) {}
+                }
+                return nthPath(el);
+              }
+              function imgCount(el) {
+                return el.querySelectorAll('img[src],img[data-src]').length;
+              }
+              let picked = null;
+              for (const sel of candidates || []) {
+                try { picked = document.querySelector(sel); } catch (_) {}
+                if (picked) break;
+              }
+              if (!picked) return '';
+              const img = picked.tagName && picked.tagName.toLowerCase() === 'img'
+                ? picked
+                : picked.querySelector('img[src],img[data-src]');
+              if (!img) return '';
+              let container = img.parentElement || img;
+              for (let node = container; node && node !== document.body; node = node.parentElement) {
+                if (imgCount(node) >= 2) { container = node; break; }
+              }
+              return imgCount(container) >= 2 ? `${selectorFor(container)} img` : selectorFor(img);
+            }
+            """,
+            candidates,
+        ) or "")
+
+    def _evaluate_picker(self, page: Page, timeout_ms: int) -> dict | None:
+        # Listeners are normally already installed by PICKER_INSTALL_SCRIPT via
+        # add_init_script (before any page script ran). Re-evaluate defensively
+        # (idempotent, guarded by window.__pickerInstalled) in case this frame's
+        # document existed before the init script was registered.
+        for frame in list(page.frames):
+            try:
+                frame.evaluate(PICKER_INSTALL_SCRIPT)
+                frame.evaluate("() => { if (window.__pickerArm) window.__pickerArm(); }")
+            except Exception:
+                continue
+
+        deadline = time.monotonic() + (timeout_ms / 1000)
+        try:
+            while time.monotonic() < deadline:
+                for frame in list(page.frames):
+                    try:
+                        state = frame.evaluate(
+                            "() => (window.__pickerDone ? {done: true, result: window.__pickerResult ?? null} : {done: false})"
+                        )
+                    except Exception:
+                        continue
+                    if state and state.get("done"):
+                        return state.get("result")
+                page.wait_for_timeout(100)
+        finally:
+            for frame in list(page.frames):
+                try:
+                    frame.evaluate(
+                        "() => { if (typeof window.__pickerCancelPicker === 'function') window.__pickerCancelPicker(); }"
+                    )
+                except Exception:
+                    pass
+        raise RuntimeError("picker timed out")
+
+    def preview_mapping(self, url: str, fields: list[dict]) -> dict:
+        """Navigate to url and draw overlay boxes for each mapped field.
+
+        Returns {"found": [key, ...], "missing": [key, ...]}.
+        Selector resolution and coordinate calculation run in JS so scroll
+        offsets are captured correctly and Playwright-specific selectors work.
+        """
+        page = self._ensure_page()
+        _safe_goto(page, url)
+        # Let JS resolve selectors and calculate absolute coordinates
+        found_keys = page.evaluate(
+            """(fields) => {
+                const found = [];
+                fields.forEach(({key, label, selector}) => {
+                    try {
+                        const el = document.querySelector(selector);
+                        if (el) found.push(key);
+                    } catch (_) {}
+                });
+                return found;
+            }""",
+            fields,
+        )
+        page.evaluate(MAPPING_PREVIEW_SCRIPT, fields)
+        missing = [f["key"] for f in fields if f["key"] not in found_keys]
+        return {"found": list(found_keys), "missing": missing}
 
     def close(self) -> None:
         """Close page, browser, playwright, and clean up the temp profile."""

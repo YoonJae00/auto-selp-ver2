@@ -11,6 +11,7 @@ from app.analyzer.adapter_schema import (
     NavigationConfig,
     OptionsConfig,
     ProductConfig,
+    get_product_field_mappings,
 )
 
 
@@ -101,6 +102,33 @@ def test_adapter_with_full_yaml_dict() -> None:
     assert adapter.adapter.categories.navigation.max_depth == 2
     assert adapter.adapter.options.dependent_options.enabled is True
     assert len(adapter.adapter.options.groups) == 1
+
+
+def test_mapping_rows_hide_unused_fields_and_include_option_row() -> None:
+    adapter = Adapter.model_validate({
+        "adapter": {
+            "name": "Shop",
+            "base_url": "https://shop.example",
+            "product": {
+                "supplier_product_id": {"selector": ".id"},
+                "supplier_product_code": {"selector": ".code"},
+                "brand_name": {"selector": ".brand"},
+                "manufacturer": {"selector": ".maker"},
+                "model_name": {"selector": ".model"},
+            },
+            "options": {"groups": [{"name": "색상", "values_selector": ".opt option"}]},
+        }
+    })
+
+    rows = get_product_field_mappings(adapter)
+    keys = [row["key"] for row in rows]
+    assert "supplier_product_id" not in keys
+    assert "brand_name" not in keys
+    assert "manufacturer" not in keys
+    assert "model_name" not in keys
+    assert rows[-1]["key"] == "option_values"
+    assert rows[-1]["fieldPath"] == "adapter.options.groups.0.values_selector"
+    assert rows[-1]["selector"] == ".opt option"
 
 
 def test_invalid_browser_channel_raises() -> None:

@@ -1,6 +1,12 @@
 from __future__ import annotations
 
+import logging
 import re
+import sys
+import traceback
+from logging.handlers import RotatingFileHandler
+
+from app.paths import data_dir
 
 
 _QUOTED_VALUE = r'"(?:\\.|[^"\\])*"' + "|" + r"'(?:\\.|[^'\\])*'"
@@ -27,3 +33,22 @@ def sanitize_diagnostic(value: object) -> str:
     text = _AUTHORIZATION.sub(_redact_match, text)
     text = _BEARER.sub(r"\1[REDACTED]", text)
     return _CREDENTIAL.sub(_redact_match, text)
+
+
+def configure_logging() -> None:
+    log_path = data_dir() / "crawler.log"
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+        handlers=[
+            RotatingFileHandler(log_path, maxBytes=1_000_000, backupCount=3, encoding="utf-8"),
+            logging.StreamHandler(sys.stderr),
+        ],
+        force=True,
+    )
+    logging.getLogger(__name__).info("log file: %s", log_path)
+
+
+def log_exception(logger: logging.Logger, message: str, exc: BaseException) -> None:
+    trace = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+    logger.error("%s: %s\n%s", message, sanitize_diagnostic(exc), sanitize_diagnostic(trace))

@@ -23,7 +23,7 @@ Item {
         Components.InlineBanner {
             Layout.fillWidth: true
             visible: text.length > 0
-            text: root.viewModel.fieldErrors.form || root.viewModel.fieldErrors.yamlText || ""
+            text: root.viewModel.fieldErrors.form || root.viewModel.fieldErrors.yamlText || root.viewModel.fieldErrors.detailUrl || ""
             severity: "danger"
         }
         Components.GlassPanel {
@@ -126,7 +126,7 @@ Item {
                             Components.AppTextField { id: supplierName; Layout.fillWidth: true; placeholderText: "도매처명"; Accessible.name: "도매처명"; size: "compact" }
                             Components.AppTextField { id: mainUrl; Layout.fillWidth: true; placeholderText: "https://example.com"; Accessible.name: "메인 URL"; size: "compact" }
                             Components.AppTextField { id: listingUrl; Layout.fillWidth: true; placeholderText: "상품 목록 URL (선택)"; Accessible.name: "상품 목록 URL"; size: "compact" }
-                            Components.AppTextField { id: detailUrl; Layout.fillWidth: true; placeholderText: "샘플 상품 URL (선택)"; Accessible.name: "샘플 상품 URL"; size: "compact" }
+                            Components.AppTextField { id: detailUrl; Layout.fillWidth: true; placeholderText: "샘플 상품 URL (필드 매핑에 사용)"; Accessible.name: "샘플 상품 URL"; size: "compact" }
                             CheckBox { id: needsLogin; text: "로그인 필요"; Accessible.name: text }
                             Components.AppTextField { id: loginUrl; visible: needsLogin.checked; Layout.fillWidth: true; placeholderText: "로그인 URL"; Accessible.name: "로그인 URL"; size: "compact" }
                             Components.AppTextField { id: username; visible: needsLogin.checked; Layout.fillWidth: true; placeholderText: "아이디"; Accessible.name: "로그인 아이디"; size: "compact" }
@@ -290,8 +290,57 @@ Item {
                         }
 
                         Components.MappingTable { Layout.fillWidth: true; Layout.fillHeight: true; model: root.viewModel.mappingRows; viewModel: root.viewModel }
+                        Components.GlassPanel {
+                            Layout.fillWidth: true
+                            implicitHeight: mappingUrlCol.implicitHeight + 28
+                            ColumnLayout {
+                                id: mappingUrlCol
+                                anchors.fill: parent
+                                anchors.margins: 14
+                                spacing: 8
+                                Text { text: "매핑 대상 상품 URL"; color: Ui.Theme.text; font.pixelSize: 13; font.weight: Font.DemiBold }
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: "요소 선택 시 이 상품 페이지로 이동합니다. 다른 상품으로 바꾸려면 URL을 수정하세요."
+                                    color: Ui.Theme.textMuted
+                                    font.pixelSize: 11
+                                    wrapMode: Text.Wrap
+                                }
+                                Components.AppTextField {
+                                    id: manualTestUrl
+                                    Layout.fillWidth: true
+                                    text: root.viewModel.connectionInputs.detailUrl || ""
+                                    placeholderText: "상품 상세 페이지 URL"
+                                    Accessible.name: "매핑 대상 상품 URL"
+                                    size: "compact"
+                                    onEditingFinished: root.viewModel.setDetailUrl(text)
+                                }
+                            }
+                        }
+                        Components.InlineBanner {
+                            Layout.fillWidth: true
+                            visible: root.viewModel.previewActive
+                            text: "브라우저에서 매핑된 필드가 파란색 박스로 표시됩니다. 확인 후 닫기를 누르세요."
+                            severity: "info"
+                        }
                         RowLayout {
-                            Components.AppButton { text: "전체 테스트"; selected: true; enabled: !root.viewModel.busy; onClicked: root.viewModel.testAll() }
+                            spacing: 8
+                            Components.AppButton {
+                                text: root.viewModel.previewActive ? "미리보기 닫기" : "매핑 미리보기"
+                                selected: true
+                                // 미리보기가 열린 동안에는 busy여도 닫을 수 있어야 함.
+                                enabled: root.viewModel.previewActive || !root.viewModel.busy
+                                onClicked: root.viewModel.previewActive ? root.viewModel.closePreview() : root.viewModel.previewMapping()
+                                Accessible.name: text
+                            }
+                            Item { Layout.fillWidth: true }
+                            Components.AppButton {
+                                text: "전체 테스트"
+                                selected: true
+                                enabled: !root.viewModel.busy
+                                onClicked: root.viewModel.testAll()
+                                Accessible.name: text
+                            }
                         }
                     }
                     ColumnLayout {
@@ -362,7 +411,7 @@ Item {
             }
             Text {
                 Layout.fillWidth: true
-                text: "Yes를 누르면 브라우저를 닫고 이 선택을 카테고리 메뉴 힌트로 사용합니다."
+                text: "Yes를 누르면 브라우저를 닫고 이 선택을 매핑에 사용합니다."
                 color: Ui.Theme.textMuted
                 wrapMode: Text.Wrap
                 font.pixelSize: 11

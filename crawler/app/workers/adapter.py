@@ -70,6 +70,18 @@ class AdapterTestRequest:
     supplier_key: str | None = None
 
 
+@dataclass
+class MappingPreviewRequest:
+    yaml_text: str
+    target_url: str
+    fields: list[dict]
+    login_url: str | None = None
+    username: str | None = None
+    password: str | None = None
+    storage_state: dict | None = None
+    supplier_key: str | None = None
+
+
 class _AsyncWorker(QThread):
     error = Signal(str)
     progress = Signal(str)
@@ -184,6 +196,27 @@ class _PickerThread(QThread):
 
 
 _CLOSE_SESSION = object()
+
+
+def _is_picker_cancel_or_close(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return (
+        "cancelled" in message
+        or "has been closed" in message
+        or "target page" in message
+        or "browser has been closed" in message
+        or ("context" in message and "closed" in message)
+    )
+
+
+def _discard_picker_session(thread: _PickerThread, session: PickerSession | None) -> None:
+    try:
+        if session is not None:
+            session.close()
+    except Exception:
+        pass
+    thread._session = None
+
 
 _picker_thread: _PickerThread | None = None
 _picker_thread_lock = threading.Lock()
@@ -320,6 +353,7 @@ class PickerJob(QObject):
         self.requestInterruption()
 
     def _execute(self, thread: _PickerThread) -> None:
+        session: PickerSession | None = None
         try:
             session = thread._session
             if session is None or not session.is_open:
@@ -419,6 +453,7 @@ class PickerJob(QObject):
                     self.request.target_url,
                     self.request.field_label,
                     self.request.field_hint,
+                    field_path=self.request.field_path,
                 )
                 if self.request.field_path == "adapter.categories.navigation.menu_selector":
                     # Extract category links from the already-rendered visible browser.
@@ -471,13 +506,18 @@ class PickerJob(QObject):
                     self.finished.emit(result, self.request.field_path)
             except RuntimeError as exc:
                 if not self._interrupted:
-                    if "cancelled" in str(exc).lower():
+                    if _is_picker_cancel_or_close(exc):
+                        _discard_picker_session(thread, session)
                         self.cancelled.emit()
                     else:
                         self.error.emit(str(exc))
         except Exception as exc:
             if not self._interrupted:
-                self.error.emit(str(exc))
+                if _is_picker_cancel_or_close(exc):
+                    _discard_picker_session(thread, session)
+                    self.cancelled.emit()
+                else:
+                    self.error.emit(str(exc))
         finally:
             self.request.password = None
             self._done.set()
@@ -485,6 +525,94 @@ class PickerJob(QObject):
 
 # Backwards-compatible alias for any external reference to the old name.
 PickerWorker = PickerJob
+
+
+class MappingPreviewJob(QObject):
+    """Non-blocking picker-thread job that opens a URL and injects mapping overlays."""
+
+    finished = Signal(object)   # {"found": [...], "missing": [...]}
+    error = Signal(str)
+    progress = Signal(str)
+    cancelled = Signal()
+
+    def __init__(self, request: MappingPreviewRequest) -> None:
+        super().__init__()
+        self.request = request
+        self._interrupted = False
+        self._done = threading.Event()
+        self._thread: _PickerThread | None = None
+
+    def start(self) -> None:
+        self._thread = _ensure_picker_thread()
+        self._thread.submit(self)
+
+    def requestInterruption(self) -> None:
+        self._interrupted = True
+        if self._thread is not None:
+            self._thread.interrupt_current()
+
+    def isRunning(self) -> bool:
+        return not self._done.is_set()
+
+    def wait(self, ms: int = 0) -> bool:
+        return self._done.wait(ms / 1000 if ms else None)
+
+    def _execute(self, thread: _PickerThread) -> None:
+        session: PickerSession | None = None
+        try:
+            session = thread._session
+            if session is None or not session.is_open:
+                state = self.request.storage_state
+                if state is None and self.request.supplier_key:
+                    try:
+                        from app.analyzer.session_store import load_session_state
+                        state = load_session_state(self.request.supplier_key)
+                    except Exception:
+                        pass
+                session = PickerSession(headless=False)
+                session.open(storage_state=state)
+                thread._session = session
+                if state and not session.is_logged_in:
+                    try:
+                        self.progress.emit(f"세션 확인 중: {self.request.target_url}")
+                        page = session._ensure_page()
+                        page.goto(self.request.target_url, wait_until="domcontentloaded", timeout=20_000)
+                        page.wait_for_timeout(1500)
+                        if session._verify_logged_in(page):
+                            session._logged_in = True
+                            self.progress.emit("기존 세션으로 인증 확인됨")
+                    except Exception:
+                        pass
+            if (
+                self.request.login_url
+                and self.request.username
+                and self.request.password
+                and not session.is_logged_in
+            ):
+                self.progress.emit("로그인 중...")
+                try:
+                    session.login(
+                        self.request.login_url,
+                        self.request.username,
+                        self.request.password,
+                    )
+                except Exception as exc:
+                    self.progress.emit(f"로그인 실패: {exc}")
+
+            self.progress.emit(f"페이지 이동: {self.request.target_url}")
+            result = session.preview_mapping(self.request.target_url, self.request.fields)
+            if not self._interrupted:
+                self.finished.emit(result)
+        except Exception as exc:
+            if not self._interrupted:
+                if _is_picker_cancel_or_close(exc):
+                    _discard_picker_session(thread, session)
+                    self.cancelled.emit()
+                else:
+                    self.error.emit(str(exc))
+        finally:
+            self.request.password = None
+            self._done.set()
 
 
 def close_picker_session() -> None:
@@ -531,9 +659,9 @@ class GenerateWorker(_AsyncWorker):
 class AdapterTestWorker(_AsyncWorker):
     finished = Signal(dict)
     FIELD_NAMES = (
-        "supplier_product_id", "supplier_product_code", "raw_product_name",
+        "supplier_product_code", "raw_product_name",
         "supplier_status", "supply_price", "origin", "main_image_url",
-        "detail_content", "extra_image_urls", "brand_name",
+        "detail_content", "extra_image_urls",
     )
 
     def __init__(self, request: AdapterTestRequest) -> None:

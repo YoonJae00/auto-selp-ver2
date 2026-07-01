@@ -26,7 +26,7 @@ def test_summary_passes_all_key_fields() -> None:
     assert summary.failed_key_fields == []
 
 
-def test_code_id_or_logic_works() -> None:
+def test_product_code_is_required_even_when_supplier_product_id_exists() -> None:
     summary = build_validation_summary(_raw({
         "raw_product_name": ["상품A"],
         "supply_price": ["1000"],
@@ -34,7 +34,7 @@ def test_code_id_or_logic_works() -> None:
         "supplier_product_code": [""],
         "supplier_product_id": ["ID1"],
     }))
-    assert "supplier_product_code_or_id" not in summary.failed_key_fields
+    assert "supplier_product_code" in summary.failed_key_fields
 
 
 def test_two_of_three_passes_one_of_three_fails() -> None:

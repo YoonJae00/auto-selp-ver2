@@ -6,7 +6,7 @@ from typing import Any, Callable
 from urllib.parse import urljoin
 
 from app.analyzer.html_reducer import reduce_html
-from app.analyzer.login_helper import _safe_goto, perform_login
+from app.analyzer.login_helper import _check_logout_indicators, _safe_goto, perform_login
 
 
 @dataclass
@@ -29,6 +29,7 @@ class ProbeResult:
     total_pages: int | None = None
     status_indicators: dict = field(default_factory=dict)  # {"has_cart_button": bool, "has_soldout_image": bool, "maxq_value": str, "has_explicit_status": bool}
     login_url: str = ""
+    storage_state: dict | None = None
 
 
 def normalize_sample_products(base_url: str, products: list[dict], links: list[str] | None = None, limit: int = 15) -> tuple[list[dict], list[str]]:
@@ -82,6 +83,70 @@ async def probe_site(
         if on_progress:
             on_progress(msg)
 
+    async def _analyze_login_with_llm(page) -> dict[str, str] | None:
+        """Use LLM to analyze the login page HTML and extract form selectors."""
+        import json
+        from app.analyzer.llm_client import get_llm_client
+        from app.config import load_config
+
+        # Collect main page + iframe HTML
+        parts: list[str] = []
+        try:
+            parts.append(await page.content())
+        except Exception:
+            pass
+        for frame in page.frames:
+            if frame == page.main_frame:
+                continue
+            try:
+                iframe_html = await frame.content()
+                if iframe_html and iframe_html.strip():
+                    parts.append(f"\n<!-- IFRAME CONTENT -->\n{iframe_html}")
+            except Exception:
+                continue
+        html = "\n".join(parts)[:20000]
+        if not html or not html.strip():
+            return None
+
+        config = load_config()
+        provider = config.llm_provider
+        client = get_llm_client(provider)
+
+        system_prompt = (
+            "당신은 웹 페이지에서 로그인 폼을 분석하는 전문가입니다. "
+            "주어진 HTML에서 로그인 폼의 아이디 입력 필드, 비밀번호 입력 필드, "
+            "제출 버튼의 CSS 선택자를 추출하세요.\n\n"
+            "반드시 다음 JSON 형식으로만 응답하세요:\n"
+            '{"id_selector": "CSS선택자", "password_selector": "CSS선택자", "submit_selector": "CSS선택자"}\n\n'
+            "규칙:\n"
+            "1. input[type='text'], input[type='email'], input[name*='id'] 등이 아이디 필드입니다.\n"
+            "2. input[type='password']가 비밀번호 필드입니다.\n"
+            "3. button[type='submit'], input[type='submit'], input[type='image'], "
+            "a:has-text('로그인'), a[href*='check'] 등이 제출 버튼입니다.\n"
+            "4. iframe 내부에 폼이 있을 수 있습니다. iframe 내부 요소도 CSS 선택자로 표현하세요.\n"
+            "5. 선택자는 구체적이고 고유해야 합니다 (id, name, type 속성 활용).\n"
+            "6. JSON 외의 다른 텍스트는 출력하지 마세요."
+        )
+        user_prompt = f"다음은 로그인 페이지의 HTML입니다:\n\n{html}"
+
+        response = await client.generate(system_prompt, user_prompt)
+
+        # Strip markdown code fences if present
+        text = response.strip()
+        if text.startswith("```"):
+            lines = text.split("\n")
+            end = len(lines) - 1 if lines[-1].strip() == "```" else len(lines)
+            text = "\n".join(lines[1:end])
+        text = text.strip()
+
+        result = json.loads(text)
+        config_out: dict[str, str] = {}
+        for key in ("id_selector", "password_selector", "submit_selector"):
+            val = result.get(key, "")
+            if val and isinstance(val, str):
+                config_out[key] = val
+        return config_out or None
+
     _log("브라우저 시작 중...")
     from app.crawlers.engine import create_engine
 
@@ -105,24 +170,48 @@ async def probe_site(
             page.on("request", on_request)
 
             # Login if credentials provided
+            storage_state: dict | None = None
             if login_url and username and password:
+                success = False
                 try:
                     success = await perform_login(page, login_url, username, password, on_progress=_log)
-                    if not success:
-                        return ProbeResult(
-                            main_url=main_url, final_url=page.url, encoding="utf-8",
-                            needs_login=True, login_form_html="", listing_html="", detail_html="",
-                            categories=[], sample_products=[],
-                            login_url=login_url,
-                        )
                 except Exception as exc:
-                    _log(f"로그인 중 오류: {exc}")
-                    return ProbeResult(
-                        main_url=main_url, final_url=page.url, encoding="utf-8",
-                        needs_login=True, login_form_html="", listing_html="", detail_html="",
-                        categories=[], sample_products=[],
-                        login_url=login_url or "",
-                    )
+                    _log(f"1차 로그인 시도 실패: {exc}")
+                    success = False
+                if not success:
+                    # Auto-login failed: try LLM-assisted analysis before giving up.
+                    _log("AI가 로그인 페이지 분석 중...")
+                    try:
+                        llm_login_config = await _analyze_login_with_llm(page)
+                        if llm_login_config:
+                            _log("AI 분석 완료 — 추출된 선택자로 재시도 중...")
+                            try:
+                                success = await perform_login(
+                                    page, login_url, username, password,
+                                    login_config=llm_login_config, on_progress=_log,
+                                )
+                            except Exception as exc:
+                                _log(f"AI 선택자 로그인 실패: {exc}")
+                                success = False
+                    except Exception as llm_exc:
+                        _log(f"AI 분석 실패: {llm_exc}")
+                if not success:
+                    _log("로그인에 실패했습니다. 로그인 URL과 계정 정보를 확인하세요.")
+                    raise RuntimeError("로그인에 실패했습니다. 로그인 URL과 계정 정보를 확인하세요.")
+                # 로그인 성공 검증 후 storage_state 추출 (매핑/테스트 단계 세션 공유)
+                try:
+                    verified = await _check_logout_indicators(page)
+                    if not verified:
+                        pw = await page.query_selector("input[type='password']")
+                        if pw is None:
+                            verified = True
+                    if verified:
+                        storage_state = await page.context.storage_state()
+                        _log("로그인 세션 저장됨 (storage_state 추출)")
+                    else:
+                        _log("로그인 성공 여부 미확인 — 세션 저장 생략")
+                except Exception:
+                    pass
 
             _log(f"사이트 접속 중: {main_url}")
             if not await _safe_goto(page, main_url):
@@ -186,7 +275,7 @@ async def probe_site(
             try:
                 nav_selectors = [
                     "#MK_MENU_category_list",
-                    ".category", ".gnb", ".lnb",
+                    ".category", ".nav-category", ".gnb", ".lnb",
                     "nav", ".menu", "#menu", ".navbar",
                     ".cate", "#cate",
                 ]
@@ -206,6 +295,8 @@ async def probe_site(
                 cat_selectors = [
                     "#MK_MENU_category_list a[href*='shopbrand']",
                     "#MK_MENU_category_list a",
+                    ".nav-category a[href*='shopbrand']",
+                    ".nav-category a",
                     ".category a[href*='category']",
                     ".gnb a[href*='category']",
                     ".lnb a[href*='category']",
@@ -426,6 +517,7 @@ async def probe_site(
                 categories=categories,
                 sample_products=sample_products,
                 login_url=login_url or "",
+                storage_state=storage_state,
                 total_product_count=total_product_count,
                 products_per_page=products_per_page,
                 total_pages=total_pages,

@@ -6,7 +6,7 @@ from typing import Any, Literal
 
 
 KEY_FIELDS = ("raw_product_name", "supply_price", "main_image_url")
-WARNING_FIELDS = ("supplier_status", "origin", "detail_content", "brand_name", "extra_image_urls")
+WARNING_FIELDS = ("supplier_status", "origin", "detail_content", "extra_image_urls")
 
 
 @dataclass
@@ -84,9 +84,8 @@ def build_validation_summary(raw_results: dict[str, list[dict[str, Any]]] | None
 
     failed: list[str] = [field for field in KEY_FIELDS if not field_results.get(field, FieldValidation(field, 0, total_samples, False)).ok]
     code_ok = field_results.get("supplier_product_code", FieldValidation("supplier_product_code", 0, total_samples, False)).ok
-    id_ok = field_results.get("supplier_product_id", FieldValidation("supplier_product_id", 0, total_samples, False)).ok
-    if not (code_ok or id_ok):
-        failed.append("supplier_product_code_or_id")
+    if not code_ok:
+        failed.append("supplier_product_code")
 
     warnings = [field for field in WARNING_FIELDS if field in field_results and not field_results[field].ok]
     return ValidationSummary(True, total_samples, field_results, failed, warnings)

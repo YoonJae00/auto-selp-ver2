@@ -4,7 +4,7 @@ import pytest
 
 from app.analyzer.adapter_schema import FieldExtractor
 from app.analyzer.site_probe import normalize_sample_products
-from app.crawlers.yaml_adapter import YAMLAdapter, _map_supplier_status, _status_from_maxq_value
+from app.crawlers.yaml_adapter import YAMLAdapter, _image_csv, _map_supplier_status, _status_from_maxq_value, _supported_image_url
 
 
 class _FakeElement:
@@ -52,6 +52,21 @@ def test_canonical_status_passes_through_before_mapping_or_default() -> None:
     assert _map_supplier_status("available", {}, "sold_out") == "available"
     assert _map_supplier_status("unknown", {"unknown": "available"}, "sold_out") == "unknown"
     assert _map_supplier_status(" stopped ", {}, "available") == "stopped"
+
+
+def test_supported_image_url_allows_selected_formats_with_query() -> None:
+    assert _supported_image_url("https://img.test/a.JPG?x=1") == "https://img.test/a.JPG?x=1"
+    assert _supported_image_url("/img/a.jpeg#v") == "/img/a.jpeg#v"
+    assert _supported_image_url("/img/a.png") == "/img/a.png"
+    assert _supported_image_url("/img/a.webp") == "/img/a.webp"
+    assert _supported_image_url("/img/a.gif") is None
+    assert _supported_image_url("/img/no-extension") is None
+
+
+def test_image_csv_filters_and_joins_supported_images() -> None:
+    assert _image_csv(["/d/1.jpg", "/d/2.webp?x=1", "/d/3.gif", None]) == "/d/1.jpg,/d/2.webp?x=1"
+    assert _image_csv("/d/one.png") == "/d/one.png"
+    assert _image_csv(["/d/no-extension"]) is None
 
 
 @pytest.mark.asyncio

@@ -46,7 +46,7 @@ def vm(tmp_path, monkeypatch):
     )
     instance = module.AdapterStudioViewModel(app_view_model=AppViewModel())
     instance.setConnectionInputs(
-        {"supplierName": "Test Shop", "mainUrl": "https://shop.example"}
+        {"supplierName": "Test Shop", "mainUrl": "https://shop.example", "detailUrl": "https://shop.example/p/1"}
     )
     instance._saved = saved
     return instance
@@ -77,6 +77,17 @@ def test_generated_yaml_requires_warning_acknowledgement_before_save(vm) -> None
     vm.acknowledgeSaveWarning()
     assert vm.canSave is True
     assert vm.save() is True
+
+
+def test_extra_images_toggle_updates_yaml(vm) -> None:
+    vm.acceptGeneratedYaml(VALID_YAML)
+
+    vm.setExtraImagesEnabled(True)
+    assert "extra_image_urls:" in vm.yamlText
+    assert "multiple: true" in vm.yamlText
+
+    vm.setExtraImagesEnabled(False)
+    assert "extra_image_urls:" not in vm.yamlText
 
 
 def test_editing_validated_yaml_makes_validation_stale(vm) -> None:
@@ -160,7 +171,7 @@ def test_probe_maps_to_shared_task_and_cancels_without_navigation_side_effect(mo
         return worker
 
     vm = AdapterStudioViewModel(app_view_model=app, worker_factories={"probe": factory})
-    vm.setConnectionInputs({"supplierName": "Shop", "mainUrl": "https://example.com", "needsLogin": True})
+    vm.setConnectionInputs({"supplierName": "Shop", "mainUrl": "https://example.com", "needsLogin": True, "detailUrl": "https://p.example/1"})
     vm.setLoginInputs({"loginUrl": "https://example.com/login", "username": "buyer", "password": "worker-secret"})
 
     assert vm.probe() is True
@@ -229,10 +240,10 @@ def test_picker_jobs_reuse_one_thread_so_playwright_never_crosses_threads(qt_app
             self.is_open = True
             self.is_logged_in = False
 
-        def open(self) -> None:
+        def open(self, storage_state: dict | None = None) -> None:
             pass
 
-        def pick(self, url, field_label="", field_hint="", timeout_ms=60_000):
+        def pick(self, url, field_label="", field_hint="", timeout_ms=60_000, field_path=""):
             pick_thread_ids.append(threading.get_ident())
             return object()
 
@@ -255,6 +266,34 @@ def test_picker_jobs_reuse_one_thread_so_playwright_never_crosses_threads(qt_app
     assert len(pick_thread_ids) == 2
     assert pick_thread_ids[0] == pick_thread_ids[1], "both picks must run on the same picker thread"
     assert pick_thread_ids[0] != threading.get_ident(), "picks must not run on the main thread"
+
+
+def test_mapping_preview_closed_browser_discards_session(qt_app) -> None:
+    from PySide6.QtTest import QSignalSpy
+    from app.workers.adapter import MappingPreviewJob, MappingPreviewRequest
+
+    class ClosedSession:
+        is_open = True
+        is_logged_in = True
+        closed = False
+
+        def preview_mapping(self, url, fields):
+            raise RuntimeError("Target page has been closed")
+
+        def close(self):
+            self.closed = True
+
+    class Thread:
+        _session = ClosedSession()
+
+    thread = Thread()
+    job = MappingPreviewJob(MappingPreviewRequest("", "https://shop.example/p/1", []))
+    cancelled = QSignalSpy(job.cancelled)
+
+    job._execute(thread)
+
+    assert cancelled.count() == 1
+    assert thread._session is None
 
 
 def test_application_retains_studio_and_route_screen(qt_app) -> None:
@@ -305,7 +344,7 @@ def test_probe_persists_credentials_and_clears_dispatch_secret(monkeypatch) -> N
     made = []
     monkeypatch.setattr("app.ui_qml.viewmodels.adapter_studio.save_supplier_credentials", lambda *args: saved.append(args))
     vm = AdapterStudioViewModel(app_view_model=AppViewModel(), worker_factories={"probe": lambda request: made.append(request) or FakeWorker()})
-    vm.setConnectionInputs({"supplierName": "Test Shop", "mainUrl": "https://shop.example", "needsLogin": True})
+    vm.setConnectionInputs({"supplierName": "Test Shop", "mainUrl": "https://shop.example", "needsLogin": True, "detailUrl": "https://p.example/1"})
     vm.setLoginInputs({"loginUrl": "https://shop.example/login", "username": "buyer", "password": "secret"})
 
     assert vm.probe() is True
@@ -313,6 +352,29 @@ def test_probe_persists_credentials_and_clears_dispatch_secret(monkeypatch) -> N
     assert made[0].username == "buyer"
     assert made[0].password == "secret"
     assert vm._inputs["username"] == vm._inputs["password"] == ""
+
+
+def test_probe_continues_when_keyring_save_fails(monkeypatch) -> None:
+    from app.ui_qml.viewmodels.adapter_studio import AdapterStudioViewModel
+
+    made = []
+    monkeypatch.setattr(
+        "app.ui_qml.viewmodels.adapter_studio.save_supplier_credentials",
+        lambda *args: (_ for _ in ()).throw(RuntimeError("keyring unavailable")),
+    )
+    vm = AdapterStudioViewModel(
+        app_view_model=AppViewModel(),
+        worker_factories={"probe": lambda request: made.append(request) or FakeWorker()},
+    )
+    vm.setConnectionInputs({"supplierName": "Test Shop", "mainUrl": "https://shop.example", "needsLogin": True, "detailUrl": "https://p.example/1"})
+    vm.setLoginInputs({"loginUrl": "https://shop.example/login", "username": "buyer", "password": "secret"})
+
+    assert vm.probe() is True
+    assert vm.fieldErrors.get("form", "") == ""
+    assert made[0].username == "buyer"
+    assert made[0].password == "secret"
+    assert vm._load_transient_credentials() == ("buyer", "secret")
+    assert vm._mapping_credentials_available() is True
 
 
 def test_test_and_picker_load_credentials_transiently(monkeypatch) -> None:
@@ -353,7 +415,8 @@ def test_generation_uses_configured_provider_and_fallback(monkeypatch) -> None:
     monkeypatch.setattr("app.ui_qml.viewmodels.adapter_studio.load_config", lambda: AppConfig(llm_provider="openai", auto_fallback_enabled=False))
     vm = AdapterStudioViewModel(app_view_model=AppViewModel(), worker_factories={"generate": lambda request: made.append(request) or FakeWorker()})
     vm._probe_result = ProbeResult("https://x", "https://x", "utf-8", False, "", "", "")
-    vm.setConnectionInputs({"supplierName": "Shop", "mainUrl": "https://x"})
+    vm._category_analysis_ready = True
+    vm.setConnectionInputs({"supplierName": "Shop", "mainUrl": "https://x", "detailUrl": "https://p.example/1"})
 
     assert vm.generate() is True
     assert made[0].provider == "openai"
@@ -403,7 +466,7 @@ def test_cancel_retains_running_worker_and_ignores_late_completion(monkeypatch) 
     worker.isRunning = lambda: worker.running
     app = AppViewModel()
     vm = AdapterStudioViewModel(app_view_model=app, worker_factories={"probe": lambda _request: worker})
-    vm.setConnectionInputs({"supplierName": "Shop", "mainUrl": "https://x"})
+    vm.setConnectionInputs({"supplierName": "Shop", "mainUrl": "https://x", "detailUrl": "https://p.example/1"})
     assert vm.probe() is True
 
     vm.cancelProbe()
@@ -426,8 +489,14 @@ def test_qml_exposes_validation_warning_accessibility_and_responsive_mapping() -
     assert 'Accessible.name: "로그인 비밀번호"' in screen
     assert "root.viewModel.testAll()" in screen
     assert "root.viewModel.acknowledgeSaveWarning()" in screen
-    assert "width < 720" in mapping
-    assert "root.compact" in mapping
+    assert "root.viewModel.categoryAnalysisReady" in screen
+    assert 'objectName: "pickedHintConfirmDialog"' in screen
+    assert "visible: root.viewModel.hasPendingHint" in screen
+    assert "root.viewModel.reselectPickedHint()" in screen
+    assert "root.viewModel.acceptPickedHint()" in screen
+    assert "root.viewModel.canAcceptPickedHint" in screen
+    assert 'size: "compact"' in mapping
+    assert "Layout.preferredWidth: 88" in mapping
 
 
 def test_generate_worker_forwards_provider_and_fallback(monkeypatch) -> None:
@@ -455,7 +524,7 @@ def test_overlapping_start_is_rejected_and_first_worker_remains_cancellable(monk
         app_view_model=AppViewModel(),
         worker_factories={"probe": lambda request: made.append(FakeWorker(request)) or made[-1]},
     )
-    vm.setConnectionInputs({"supplierName": "Shop", "mainUrl": "https://x"})
+    vm.setConnectionInputs({"supplierName": "Shop", "mainUrl": "https://x", "detailUrl": "https://p.example/1"})
 
     assert vm.probe() is True
     first = vm._worker
@@ -544,7 +613,7 @@ def test_mapping_rows_never_clip_at_wide_or_narrow_width(qt_app) -> None:
         b'''import QtQuick\nimport QtQuick.Window\nimport QtQml.Models\nimport "components" as Components\n'''
         b'''Window { visible: true; width: 900; height: 300; QtObject { id: vm; property bool busy: false; function pickElement(x) {} function testSingle(x) {} }\n'''
         b'''Components.MappingTable { objectName: "mapping"; anchors.fill: parent; viewModel: vm;\n'''
-        b'''model: ListModel { ListElement { key: "raw_product_name"; label: "Product"; selector: ".very-long-selector"; attribute: ""; transform: ""; status: "ok"; testValue: ""; testOk: false } } } }''',
+        b'''model: ListModel { ListElement { key: "raw_product_name"; label: "Product"; fieldPath: "adapter.product.raw_product_name"; selector: ".very-long-selector"; attribute: ""; transform: ""; status: "ok"; testValue: ""; testOk: false; urlPattern: ""; urlAllowed: false; testable: true; extraEnabled: true } } } }''',
         QUrl.fromLocalFile(str(QML_DIRECTORY / "MappingGeometryProbe.qml")),
     )
     probe = component.create()
@@ -570,7 +639,7 @@ async def test_saved_adapter_slug_can_load_migrated_studio_credentials(tmp_path,
     monkeypatch.setattr("app.ui_qml.viewmodels.adapter_studio.save_adapter", lambda slug, text: tmp_path / f"{slug}.yaml")
     monkeypatch.setattr("app.crawlers.yaml_adapter.load_supplier_credentials", lambda key: store.get(key))
     vm = AdapterStudioViewModel(app_view_model=AppViewModel(), worker_factories={"probe": lambda request: FakeWorker(request)})
-    vm.setConnectionInputs({"supplierName": "Test Shop", "mainUrl": "https://shop.example", "needsLogin": True})
+    vm.setConnectionInputs({"supplierName": "Test Shop", "mainUrl": "https://shop.example", "needsLogin": True, "detailUrl": "https://p.example/1"})
     vm.setLoginInputs({"loginUrl": "https://shop.example/login", "username": "buyer", "password": "secret"})
     assert vm.probe() is True
     studio_key = vm._active_credential_key
@@ -621,7 +690,7 @@ def test_credential_migration_failure_preserves_studio_key_and_dirty_state(tmp_p
     monkeypatch.setattr("app.ui_qml.viewmodels.adapter_studio.delete_supplier_credentials", lambda key: deleted.append(key))
     monkeypatch.setattr("app.ui_qml.viewmodels.adapter_studio.save_adapter", lambda slug, text: saved_adapters.append((slug, text)) or tmp_path / f"{slug}.yaml")
     vm = AdapterStudioViewModel(app_view_model=AppViewModel(), worker_factories={"probe": lambda request: FakeWorker(request)})
-    vm.setConnectionInputs({"supplierName": "Test Shop", "mainUrl": "https://shop.example", "needsLogin": True})
+    vm.setConnectionInputs({"supplierName": "Test Shop", "mainUrl": "https://shop.example", "needsLogin": True, "detailUrl": "https://p.example/1"})
     vm.setLoginInputs({"loginUrl": "https://shop.example/login", "username": "buyer", "password": "secret"})
     assert vm.probe() is True
     studio_key = vm._active_credential_key
@@ -649,13 +718,13 @@ def test_changing_supplier_identity_does_not_copy_previous_studio_credentials(tm
     monkeypatch.setattr("app.ui_qml.viewmodels.adapter_studio.delete_supplier_credentials", lambda key: deleted.append(key) or store.pop(key, None))
     monkeypatch.setattr("app.ui_qml.viewmodels.adapter_studio.save_adapter", lambda slug, text: tmp_path / f"{slug}.yaml")
     vm = AdapterStudioViewModel(app_view_model=AppViewModel(), worker_factories={"probe": lambda request: FakeWorker(request)})
-    vm.setConnectionInputs({"supplierName": "A Shop", "mainUrl": "https://a.example", "needsLogin": True})
+    vm.setConnectionInputs({"supplierName": "A Shop", "mainUrl": "https://a.example", "needsLogin": True, "detailUrl": "https://p.example/1"})
     vm.setLoginInputs({"loginUrl": "https://a.example/login", "username": "a", "password": "a-secret"})
     assert vm.probe() is True
     a_studio_key = vm._active_credential_key
     vm.cancelProbe()
 
-    vm.setConnectionInputs({"supplierName": "B Shop", "mainUrl": "https://b.example", "needsLogin": True})
+    vm.setConnectionInputs({"supplierName": "B Shop", "mainUrl": "https://b.example", "needsLogin": True, "detailUrl": "https://p.example/1"})
     vm.setLoginInputs({"loginUrl": "https://b.example/login"})
     vm.acceptGeneratedYaml(VALID_YAML)
     vm.acceptValidation(successful_results(), vm.beginValidation())
@@ -674,7 +743,7 @@ def test_disabling_login_deletes_only_unsaved_studio_credentials(monkeypatch) ->
     monkeypatch.setattr("app.ui_qml.viewmodels.adapter_studio.save_supplier_credentials", lambda key, user, password: store.__setitem__(key, (user, password)))
     monkeypatch.setattr("app.ui_qml.viewmodels.adapter_studio.delete_supplier_credentials", lambda key: deleted.append(key) or store.pop(key, None))
     vm = AdapterStudioViewModel(app_view_model=AppViewModel(), worker_factories={"probe": lambda request: FakeWorker(request)})
-    vm.setConnectionInputs({"supplierName": "A Shop", "mainUrl": "https://a.example", "needsLogin": True})
+    vm.setConnectionInputs({"supplierName": "A Shop", "mainUrl": "https://a.example", "needsLogin": True, "detailUrl": "https://p.example/1"})
     vm.setLoginInputs({"loginUrl": "https://a.example/login", "username": "a", "password": "secret"})
     assert vm.probe() is True
     studio_key = vm._active_credential_key
@@ -694,7 +763,7 @@ def test_login_url_change_invalidates_unsaved_studio_key(monkeypatch) -> None:
     monkeypatch.setattr("app.ui_qml.viewmodels.adapter_studio.save_supplier_credentials", lambda *_: None)
     monkeypatch.setattr("app.ui_qml.viewmodels.adapter_studio.delete_supplier_credentials", lambda key: deleted.append(key))
     vm = AdapterStudioViewModel(app_view_model=AppViewModel(), worker_factories={"probe": lambda request: FakeWorker(request)})
-    vm.setConnectionInputs({"supplierName": "A Shop", "mainUrl": "https://a.example", "needsLogin": True})
+    vm.setConnectionInputs({"supplierName": "A Shop", "mainUrl": "https://a.example", "needsLogin": True, "detailUrl": "https://p.example/1"})
     vm.setLoginInputs({"loginUrl": "https://a.example/login", "username": "a", "password": "secret"})
     assert vm.probe() is True
     studio_key = vm._active_credential_key
@@ -716,7 +785,7 @@ def test_form_reset_preserves_migrated_runtime_key_but_never_reuses_it(tmp_path,
     monkeypatch.setattr("app.ui_qml.viewmodels.adapter_studio.delete_supplier_credentials", lambda key: deleted.append(key) or store.pop(key, None))
     monkeypatch.setattr("app.ui_qml.viewmodels.adapter_studio.save_adapter", lambda slug, text: tmp_path / f"{slug}.yaml")
     vm = AdapterStudioViewModel(app_view_model=AppViewModel(), worker_factories={"probe": lambda request: FakeWorker(request)})
-    vm.setConnectionInputs({"supplierName": "A Shop", "mainUrl": "https://a.example", "needsLogin": True})
+    vm.setConnectionInputs({"supplierName": "A Shop", "mainUrl": "https://a.example", "needsLogin": True, "detailUrl": "https://p.example/1"})
     vm.setLoginInputs({"loginUrl": "https://a.example/login", "username": "a", "password": "secret"})
     assert vm.probe() is True
     vm.cancelProbe()
@@ -725,7 +794,7 @@ def test_form_reset_preserves_migrated_runtime_key_but_never_reuses_it(tmp_path,
     assert vm.save() is True
     assert "a-shop" in store
 
-    vm.setConnectionInputs({"supplierName": "B Shop", "mainUrl": "https://b.example", "needsLogin": True})
+    vm.setConnectionInputs({"supplierName": "B Shop", "mainUrl": "https://b.example", "needsLogin": True, "detailUrl": "https://p.example/1"})
 
     assert "a-shop" in store
     assert "a-shop" not in deleted
@@ -755,6 +824,121 @@ def test_all_products_auto_detected_reflects_probe_result(vm) -> None:
     )
     vm._probe_finished(ns2)
     assert vm.allProductsAutoDetected is False
+
+
+def test_category_gate_blocks_generation_until_category_probe_succeeds() -> None:
+    from types import SimpleNamespace
+    from app.analyzer.element_picker import PickedElement
+    from app.ui_qml.viewmodels.adapter_studio import AdapterStudioViewModel
+
+    generated = []
+    category_checks = []
+    vm = AdapterStudioViewModel(
+        app_view_model=AppViewModel(),
+        worker_factories={
+            "generate": lambda request: generated.append(request) or FakeWorker(request),
+            "category_probe": lambda request: category_checks.append(request) or FakeWorker(request),
+        },
+    )
+    vm.setConnectionInputs({"supplierName": "Shop", "mainUrl": "https://shop.example", "detailUrl": "https://p.example/1"})
+    vm._probe_finished(SimpleNamespace(
+        final_url="https://shop.example", encoding="utf-8", needs_login=False,
+        categories=[], sample_products=[], has_all_products=False,
+    ))
+
+    assert vm.categoryAnalysisReady is False
+    assert vm.generate() is False
+    assert generated == []
+
+    vm._picked(PickedElement(
+        url="https://shop.example",
+        selector=".raw-menu li",
+        selector_candidates=[".raw-menu li", "nav li"],
+        text="상의",
+        attribute_values={},
+    ), "adapter.categories.navigation.menu_selector")
+
+    assert vm.hasPendingHint is False
+    assert vm.pickerValidationActive is False
+    assert category_checks
+    assert category_checks[-1].selector == ".raw-menu li"
+    vm._category_menu_analysis_finished({"categories": [{"name": "상의", "url": "https://shop.example/c/top"}]})
+    assert vm.categoryAnalysisReady is True
+    assert vm._probe_result.categories == [{"name": "상의", "url": "https://shop.example/c/top"}]
+    assert vm._mapping_hints[-1].chosen_selector == ".raw-menu li"
+    assert vm.generate() is True
+    assert generated
+
+
+def test_category_probe_failure_keeps_generation_blocked() -> None:
+    from app.analyzer.element_picker import PickedElement
+    from app.ui_qml.viewmodels.adapter_studio import AdapterStudioViewModel
+
+    generated = []
+    vm = AdapterStudioViewModel(
+        app_view_model=AppViewModel(),
+        worker_factories={
+            "generate": lambda request: generated.append(request) or FakeWorker(request),
+            "category_probe": lambda request: FakeWorker(request),
+        },
+    )
+    vm._probe_result = type("Probe", (), {"categories": [], "has_all_products": False})()
+    vm.setConnectionInputs({"supplierName": "Shop", "mainUrl": "https://shop.example", "detailUrl": "https://p.example/1"})
+
+    vm._picked(PickedElement(
+        url="https://shop.example",
+        selector=".not-category",
+        selector_candidates=[".not-category"],
+        text="주방용품",
+        attribute_values={},
+    ), "adapter.categories.navigation.menu_selector")
+    vm._category_menu_analysis_finished({"categories": []})
+
+    assert vm.categoryAnalysisReady is False
+    assert "다시 시도" in vm.categoryAnalysisMessage
+    assert vm.generate() is False
+    assert generated == []
+
+
+def test_category_reselect_does_not_mark_analysis_ready() -> None:
+    from app.analyzer.element_picker import PickedElement
+    from app.ui_qml.viewmodels.adapter_studio import AdapterStudioViewModel
+
+    made = []
+    vm = AdapterStudioViewModel(
+        app_view_model=AppViewModel(),
+        worker_factories={"picker": lambda request: made.append(request) or FakeWorker(request)},
+    )
+    vm.setConnectionInputs({"supplierName": "Shop", "mainUrl": "https://shop.example", "detailUrl": "https://p.example/1"})
+    vm._pending_hint = (
+        PickedElement(url="https://shop.example", selector=".wrong", text="틀림"),
+        "adapter.categories.navigation.menu_selector",
+    )
+    vm._has_pending_hint = True
+
+    assert vm.reselectPickedHint() is True
+    assert vm.categoryAnalysisReady is False
+    assert made[-1].field_path == "adapter.categories.navigation.menu_selector"
+
+
+def test_category_confirm_succeeds_even_when_yaml_is_not_ready(monkeypatch) -> None:
+    from app.analyzer.element_picker import PickedElement
+    from app.ui_qml.viewmodels.adapter_studio import AdapterStudioViewModel
+
+    closed = []
+    monkeypatch.setattr("app.ui_qml.viewmodels.adapter_studio.close_picker_session", lambda: closed.append(True))
+    vm = AdapterStudioViewModel(app_view_model=AppViewModel(), worker_factories={})
+    vm.setYamlText("adapter: [")
+    vm._pending_hint = (
+        PickedElement(url="https://shop.example", selector=".category-menu li", text="상의"),
+        "adapter.categories.navigation.menu_selector",
+    )
+    vm._has_pending_hint = True
+
+    assert vm.acceptPickedHint() is True
+    assert vm.categoryAnalysisReady is True
+    assert vm.hasPendingHint is False
+    assert closed == [True]
 
 
 def test_picker_field_hint_set_per_field() -> None:
@@ -811,7 +995,7 @@ def test_running_crawl_blocks_adapter_worker_creation() -> None:
             for name in ("probe", "generate", "test", "picker")
         },
     )
-    vm.setConnectionInputs({"supplierName": "Shop", "mainUrl": "https://x"})
+    vm.setConnectionInputs({"supplierName": "Shop", "mainUrl": "https://x", "detailUrl": "https://p.example/1"})
     assert vm.probe() is False
     assert vm.generate() is False
     assert vm.testAll() is False
@@ -819,3 +1003,332 @@ def test_running_crawl_blocks_adapter_worker_creation() -> None:
     assert made == []
     assert (app.activeTask.key, app.activeTask.label) == ("crawl-crawl", "상품 수집")
     assert "다른 작업" in vm.fieldErrors["form"]
+
+
+def test_probe_requires_sample_product_url() -> None:
+    from app.ui_qml.viewmodels.adapter_studio import AdapterStudioViewModel
+
+    vm = AdapterStudioViewModel(app_view_model=AppViewModel(), worker_factories={"probe": lambda request: FakeWorker(request)})
+    vm.setConnectionInputs({"supplierName": "Shop", "mainUrl": "https://x"})
+    assert vm.probe() is False
+    assert "detailUrl" in vm.fieldErrors
+    # Once a sample product URL is supplied, probe proceeds.
+    vm.setConnectionInputs({"detailUrl": "https://x/p/1"})
+    assert vm.probe() is True
+
+
+def test_probe_errors_when_needs_login_but_credentials_missing(monkeypatch) -> None:
+    from app.ui_qml.viewmodels.adapter_studio import AdapterStudioViewModel
+
+    vm = AdapterStudioViewModel(app_view_model=AppViewModel(), worker_factories={"probe": lambda request: FakeWorker(request)})
+    vm.setConnectionInputs({"supplierName": "Shop", "mainUrl": "https://x", "needsLogin": True, "detailUrl": "https://p.example/1"})
+    vm.setLoginInputs({"loginUrl": "", "username": "", "password": ""})
+
+    assert vm.probe() is False
+    assert "loginUrl" in vm.fieldErrors or "username" in vm.fieldErrors or "password" in vm.fieldErrors
+
+
+def test_pick_element_shows_mapping_login_when_credentials_missing(monkeypatch) -> None:
+    from app.ui_qml.viewmodels.adapter_studio import AdapterStudioViewModel
+
+    monkeypatch.setattr("app.ui_qml.viewmodels.adapter_studio.load_supplier_credentials", lambda key: None)
+    vm = AdapterStudioViewModel(app_view_model=AppViewModel(), worker_factories={"picker": lambda request: FakeWorker(request)})
+    vm.setConnectionInputs({"supplierName": "Shop", "mainUrl": "https://x", "detailUrl": "https://x/p/1", "needsLogin": True})
+    vm.setLoginInputs({"loginUrl": "https://x/login"})
+
+    assert vm.pickElement("adapter.product.raw_product_name") is False
+    assert vm.needsMappingLogin is True
+    assert vm.pickerFieldPath == "adapter.product.raw_product_name"
+
+
+def test_submit_mapping_login_stores_credentials_and_resumes_pick(monkeypatch) -> None:
+    from app.ui_qml.viewmodels.adapter_studio import AdapterStudioViewModel
+
+    store = {}
+    made = []
+    monkeypatch.setattr("app.ui_qml.viewmodels.adapter_studio.save_supplier_credentials", lambda key, user, password: store.__setitem__(key, (user, password)))
+    monkeypatch.setattr("app.ui_qml.viewmodels.adapter_studio.load_supplier_credentials", lambda key: store.get(key))
+    vm = AdapterStudioViewModel(
+        app_view_model=AppViewModel(),
+        worker_factories={"picker": lambda request: made.append(request) or FakeWorker(request)},
+    )
+    vm.setConnectionInputs({"supplierName": "Shop", "mainUrl": "https://x", "detailUrl": "https://x/p/1", "needsLogin": True})
+    vm.setLoginInputs({"loginUrl": "https://x/login"})
+
+    assert vm.pickElement("adapter.product.raw_product_name") is False
+    assert vm.needsMappingLogin is True
+
+    assert vm.submitMappingLogin({"loginUrl": "https://x/login", "username": "buyer", "password": "secret"}) is True
+    assert vm.needsMappingLogin is False
+    assert made and made[0].username == "buyer"
+    assert made[0].password == "secret"
+
+
+def test_pick_element_surfaces_manual_login_when_auto_login_fails(monkeypatch) -> None:
+    from PySide6.QtCore import QObject, Signal, Slot
+    from app.ui_qml.viewmodels.adapter_studio import AdapterStudioViewModel
+
+    class ManualLoginWorker(QObject):
+        finished = Signal(object, str)
+        error = Signal(str)
+        progress = Signal(str)
+        cancelled = Signal()
+        login_required = Signal()
+        def __init__(self, request):
+            super().__init__()
+            self.request = request
+            self._confirmed = False
+            self._cancelled = False
+        def start(self):
+            self.progress.emit("로그인 중...")
+            self.login_required.emit()
+        @Slot()
+        def confirmManualLogin(self):
+            self._confirmed = True
+        @Slot()
+        def cancelManualLogin(self):
+            self._cancelled = True
+        def requestInterruption(self):
+            pass
+        def isRunning(self):
+            return False
+
+    store = {}
+    monkeypatch.setattr("app.ui_qml.viewmodels.adapter_studio.save_supplier_credentials", lambda key, user, password: store.__setitem__(key, (user, password)))
+    monkeypatch.setattr("app.ui_qml.viewmodels.adapter_studio.load_supplier_credentials", lambda key: store.get(key))
+    vm = AdapterStudioViewModel(
+        app_view_model=AppViewModel(),
+        worker_factories={"picker": lambda request: ManualLoginWorker(request)},
+    )
+    vm.setConnectionInputs({"supplierName": "Shop", "mainUrl": "https://x", "detailUrl": "https://x/p/1", "needsLogin": True})
+    vm.setLoginInputs({"loginUrl": "https://x/login", "username": "buyer", "password": "secret"})
+    # Simulate probe having stored credentials so pickElement proceeds to the worker
+    vm._active_credential_key = vm._credential_key()
+    vm._active_credential_identity = vm._credential_identity()
+    vm._active_credential_is_studio = True
+    store[vm._active_credential_key] = ("buyer", "secret")
+
+    assert vm.pickElement("adapter.product.raw_product_name") is True
+    assert vm.manualLoginPending is True
+
+    vm.confirmManualLogin()
+    assert vm.manualLoginPending is False
+
+
+def test_cancel_manual_login_resets_state(monkeypatch) -> None:
+    from PySide6.QtCore import QObject, Signal, Slot
+    from app.ui_qml.viewmodels.adapter_studio import AdapterStudioViewModel
+
+    class ManualLoginWorker(QObject):
+        finished = Signal(object, str)
+        error = Signal(str)
+        progress = Signal(str)
+        cancelled = Signal()
+        login_required = Signal()
+        def __init__(self, request):
+            super().__init__()
+            self.request = request
+        def start(self):
+            self.login_required.emit()
+        @Slot()
+        def confirmManualLogin(self):
+            pass
+        @Slot()
+        def cancelManualLogin(self):
+            pass
+        def requestInterruption(self):
+            pass
+        def isRunning(self):
+            return False
+
+    store = {}
+    monkeypatch.setattr("app.ui_qml.viewmodels.adapter_studio.save_supplier_credentials", lambda key, user, password: store.__setitem__(key, (user, password)))
+    monkeypatch.setattr("app.ui_qml.viewmodels.adapter_studio.load_supplier_credentials", lambda key: store.get(key))
+    vm = AdapterStudioViewModel(
+        app_view_model=AppViewModel(),
+        worker_factories={"picker": lambda request: ManualLoginWorker(request)},
+    )
+    vm.setConnectionInputs({"supplierName": "Shop", "mainUrl": "https://x", "detailUrl": "https://x/p/1", "needsLogin": True})
+    vm.setLoginInputs({"loginUrl": "https://x/login", "username": "buyer", "password": "secret"})
+    vm._active_credential_key = vm._credential_key()
+    vm._active_credential_identity = vm._credential_identity()
+    vm._active_credential_is_studio = True
+    store[vm._active_credential_key] = ("buyer", "secret")
+
+    assert vm.pickElement("adapter.product.raw_product_name") is True
+    assert vm.manualLoginPending is True
+
+    vm.cancelManualLogin()
+    assert vm.manualLoginPending is False
+
+
+def test_accept_picked_hint_with_empty_selector_falls_back_to_candidate() -> None:
+    """When the chosen selector is empty but candidates exist, use the first candidate."""
+    from app.analyzer.element_picker import PickedElement
+    from app.ui_qml.viewmodels.adapter_studio import AdapterStudioViewModel
+
+    vm = AdapterStudioViewModel(app_view_model=AppViewModel(), worker_factories={})
+    vm.acceptGeneratedYaml(VALID_YAML)
+    picked = PickedElement(
+        url="https://shop.example/p/1",
+        selector="",
+        selector_candidates=[".product-name", "h1.title"],
+        text="상품",
+        attribute_values={},
+    )
+    vm._pending_hint = (picked, "adapter.product.raw_product_name")
+    vm._has_pending_hint = True
+
+    assert vm.acceptPickedHint() is True
+    assert vm._mapping_hints[-1].chosen_selector == ".product-name"
+    # No form error should be set on success.
+    assert vm.fieldErrors.get("form", "") == ""
+
+
+def test_browser_confirmed_pick_applies_without_app_modal(monkeypatch) -> None:
+    """Browser-side Yes (이 요소가 맞나요?) is the confirmation — apply immediately,
+    close the browser session, and never raise a second app-side modal."""
+    from app.analyzer.element_picker import PickedElement
+    from app.ui_qml.viewmodels import adapter_studio
+    from app.ui_qml.viewmodels.adapter_studio import AdapterStudioViewModel
+
+    closed = []
+    monkeypatch.setattr(adapter_studio, "close_picker_session", lambda: closed.append(True))
+    vm = AdapterStudioViewModel(app_view_model=AppViewModel(), worker_factories={})
+    vm.acceptGeneratedYaml(VALID_YAML)
+    picked = PickedElement(
+        url="https://shop.example/p/1",
+        selector=".picked-name",
+        selector_candidates=[".picked-name"],
+        match_counts={".picked-name": 1},
+        text="상품",
+        attribute_values={},
+    )
+
+    vm._picked(picked, "adapter.product.raw_product_name")
+
+    # Applied straight away, no pending app modal, browser session closed.
+    assert vm.hasPendingHint is False
+    assert vm._mapping_hints[-1].chosen_selector == ".picked-name"
+    assert "selector: .picked-name" in vm.yamlText
+    assert closed == [True]
+
+
+def test_picker_cancel_resets_state_and_allows_next_pick(monkeypatch) -> None:
+    from app.ui_qml.viewmodels.adapter_studio import AdapterStudioViewModel
+
+    closed = []
+    made = []
+    monkeypatch.setattr("app.ui_qml.viewmodels.adapter_studio.close_picker_session", lambda: closed.append(True))
+    vm = AdapterStudioViewModel(
+        app_view_model=AppViewModel(),
+        worker_factories={"picker": lambda request: made.append(FakeWorker(request)) or made[-1]},
+    )
+    vm.setConnectionInputs({
+        "supplierName": "Test Shop",
+        "mainUrl": "https://shop.example",
+        "detailUrl": "https://shop.example/p/1",
+    })
+
+    assert vm.pickElement("adapter.product.raw_product_name") is True
+    assert vm.busy is True
+    assert vm.pickerActive is True
+
+    made[0].cancelled.emit()
+
+    assert vm.busy is False
+    assert vm.pickerActive is False
+    assert vm.hasPendingHint is False
+    assert closed == [True]
+    assert vm.pickElement("adapter.product.supply_price") is True
+    assert len(made) == 2
+    assert made[1].args[0].field_path == "adapter.product.supply_price"
+
+
+def test_preview_cancel_resets_preview_state(monkeypatch) -> None:
+    from app.ui_qml.viewmodels import adapter_studio
+
+    class PreviewCancelledWorker(QObject):
+        finished = Signal(object)
+        error = Signal(str)
+        progress = Signal(str)
+        cancelled = Signal()
+
+        def __init__(self, request):
+            super().__init__()
+            self.request = request
+
+        def start(self):
+            self.cancelled.emit()
+
+        def requestInterruption(self):
+            pass
+
+        def isRunning(self):
+            return False
+
+    closed = []
+    monkeypatch.setattr(adapter_studio, "MappingPreviewJob", PreviewCancelledWorker)
+    monkeypatch.setattr(adapter_studio, "close_picker_session", lambda: closed.append(True))
+    vm = adapter_studio.AdapterStudioViewModel(app_view_model=AppViewModel())
+    vm.setConnectionInputs({
+        "supplierName": "Test Shop",
+        "mainUrl": "https://shop.example",
+        "detailUrl": "https://shop.example/p/1",
+    })
+    vm.acceptGeneratedYaml(VALID_YAML)
+
+    assert vm.previewMapping() is True
+    assert vm.previewActive is False
+    assert vm.busy is False
+    assert closed == [True]
+
+
+def test_reselect_picked_hint_restarts_same_field_without_closing_session() -> None:
+    from app.analyzer.element_picker import PickedElement
+    from app.ui_qml.viewmodels.adapter_studio import AdapterStudioViewModel
+
+    made = []
+    vm = AdapterStudioViewModel(
+        app_view_model=AppViewModel(),
+        worker_factories={"picker": lambda request: made.append(request) or FakeWorker(request)},
+    )
+    vm.setConnectionInputs({
+        "supplierName": "Test Shop",
+        "mainUrl": "https://shop.example",
+        "detailUrl": "https://shop.example/p/1",
+    })
+    vm._pending_hint = (
+        PickedElement(url="https://shop.example/p/1", selector=".wrong", text="틀림"),
+        "adapter.product.raw_product_name",
+    )
+    vm._has_pending_hint = True
+    vm._pending_hint_preview = "틀림"
+
+    assert vm.reselectPickedHint() is True
+    assert vm.hasPendingHint is False
+    assert made[-1].field_path == "adapter.product.raw_product_name"
+
+
+def test_accept_picked_hint_with_empty_selector_and_no_candidates_is_safe() -> None:
+    """Empty selector with no candidates must not crash — it shows a friendly error."""
+    from app.analyzer.element_picker import PickedElement
+    from app.ui_qml.viewmodels.adapter_studio import AdapterStudioViewModel
+
+    vm = AdapterStudioViewModel(app_view_model=AppViewModel(), worker_factories={})
+    vm.acceptGeneratedYaml(VALID_YAML)
+    picked = PickedElement(
+        url="https://shop.example/p/1",
+        selector="",
+        selector_candidates=[],
+        text="",
+        attribute_values={},
+    )
+    vm._pending_hint = (picked, "adapter.product.raw_product_name")
+    vm._has_pending_hint = True
+
+    # Must not raise ValueError.
+    assert vm.acceptPickedHint() is False
+    assert "선택자" in vm.fieldErrors.get("form", "")
+    # Pending hint is preserved so the user can re-pick.
+    assert vm._pending_hint is not None

@@ -61,7 +61,9 @@ def test_missing_product_extractor_created_with_defaults() -> None:
     assert product["supply_price"] == {"transform": "extract_number", "selector": ".price"}
     assert product["main_image_url"]["attribute"] == "src"
     assert product["main_image_url"]["fallback_attribute"] == "data-src"
-    assert product["detail_content"]["html"] is True
+    assert product["detail_content"]["attribute"] == "src"
+    assert product["detail_content"]["fallback_attribute"] == "data-src"
+    assert product["detail_content"]["multiple"] is True
 
 
 def test_existing_extractor_preserves_unspecified_ai_fields() -> None:
@@ -76,6 +78,14 @@ def test_listing_product_link_merge_works() -> None:
     data = _base_yaml_dict()
     apply_locked_hints_to_yaml_dict(data, [MappingHint("listing", "adapter.listing.product_link", ".product a")])
     assert data["adapter"]["listing"]["product_link"] == {"selector": ".product a", "attribute": "href"}
+
+
+def test_option_values_hint_creates_first_group() -> None:
+    data = _base_yaml_dict()
+    data["adapter"]["options"] = {"groups": []}
+    apply_locked_hints_to_yaml_dict(data, [MappingHint("detail", "adapter.options.groups.0.values_selector", ".options option")])
+    assert data["adapter"]["options"]["groups"][0] == {"name": "옵션", "values_selector": ".options option"}
+    assert data["adapter"]["options"]["detection"] == "dom"
 
 
 def test_unknown_field_path_rejected() -> None:

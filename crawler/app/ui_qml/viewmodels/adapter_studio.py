@@ -4,12 +4,13 @@ import hashlib
 import re
 import unicodedata
 from collections.abc import Callable, Mapping
+from dataclasses import replace
 from typing import Any
 
 import yaml
 from PySide6.QtCore import QObject, Property, QTimer, Signal, Slot
 
-from app.analyzer.adapter_schema import FIELD_LABELS_KO, get_product_field_mappings
+from app.analyzer.adapter_schema import FIELD_LABELS_KO, OPTION_VALUES_FIELD_PATH, get_product_field_mappings
 from app.analyzer.element_picker import suggest_defaults_for_field
 from app.analyzer.mapping_hints import MappingHint, apply_locked_hints_to_yaml_dict
 from app.analyzer.validation_summary import build_validation_summary, get_save_gate_decision
@@ -26,6 +27,7 @@ from app.ui_qml.viewmodels.base import BaseViewModel, sanitize_diagnostic
 from app.workers.adapter import (
     AdapterTestRequest, AdapterTestWorker, CategoryMenuProbeRequest, CategoryMenuProbeWorker,
     GenerateRequest, GenerateWorker,
+    MappingPreviewJob, MappingPreviewRequest,
     PickerJob, PickerRequest, PickerValidateRequest, PickerValidateWorker,
     PickerWorker, ProbeRequest, ProbeWorker,
     close_picker_session, stop_picker_thread,
@@ -33,7 +35,10 @@ from app.workers.adapter import (
 from app.workers.lifecycle import stop_workers
 
 
-MAPPING_ROLES = ("key", "label", "selector", "attribute", "transform", "status", "testValue", "testOk")
+MAPPING_ROLES = (
+    "key", "label", "fieldPath", "selector", "attribute", "transform", "status",
+    "testValue", "testOk", "urlPattern", "urlAllowed", "testable", "extraEnabled",
+)
 def yaml_content_hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
@@ -86,6 +91,7 @@ class AdapterStudioViewModel(BaseViewModel):
         self._active_credential_key: str | None = None
         self._active_credential_identity: tuple[str, str, str, bool] | None = None
         self._active_credential_is_studio = False
+        self._active_credentials: tuple[str, str] | None = None
         self._pending_hint = None
         self._picker_active = False
         self._picker_field_label = ""
@@ -99,6 +105,7 @@ class AdapterStudioViewModel(BaseViewModel):
         self._picker_validation_note = ""
         self._picker_validation_selector = ""
         self._pending_validation: dict[str, Any] | None = None
+        self._excluded_urls: set[str] = set()
         self._category_analysis_ready = False
         self._category_analysis_message = "사이트 분석 후 카테고리 메뉴를 확인하세요."
         self._current_progress = -1.0
@@ -106,6 +113,7 @@ class AdapterStudioViewModel(BaseViewModel):
         self._mapping_hints: list[MappingHint] = []
         self._needs_mapping_login = False
         self._manual_login_pending = False
+        self._preview_active = False
         self._inputs = {
             "supplierName": "", "mainUrl": "", "listingUrl": "", "detailUrl": "",
             "needsLogin": False, "loginUrl": "", "username": "", "password": "",
@@ -117,7 +125,7 @@ class AdapterStudioViewModel(BaseViewModel):
     validationStale = Property(bool, lambda self: self._validation_stale, notify=stateChanged)
     validationSummary = Property("QVariantMap", lambda self: self._summary_map(), notify=stateChanged)
     mappingRows = Property(QObject, lambda self: self._mapping_rows, constant=True)
-    probeSummary = Property("QVariantMap", lambda self: dict(self._probe_summary), notify=stateChanged)
+    probeSummary = Property("QVariantMap", lambda self: self._probe_summary_with_checks(), notify=stateChanged)
     allProductsAutoDetected = Property(bool, lambda self: bool(self._probe_summary.get("hasAllProducts")), notify=stateChanged)
     canSave = Property(bool, lambda self: self._can_save(), notify=stateChanged)
     saveWarning = Property("QVariantMap", lambda self: dict(self._save_warning), notify=stateChanged)
@@ -126,6 +134,7 @@ class AdapterStudioViewModel(BaseViewModel):
     currentProgress = Property(float, lambda self: self._current_progress, notify=stateChanged)
     currentProgressLabel = Property(str, lambda self: self._current_progress_label, notify=stateChanged)
     connectionInputs = Property("QVariantMap", lambda self: {k: v for k, v in self._inputs.items() if k not in {"username", "password"}}, notify=stateChanged)
+    previewActive = Property(bool, lambda self: self._preview_active, notify=stateChanged)
     pickerActive = Property(bool, lambda self: self._picker_active, notify=stateChanged)
     pickerFieldLabel = Property(str, lambda self: self._picker_field_label, notify=stateChanged)
     pickerFieldPath = Property(str, lambda self: self._picker_field_path, notify=stateChanged)
@@ -143,11 +152,30 @@ class AdapterStudioViewModel(BaseViewModel):
     categoryAnalysisMessage = Property(str, lambda self: self._category_analysis_message, notify=stateChanged)
     canAcceptPickedHint = Property(bool, lambda self: bool(self._pending_hint) and not self._picker_validation_active, notify=stateChanged)
 
+    def _probe_summary_with_checks(self) -> dict:
+        result = dict(self._probe_summary)
+        if "categories" in result:
+            result["categories"] = [
+                {**c, "checked": c.get("url") not in self._excluded_urls}
+                for c in (result["categories"] or [])
+            ]
+        return result
+
+    @Slot(str, bool)
+    def setCategoryExcluded(self, url: str, excluded: bool) -> None:
+        if excluded:
+            self._excluded_urls.add(url)
+        else:
+            self._excluded_urls.discard(url)
+        self._emit()
+
     def _field_label_for_path(self, field_path: str) -> str:
         if field_path == "adapter.categories.all_products.url":
             return "전체상품 링크"
         if field_path == "adapter.categories.navigation.menu_selector":
             return "카테고리 메뉴"
+        if field_path == OPTION_VALUES_FIELD_PATH:
+            return "옵션"
         key = field_path.split(".")[-1]
         return FIELD_LABELS_KO.get(key, key)
 
@@ -157,9 +185,11 @@ class AdapterStudioViewModel(BaseViewModel):
             "adapter.categories.navigation.menu_selector": "카테고리 메뉴 안의 대표 항목 하나(예: 의류, 상의)를 클릭하세요. 이 선택은 AI 설정 생성의 카테고리 힌트로 사용됩니다.",
             "adapter.listing.product_link": "상품 카드 안의 상세페이지 링크를 클릭하세요.",
             "adapter.product.main_image_url": "상품 대표 이미지를 클릭하세요.",
+            "adapter.product.extra_image_urls": "추가 이미지 중 하나를 클릭하세요. 같은 선택자에 매칭되는 이미지를 여러 개 수집합니다.",
             "adapter.product.raw_product_name": "상품명 텍스트를 클릭하세요.",
             "adapter.product.supply_price": "공급가격 텍스트를 클릭하세요.",
-            "adapter.product.detail_content": "상품 상세설명 영역을 클릭하세요.",
+            "adapter.product.detail_content": "상세 이미지 중 아무거나 한 장을 클릭하세요. 주변 상세 이미지를 자동으로 함께 수집합니다.",
+            OPTION_VALUES_FIELD_PATH: "옵션 값 하나를 클릭하세요. 같은 선택자에 매칭되는 값을 옵션으로 수집합니다.",
         }
         return hints.get(field_path, "수집할 요소를 클릭하세요.")
 
@@ -225,6 +255,23 @@ class AdapterStudioViewModel(BaseViewModel):
         self._invalidate_credentials_for_identity_change(previous_identity)
         self._emit()
 
+    def _picker_target_url(self) -> str:
+        """상품 필드 선택/미리보기가 이동할 URL. 사용자가 지정한 샘플 상품 URL을
+        우선하고, 없으면 분석에서 찾은 첫 상품, 그것도 없으면 메인 URL."""
+        target = str(self._inputs.get("detailUrl") or "").strip()
+        if not target:
+            sample_products = self._probe_summary.get("sampleProducts") or []
+            if sample_products and sample_products[0].get("url"):
+                target = str(sample_products[0]["url"])
+        if not target:
+            target = str(self._inputs.get("mainUrl") or "").strip()
+        return target
+
+    @Slot(str)
+    def setDetailUrl(self, url: str) -> None:
+        self._inputs["detailUrl"] = str(url or "").strip()
+        self._emit()
+
     @Slot("QVariantMap")
     def setLoginInputs(self, values: Mapping[str, Any]) -> None:
         previous_identity = self._credential_identity()
@@ -264,6 +311,7 @@ class AdapterStudioViewModel(BaseViewModel):
         self._active_credential_key = None
         self._active_credential_identity = None
         self._active_credential_is_studio = False
+        self._active_credentials = None
 
     @Slot(bool)
     def setAdvancedEditorOpen(self, open_: bool) -> None:
@@ -388,6 +436,7 @@ class AdapterStudioViewModel(BaseViewModel):
         self._picker_validation_selector = ""
         self._needs_mapping_login = False
         self._manual_login_pending = False
+        self._preview_active = False
         if self._category_analysis_message == "카테고리 메뉴 분석 중...":
             self._category_analysis_ready = False
             self._category_analysis_message = "카테고리를 찾지 못했습니다. 다시 시도하세요."
@@ -427,6 +476,11 @@ class AdapterStudioViewModel(BaseViewModel):
             errors["mainUrl"] = "URL을 입력하세요."
         elif not url.startswith(("http://", "https://")):
             errors["mainUrl"] = "URL은 http:// 또는 https://로 시작해야 합니다."
+        detail = str(self._inputs.get("detailUrl") or "").strip()
+        if not detail:
+            errors["detailUrl"] = "샘플 상품 URL을 입력하세요. (필드 매핑에 사용됩니다)"
+        elif not detail.startswith(("http://", "https://")):
+            errors["detailUrl"] = "샘플 상품 URL은 http:// 또는 https://로 시작해야 합니다."
         if errors:
             self.set_field_errors(errors)
             return False
@@ -448,18 +502,7 @@ class AdapterStudioViewModel(BaseViewModel):
         login_url = str(self._inputs["loginUrl"] or "").strip() or url
         credentials = (login_url, self._inputs["username"], self._inputs["password"])
         if self._inputs["needsLogin"] and all(credentials):
-            try:
-                credential_key = self._credential_key()
-                # 기존 세션 state 삭제: 사용자 변경 시 이전 세션 재사용 방지
-                clear_session_state(credential_key)
-                save_supplier_credentials(credential_key, str(credentials[1]), str(credentials[2]))
-                self._active_credential_key = credential_key
-                self._active_credential_identity = self._credential_identity()
-                self._active_credential_is_studio = True
-            except Exception as exc:
-                self._inputs["username"] = self._inputs["password"] = ""
-                self.set_field_errors({"form": f"로그인 정보 저장 실패: {sanitize_diagnostic(exc)}"})
-                return False
+            self._remember_studio_credentials(str(credentials[1]), str(credentials[2]))
         request = ProbeRequest(
             url, self._inputs["listingUrl"] or None, self._inputs["detailUrl"] or None,
             *(credentials if self._inputs["needsLogin"] else (None, None, None)),
@@ -473,6 +516,7 @@ class AdapterStudioViewModel(BaseViewModel):
         )
 
     def _probe_finished(self, result) -> None:
+        self._excluded_urls = set()
         self._probe_result = result
         self._probe_summary = {
             "finalUrl": result.final_url, "encoding": result.encoding,
@@ -539,6 +583,7 @@ class AdapterStudioViewModel(BaseViewModel):
         self._picker_session_open = False
         self._needs_mapping_login = False
         self._manual_login_pending = False
+        self._preview_active = False
         close_picker_session()
         self._pending_hint = None
         self._picker_field_label = ""
@@ -612,6 +657,101 @@ class AdapterStudioViewModel(BaseViewModel):
             updated.append({**row, "testValue": str(hits[0])[:100] if hits else "", "testOk": bool(hits)})
         self._mapping_rows.resetRows(updated)
 
+    def _extract_preview_fields(self) -> list[dict]:
+        adapter = load_adapter_from_text(self._yaml_text)
+        product = adapter.adapter.product
+        return [
+            {"key": k, "label": FIELD_LABELS_KO[k], "selector": getattr(product, k).selector}
+            for k in FIELD_LABELS_KO
+            if getattr(product, k, None) is not None and getattr(product, k).selector.strip()
+        ]
+
+    @Slot()
+    def previewMapping(self) -> bool:
+        if not self._guard_operation("adapter-preview"):
+            return False
+        try:
+            fields = self._extract_preview_fields()
+        except Exception as exc:
+            self.set_field_errors({"yamlText": f"YAML 오류: {exc}"})
+            return False
+        if not fields:
+            self.set_field_errors({"form": "매핑된 필드가 없습니다."})
+            return False
+        target = self._picker_target_url()
+        if not target:
+            self.set_field_errors({"form": "미리보기할 상품 URL이 없습니다."})
+            return False
+        username = password = None
+        if self._inputs["needsLogin"]:
+            loaded = self._load_transient_credentials()
+            if loaded:
+                username, password = loaded
+        login_url = str(self._inputs.get("loginUrl") or "").strip() or str(self._inputs.get("mainUrl") or "").strip() or None
+        request = MappingPreviewRequest(
+            yaml_text=self._yaml_text, target_url=target, fields=fields,
+            login_url=login_url, username=username, password=password,
+            supplier_key=self._credential_key() if self._inputs["needsLogin"] else None,
+        )
+        worker = MappingPreviewJob(request)
+        self._preview_active = True
+        self._picker_session_open = True
+        return self._connect_worker(
+            worker, finished=lambda result: self._preview_finished(result),
+            key="adapter-preview", label="매핑 미리보기", stage="map",
+        )
+
+    def _preview_finished(self, result: dict) -> None:
+        self._operation_done()
+
+    @Slot()
+    def closePreview(self) -> None:
+        close_picker_session()
+        self._preview_active = False
+        self._picker_session_open = False
+        self._emit()
+
+    @Slot(str, str)
+    def setFieldUrlPattern(self, field_key: str, pattern: str) -> None:
+        """Set or clear url_pattern for a product field and update YAML."""
+        try:
+            raw = yaml.safe_load(self._yaml_text)
+            product = raw.get("adapter", {}).get("product", {})
+            field = product.get(field_key)
+            if field is None:
+                field = {}
+                product[field_key] = field
+            if pattern:
+                field["url_pattern"] = pattern
+                field["fallback_from"] = "url"
+                field.pop("selector", None)
+            else:
+                field.pop("url_pattern", None)
+                if field.get("fallback_from") == "url":
+                    field["fallback_from"] = "none"
+            self.setYamlText(yaml.safe_dump(raw, allow_unicode=True, sort_keys=False))
+        except Exception as exc:
+            self.set_field_errors({"yamlText": f"YAML 오류: {exc}"})
+
+    @Slot(bool)
+    def setExtraImagesEnabled(self, enabled: bool) -> None:
+        try:
+            raw = yaml.safe_load(self._yaml_text) or {}
+            product = raw.setdefault("adapter", {}).setdefault("product", {})
+            if enabled:
+                product.setdefault("extra_image_urls", {
+                    "selector": "",
+                    "attribute": "src",
+                    "fallback_attribute": "data-src",
+                    "multiple": True,
+                    "optional": True,
+                })
+            else:
+                product.pop("extra_image_urls", None)
+            self.setYamlText(yaml.safe_dump(raw, allow_unicode=True, sort_keys=False))
+        except Exception as exc:
+            self.set_field_errors({"yamlText": f"YAML 오류: {exc}"})
+
     @Slot(str)
     def testSingle(self, field_key: str) -> bool:
         return self._start_test([field_key])
@@ -680,13 +820,7 @@ class AdapterStudioViewModel(BaseViewModel):
         self._picker_field_path = field_path
         self._picker_field_label = self._field_label_for_path(field_path)
         self._picker_field_hint = self._hint_text_for_path(field_path)
-        target = str(self._inputs["detailUrl"] or "").strip()
-        if not target:
-            sample_products = self._probe_summary.get("sampleProducts") or []
-            if sample_products and sample_products[0].get("url"):
-                target = str(sample_products[0]["url"])
-        if not target:
-            target = str(self._inputs["mainUrl"] or "").strip()
+        target = self._picker_target_url()
         username = password = None
         if self._inputs["needsLogin"]:
             loaded = self._load_transient_credentials()
@@ -720,19 +854,7 @@ class AdapterStudioViewModel(BaseViewModel):
         login_url = str(self._inputs["loginUrl"] or "").strip() or str(self._inputs["mainUrl"] or "").strip()
         credentials = (login_url, self._inputs["username"], self._inputs["password"])
         if self._inputs["needsLogin"] and all(credentials):
-            try:
-                credential_key = self._credential_key()
-                # 기존 세션 state 삭제: 사용자 변경 시 이전 세션 재사용 방지
-                clear_session_state(credential_key)
-                save_supplier_credentials(credential_key, str(credentials[1]), str(credentials[2]))
-                self._active_credential_key = credential_key
-                self._active_credential_identity = self._credential_identity()
-                self._active_credential_is_studio = True
-            except Exception as exc:
-                self._inputs["username"] = self._inputs["password"] = ""
-                self.set_field_errors({"form": f"로그인 정보 저장 실패: {sanitize_diagnostic(exc)}"})
-                self._emit()
-                return False
+            self._remember_studio_credentials(str(credentials[1]), str(credentials[2]))
         self._inputs["username"] = self._inputs["password"] = ""
         self._needs_mapping_login = False
         self.set_field_errors({})
@@ -769,8 +891,18 @@ class AdapterStudioViewModel(BaseViewModel):
             or self._active_credential_identity != self._credential_identity()
         ):
             return False
+        key = self._active_credential_key
         try:
-            return load_supplier_credentials(self._active_credential_key) is not None
+            if load_supplier_credentials(key) is not None:
+                return True
+        except Exception:
+            pass
+        if self._active_credentials is not None:
+            return True
+        # keychain 없어도 저장된 브라우저 세션이 있으면 picker 진행 가능
+        try:
+            from app.analyzer.session_store import load_session_state
+            return load_session_state(key) is not None
         except Exception:
             return False
 
@@ -785,15 +917,26 @@ class AdapterStudioViewModel(BaseViewModel):
         try:
             key = self._active_credential_key
             credentials = load_supplier_credentials(key)
-            return credentials
-        except Exception as exc:
-            self.set_field_errors({"form": f"로그인 정보 불러오기 실패: {sanitize_diagnostic(exc)}"})
-            return None
+            return credentials or self._active_credentials
+        except Exception:
+            return self._active_credentials
 
     def _credential_key(self) -> str:
         return studio_credential_key(
             str(self._inputs["supplierName"]), str(self._inputs["mainUrl"])
         )
+
+    def _remember_studio_credentials(self, username: str, password: str) -> None:
+        credential_key = self._credential_key()
+        clear_session_state(credential_key)
+        self._active_credential_key = credential_key
+        self._active_credential_identity = self._credential_identity()
+        self._active_credential_is_studio = True
+        self._active_credentials = (username, password)
+        try:
+            save_supplier_credentials(credential_key, username, password)
+        except Exception:
+            pass
 
     @Slot()
     def shutdown(self) -> None:
@@ -874,6 +1017,8 @@ class AdapterStudioViewModel(BaseViewModel):
         if field_path == "adapter.categories.navigation.menu_selector":
             self._start_category_menu_analysis(picked)
         else:
+            # 브라우저의 Yes(이 요소가 맞나요?)가 곧 확인이다 — 앱 모달 없이
+            # 바로 적용하고 브라우저 세션을 닫는다.
             self.acceptPickedHint()
 
     def _start_category_menu_analysis(self, picked) -> bool:
@@ -913,6 +1058,7 @@ class AdapterStudioViewModel(BaseViewModel):
         )
 
     def _category_menu_analysis_finished(self, result: dict) -> None:
+        self._excluded_urls = set()
         categories = list(result.get("categories") or [])
         if not categories:
             self._pending_hint = None

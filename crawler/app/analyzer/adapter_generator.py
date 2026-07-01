@@ -63,8 +63,6 @@ adapter:
       attribute: href
       base: relative | absolute
   product:
-    supplier_product_id:
-      selector: CSS_selector
     supplier_product_code:
       selector: CSS_selector
     raw_product_name:
@@ -88,7 +86,9 @@ adapter:
       fallback_attribute: data-src
     detail_content:
       selector: CSS_selector
-      html: true
+      attribute: src
+      fallback_attribute: data-src
+      multiple: true
     extra_image_urls:
       selector: CSS_selector
       attribute: src
@@ -110,7 +110,8 @@ adapter:
 중요 규칙:
 1. 위 DOM에서 각 필드에 대한 CSS 선택자를 추출하세요.
 2. status 값은 한국어 → available/sold_out/stopped 매핑을 포함하세요.
-3. 이미지는 src 또는 data-src 속성을 사용하세요 (lazy loading 대응).
+3. 대표/추가/상세 이미지는 src 또는 data-src 속성을 사용하고 jpg/jpeg/png/webp 형식만 대상으로 하세요 (lazy loading 대응).
+   상세 페이지(detail_content)는 HTML이 아니라 상세 이미지 img 목록을 multiple: true로 수집하세요.
 4. 선택자를 찾을 수 없는 필드는 해당 필드를 YAML에서 완전히 생략하세요. 빈 문자열("")을 선택자로 사용하지 마세요.
 5. YAML만 출력하세요. 코드 블록이나 설명 없이 바로 YAML.
 6. 판매 상태(supplier_status) 감지 규칙:

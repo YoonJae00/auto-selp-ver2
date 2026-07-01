@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -82,6 +82,7 @@ class FieldExtractor(BaseModel):
     optional: bool = False
     fallback: str | None = None
     fallback_from: Literal["url", "cart_button", "maxq", "none"] = "none"
+    url_pattern: str | None = None  # regex; group 1이 추출값. fallback_from="url"일 때 사용
 
 
 class StatusMapping(BaseModel):
@@ -164,69 +165,88 @@ class Adapter(BaseModel):
 # ===== Mapping Table Helpers =====
 
 FIELD_LABELS_KO: dict[str, str] = {
-    "supplier_product_id": "도매처 상품 ID",
     "supplier_product_code": "상품코드",
     "raw_product_name": "상품명",
     "supplier_status": "판매 상태",
     "supply_price": "공급가",
     "origin": "원산지",
     "main_image_url": "대표 이미지",
-    "detail_content": "상세 페이지",
+    "detail_content": "상세 이미지",
     "extra_image_urls": "추가 이미지",
-    "brand_name": "브랜드명",
-    "manufacturer": "제조사",
-    "model_name": "모델명",
 }
 
+OPTION_VALUES_FIELD_PATH = "adapter.options.groups.0.values_selector"
+OPTION_VALUES_ROW_KEY = "option_values"
 
-def get_product_field_mappings(adapter: "Adapter") -> list[dict[str, str]]:
+
+def get_product_field_mappings(adapter: "Adapter") -> list[dict[str, Any]]:
     """Extract product field mappings for display in a table.
 
-    Returns a list of dicts with keys: key, label, selector, attribute, transform, status
+    Returns a list of dicts with keys: key, label, selector, attribute, transform, status, urlPattern
     where status is one of: 'ok', 'missing', 'empty'
     """
     product = adapter.adapter.product
     rows = []
     for field_name, label in FIELD_LABELS_KO.items():
         extractor = getattr(product, field_name, None)
+        base = {
+            "key": field_name,
+            "label": label,
+            "fieldPath": f"adapter.product.{field_name}",
+            "urlAllowed": field_name == "supplier_product_code",
+            "testable": True,
+            "extraEnabled": field_name != "extra_image_urls" or extractor is not None,
+        }
         if extractor is None:
             rows.append({
-                "key": field_name,
-                "label": label,
-                "selector": "",
-                "attribute": "",
-                "transform": "",
-                "status": "missing",
+                **base,
+                "selector": "", "attribute": "", "transform": "",
+                "status": "missing", "urlPattern": "",
             })
-        elif not extractor.selector or not extractor.selector.strip():
+        elif not extractor.selector.strip() and not extractor.url_pattern:
             rows.append({
-                "key": field_name,
-                "label": label,
-                "selector": "",
-                "attribute": "",
-                "transform": "",
-                "status": "empty",
+                **base,
+                "selector": "", "attribute": "", "transform": "",
+                "status": "empty", "urlPattern": "",
             })
         else:
-            desc = extractor.selector
-            if extractor.attribute:
-                desc += f" ({extractor.attribute} 속성)"
-            if extractor.transform and extractor.transform != "strip":
-                desc += f" [{extractor.transform}]"
-            if extractor.fallback:
-                desc += f" (기본값: {extractor.fallback})"
-            if extractor.html:
-                desc += " [HTML]"
-            if extractor.multiple:
-                desc += " [다중]"
+            url_pat = extractor.url_pattern or ""
+            if url_pat:
+                desc = ""
+                status = "ok"
+            else:
+                desc = extractor.selector
+                if extractor.attribute:
+                    desc += f" ({extractor.attribute} 속성)"
+                if extractor.transform and extractor.transform != "strip":
+                    desc += f" [{extractor.transform}]"
+                if extractor.fallback:
+                    desc += f" (기본값: {extractor.fallback})"
+                if extractor.html:
+                    desc += " [HTML]"
+                if extractor.multiple:
+                    desc += " [다중]"
+                status = "ok"
             rows.append({
-                "key": field_name,
-                "label": label,
-                "selector": desc,
-                "attribute": extractor.attribute or "",
+                **base,
+                "selector": desc, "attribute": extractor.attribute or "",
                 "transform": extractor.transform or "",
-                "status": "ok",
+                "status": status, "urlPattern": url_pat,
             })
+    option_group = adapter.adapter.options.groups[0] if adapter.adapter.options.groups else None
+    rows.append({
+        "key": OPTION_VALUES_ROW_KEY,
+        "label": "옵션",
+        "fieldPath": OPTION_VALUES_FIELD_PATH,
+        "selector": option_group.values_selector if option_group else "",
+        "attribute": "",
+        "transform": "",
+        "status": "ok" if option_group and option_group.values_selector.strip() else "missing",
+        "urlPattern": "",
+        "urlAllowed": False,
+        "testable": False,
+        "extraEnabled": True,
+    })
     return rows
 
 

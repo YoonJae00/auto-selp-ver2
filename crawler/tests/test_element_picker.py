@@ -52,9 +52,13 @@ def test_suggest_defaults_for_field() -> None:
         attribute_values={"src": "/a.jpg", "href": "/p/1"},
     )
     assert suggest_defaults_for_field("adapter.product.main_image_url", picked)["attribute"] == "src"
+    assert suggest_defaults_for_field("adapter.product.extra_image_urls", picked)["multiple"] is True
     assert suggest_defaults_for_field("adapter.listing.product_link", picked)["attribute"] == "href"
-    assert suggest_defaults_for_field("adapter.product.detail_content", picked)["html"] is True
+    assert suggest_defaults_for_field("adapter.product.detail_content", picked)["multiple"] is True
+    assert suggest_defaults_for_field("adapter.product.detail_content", picked)["attribute"] == "src"
+    assert suggest_defaults_for_field("adapter.product.detail_content", picked)["html"] is False
     assert suggest_defaults_for_field("adapter.product.supply_price", picked)["transform"] == "extract_number"
+    assert suggest_defaults_for_field("adapter.options.groups.0.values_selector", picked)["observed_value"] == "상품"
 
 
 def test_all_products_url_default_returns_href() -> None:
