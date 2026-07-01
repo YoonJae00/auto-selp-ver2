@@ -509,6 +509,14 @@ class YAMLAdapter(BaseAdapter):
             return await self._extract_dependent_options(page, config, product_code, base_price)
 
         options: list[StandardOption] = []
+        price_values: list[int | None] = []
+        if config.option_price_delta and config.option_price_delta.multiple:
+            price_raw = await self._extract_field(page, config.option_price_delta)
+            if isinstance(price_raw, list):
+                price_values = [
+                    _extract_number(str(item)) if not isinstance(item, int) else item
+                    for item in price_raw
+                ]
         for group_config in config.groups:
             values = await page.query_selector_all(group_config.values_selector)
             for index, el in enumerate(values):
@@ -522,11 +530,14 @@ class YAMLAdapter(BaseAdapter):
                     "option_value_3": None,
                 }
                 price_delta = None
-                if config.option_price_delta:
+                option_supply = None
+                if price_values:
+                    option_supply = price_values[index] if index < len(price_values) else None
+                    price_delta = derive_option_price_delta(option_supply, base_price)
+                elif config.option_price_delta:
                     price_delta_raw = await self._extract_field(page, config.option_price_delta)
                     price_delta = _extract_signed_number(str(price_delta_raw)) if isinstance(price_delta_raw, str) else price_delta_raw
-
-                option_supply = (base_price or 0) + (price_delta or 0) if base_price else None
+                    option_supply = (base_price or 0) + (price_delta or 0) if base_price else None
                 image_url = None
                 if config.option_image_url:
                     image_url = await self._extract_field(page, config.option_image_url)

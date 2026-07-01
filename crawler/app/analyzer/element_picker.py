@@ -100,6 +100,10 @@ def suggest_defaults_for_field(field_path: str, picked: PickedElement) -> dict[s
         result["transform"] = "extract_number"
     elif field_path == "adapter.options.groups.0.values_selector":
         result["observed_value"] = picked.text or picked.selector
+    elif field_path == "adapter.options.option_price_delta":
+        result["transform"] = "extract_number"
+        result["multiple"] = True
+        result["observed_value"] = picked.text or picked.selector
     elif field_path == "adapter.categories.all_products.url":
         result["attribute"] = "href"
         result["observed_value"] = attrs.get("href", "")

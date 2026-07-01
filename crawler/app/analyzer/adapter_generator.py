@@ -84,21 +84,8 @@ adapter:
       selector: CSS_selector
       attribute: src
       fallback_attribute: data-src
-    detail_content:
-      selector: CSS_selector
-      attribute: src
-      fallback_attribute: data-src
-      multiple: true
-    extra_image_urls:
-      selector: CSS_selector
-      attribute: src
-      multiple: true
   options:
-    detection: dom | ajax | none
-    type: combination | single
-    groups:
-      - name: string
-        values_selector: CSS_selector
+    detection: none
     dependent_options:
       enabled: boolean
       level_1_group: string
@@ -110,8 +97,9 @@ adapter:
 중요 규칙:
 1. 위 DOM에서 각 필드에 대한 CSS 선택자를 추출하세요.
 2. status 값은 한국어 → available/sold_out/stopped 매핑을 포함하세요.
-3. 대표/추가/상세 이미지는 src 또는 data-src 속성을 사용하고 jpg/jpeg/png/webp 형식만 대상으로 하세요 (lazy loading 대응).
-   상세 페이지(detail_content)는 HTML이 아니라 상세 이미지 img 목록을 multiple: true로 수집하세요.
+3. 대표 이미지는 src 또는 data-src 속성을 사용하고 jpg/jpeg/png/webp 형식만 대상으로 하세요 (lazy loading 대응).
+   상세 이미지(detail_content), 추가 이미지(extra_image_urls), 옵션값(groups), 옵션가격(option_price_delta)은 자동 생성하지 마세요.
+   이 필드들은 사용자가 3단계 매핑 화면에서 직접 선택합니다.
 4. 선택자를 찾을 수 없는 필드는 해당 필드를 YAML에서 완전히 생략하세요. 빈 문자열("")을 선택자로 사용하지 마세요.
 5. YAML만 출력하세요. 코드 블록이나 설명 없이 바로 YAML.
 6. 판매 상태(supplier_status) 감지 규칙:
@@ -151,12 +139,37 @@ def _validate_yaml(yaml_text: str | dict) -> Adapter:
 def _finalize_generated_yaml(raw_response: str, mapping_hints: list[MappingHint] | None = None) -> tuple[str, Adapter]:
     raw = yaml.safe_load(_extract_yaml(raw_response))
     _strip_empty_selectors(raw)
+    _strip_auto_manual_fields(raw, mapping_hints)
     Adapter.model_validate(raw)
     apply_locked_hints_to_yaml_dict(raw, mapping_hints)
     _strip_empty_selectors(raw)
     adapter = Adapter.model_validate(raw)
     dumped = yaml.safe_dump(adapter.model_dump(mode="json", exclude_none=True), allow_unicode=True, sort_keys=False)
     return dumped, adapter
+
+
+MANUAL_ONLY_PRODUCT_FIELDS = {"detail_content", "extra_image_urls"}
+MANUAL_ONLY_OPTION_FIELDS = {"groups", "option_price_delta"}
+
+
+def _strip_auto_manual_fields(data: dict | None, mapping_hints: list[MappingHint] | None = None) -> None:
+    if not isinstance(data, dict):
+        return
+    locked_paths = {hint.field_path for hint in mapping_hints or [] if hint.locked}
+    adapter = data.get("adapter")
+    if not isinstance(adapter, dict):
+        return
+    product = adapter.get("product")
+    if isinstance(product, dict):
+        for field in MANUAL_ONLY_PRODUCT_FIELDS:
+            if f"adapter.product.{field}" not in locked_paths:
+                product.pop(field, None)
+    options = adapter.get("options")
+    if isinstance(options, dict):
+        if "adapter.options.groups.0.values_selector" not in locked_paths:
+            options.pop("groups", None)
+        if "adapter.options.option_price_delta" not in locked_paths:
+            options.pop("option_price_delta", None)
 
 
 def _strip_empty_selectors(data: dict | None) -> None:

@@ -134,6 +134,22 @@ def test_products_and_options_row_counts(tmp_path: Path) -> None:
     assert option_rows == 2
 
 
+def test_products_sheet_includes_option_value_and_price_csv(tmp_path: Path) -> None:
+    session = _setup_db(tmp_path)
+    supplier_id, _ = _add_test_data(session)
+    output = tmp_path / "export.xlsx"
+    export_to_excel(session, supplier_id, output)
+
+    from openpyxl import load_workbook
+
+    wb = load_workbook(output)
+    ws = wb["products"]
+    headers = [cell.value for cell in ws[1]]
+    row = {header: ws.cell(row=2, column=idx + 1).value for idx, header in enumerate(headers)}
+    assert row["option_values"] == "블랙,화이트"
+    assert row["option_prices"] == "12000,13000"
+
+
 def test_export_with_no_supplier_id_exports_all(tmp_path: Path) -> None:
     session = _setup_db(tmp_path)
     _add_test_data(session)

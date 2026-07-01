@@ -13,8 +13,10 @@ ALLOWED_HINT_PATHS = {
     "adapter.product.origin",
     "adapter.product.main_image_url",
     "adapter.product.detail_content",
+    "adapter.product.extra_image_urls",
     "adapter.product.supplier_status",
     "adapter.options.groups.0.values_selector",
+    "adapter.options.option_price_delta",
     "adapter.listing.product_link",
     "adapter.categories.all_products.url",
     "adapter.categories.navigation.menu_selector",
@@ -29,6 +31,7 @@ PRODUCT_DEFAULTS: dict[str, dict[str, Any]] = {
 LISTING_PRODUCT_LINK_DEFAULTS = {"attribute": "href"}
 ALL_PRODUCTS_URL_DEFAULTS = {"available": True}
 OPTION_GROUP_DEFAULTS = {"name": "옵션"}
+OPTION_PRICE_DEFAULTS = {"transform": "extract_number", "multiple": True}
 
 
 @dataclass
@@ -136,6 +139,15 @@ def apply_locked_hints_to_yaml_dict(data: dict[str, Any], hints: list[MappingHin
                 groups.append(dict(OPTION_GROUP_DEFAULTS))
             existing = groups[0] if isinstance(groups[0], dict) else {}
             groups[0] = {**OPTION_GROUP_DEFAULTS, **existing, "values_selector": hint.chosen_selector}
+            options.setdefault("detection", "dom")
+            options.setdefault("type", "combination")
+        elif hint.field_path == "adapter.options.option_price_delta":
+            options = adapter.setdefault("options", {})
+            if not isinstance(options, dict):
+                raise ValueError("adapter.options must be a dict")
+            existing_raw = options.get("option_price_delta")
+            existing = existing_raw if isinstance(existing_raw, dict) else {}
+            options["option_price_delta"] = {**OPTION_PRICE_DEFAULTS, **existing, **fields}
             options.setdefault("detection", "dom")
             options.setdefault("type", "combination")
         elif hint.field_path == "adapter.listing.product_link":

@@ -126,9 +126,29 @@ def test_mapping_rows_hide_unused_fields_and_include_option_row() -> None:
     assert "brand_name" not in keys
     assert "manufacturer" not in keys
     assert "model_name" not in keys
-    assert rows[-1]["key"] == "option_values"
-    assert rows[-1]["fieldPath"] == "adapter.options.groups.0.values_selector"
-    assert rows[-1]["selector"] == ".opt option"
+    assert rows[-2]["key"] == "option_values"
+    assert rows[-2]["fieldPath"] == "adapter.options.groups.0.values_selector"
+    assert rows[-2]["selector"] == ".opt option"
+    assert rows[-1]["key"] == "option_prices"
+
+
+def test_mapping_rows_include_option_price_row() -> None:
+    adapter = Adapter.model_validate({
+        "adapter": {
+            "name": "Shop",
+            "base_url": "https://shop.example",
+            "options": {
+                "groups": [{"name": "색상", "values_selector": ".opt"}],
+                "option_price_delta": {"selector": ".price", "multiple": True, "transform": "extract_number"},
+            },
+        }
+    })
+
+    rows = get_product_field_mappings(adapter)
+    price = rows[-1]
+    assert price["key"] == "option_prices"
+    assert price["fieldPath"] == "adapter.options.option_price_delta"
+    assert price["selector"] == ".price"
 
 
 def test_invalid_browser_channel_raises() -> None:

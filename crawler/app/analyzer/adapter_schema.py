@@ -177,6 +177,8 @@ FIELD_LABELS_KO: dict[str, str] = {
 
 OPTION_VALUES_FIELD_PATH = "adapter.options.groups.0.values_selector"
 OPTION_VALUES_ROW_KEY = "option_values"
+OPTION_PRICES_FIELD_PATH = "adapter.options.option_price_delta"
+OPTION_PRICES_ROW_KEY = "option_prices"
 
 
 def get_product_field_mappings(adapter: "Adapter") -> list[dict[str, Any]]:
@@ -236,12 +238,26 @@ def get_product_field_mappings(adapter: "Adapter") -> list[dict[str, Any]]:
     option_group = adapter.adapter.options.groups[0] if adapter.adapter.options.groups else None
     rows.append({
         "key": OPTION_VALUES_ROW_KEY,
-        "label": "옵션",
+        "label": "옵션값",
         "fieldPath": OPTION_VALUES_FIELD_PATH,
         "selector": option_group.values_selector if option_group else "",
         "attribute": "",
         "transform": "",
         "status": "ok" if option_group and option_group.values_selector.strip() else "missing",
+        "urlPattern": "",
+        "urlAllowed": False,
+        "testable": False,
+        "extraEnabled": True,
+    })
+    option_price = adapter.adapter.options.option_price_delta
+    rows.append({
+        "key": OPTION_PRICES_ROW_KEY,
+        "label": "옵션가격",
+        "fieldPath": OPTION_PRICES_FIELD_PATH,
+        "selector": option_price.selector if option_price else "",
+        "attribute": option_price.attribute if option_price and option_price.attribute else "",
+        "transform": option_price.transform if option_price else "",
+        "status": "ok" if option_price and option_price.selector.strip() else "missing",
         "urlPattern": "",
         "urlAllowed": False,
         "testable": False,

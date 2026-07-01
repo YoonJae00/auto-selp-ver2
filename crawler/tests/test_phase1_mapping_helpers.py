@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.analyzer.adapter_schema import FieldExtractor
+from app.analyzer.adapter_schema import FieldExtractor, OptionGroupConfig, OptionsConfig
 from app.analyzer.site_probe import normalize_sample_products
 from app.crawlers.yaml_adapter import YAMLAdapter, _image_csv, _map_supplier_status, _status_from_maxq_value, _supported_image_url
 
@@ -31,6 +31,8 @@ class _FakePage:
 
     async def query_selector_all(self, selector: str):
         value = self.elements.get(selector)
+        if isinstance(value, list):
+            return value
         return [value] if value else []
 
 
@@ -85,6 +87,29 @@ async def test_extract_field_uses_fallback_from_when_selector_empty() -> None:
     extractor = FieldExtractor(selector=".status", fallback_from="maxq")
 
     assert await adapter._extract_field(page, extractor) == "sold_out"
+
+
+@pytest.mark.asyncio
+async def test_extract_options_matches_option_prices_by_index() -> None:
+    adapter = YAMLAdapter.__new__(YAMLAdapter)
+    adapter.adapter = type("Adapter", (), {
+        "adapter": type("AdapterData", (), {
+            "options": OptionsConfig(
+                groups=[OptionGroupConfig(name="색상", values_selector=".option")],
+                option_price_delta=FieldExtractor(selector=".price", multiple=True, transform="extract_number"),
+            )
+        })()
+    })()
+    page = _FakePage({
+        ".option": [_FakeElement("블랙"), _FakeElement("화이트"), _FakeElement("그레이")],
+        ".price": [_FakeElement("12900"), _FakeElement("13900"), _FakeElement("14900")],
+    })
+
+    options = await adapter._extract_options(page, "P1", 12000)
+
+    assert [opt.option_value_1 for opt in options] == ["블랙", "화이트", "그레이"]
+    assert [opt.option_supply_price for opt in options] == [12900, 13900, 14900]
+    assert [opt.option_price_delta for opt in options] == [900, 1900, 2900]
 
 
 def test_normalize_sample_products_deduplicates_and_prefers_quality() -> None:

@@ -10,7 +10,12 @@ from typing import Any
 import yaml
 from PySide6.QtCore import QObject, Property, QTimer, Signal, Slot
 
-from app.analyzer.adapter_schema import FIELD_LABELS_KO, OPTION_VALUES_FIELD_PATH, get_product_field_mappings
+from app.analyzer.adapter_schema import (
+    FIELD_LABELS_KO,
+    OPTION_PRICES_FIELD_PATH,
+    OPTION_VALUES_FIELD_PATH,
+    get_product_field_mappings,
+)
 from app.analyzer.element_picker import suggest_defaults_for_field
 from app.analyzer.mapping_hints import MappingHint, apply_locked_hints_to_yaml_dict
 from app.analyzer.validation_summary import build_validation_summary, get_save_gate_decision
@@ -175,7 +180,9 @@ class AdapterStudioViewModel(BaseViewModel):
         if field_path == "adapter.categories.navigation.menu_selector":
             return "카테고리 메뉴"
         if field_path == OPTION_VALUES_FIELD_PATH:
-            return "옵션"
+            return "옵션값"
+        if field_path == OPTION_PRICES_FIELD_PATH:
+            return "옵션가격"
         key = field_path.split(".")[-1]
         return FIELD_LABELS_KO.get(key, key)
 
@@ -189,7 +196,8 @@ class AdapterStudioViewModel(BaseViewModel):
             "adapter.product.raw_product_name": "상품명 텍스트를 클릭하세요.",
             "adapter.product.supply_price": "공급가격 텍스트를 클릭하세요.",
             "adapter.product.detail_content": "상세 이미지 중 아무거나 한 장을 클릭하세요. 주변 상세 이미지를 자동으로 함께 수집합니다.",
-            OPTION_VALUES_FIELD_PATH: "옵션 값 하나를 클릭하세요. 같은 선택자에 매칭되는 값을 옵션으로 수집합니다.",
+            OPTION_VALUES_FIELD_PATH: "옵션값 하나를 클릭하세요. 같은 그룹의 값을 자동으로 함께 수집합니다.",
+            OPTION_PRICES_FIELD_PATH: "옵션가격 하나를 클릭하세요. 같은 순서의 가격들을 자동으로 함께 수집합니다.",
         }
         return hints.get(field_path, "수집할 요소를 클릭하세요.")
 

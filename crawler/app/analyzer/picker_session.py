@@ -603,6 +603,11 @@ class PickerSession:
             if detail_selector:
                 candidates = [detail_selector]
                 counts = {detail_selector: 1}
+        elif field_path in {"adapter.options.groups.0.values_selector", "adapter.options.option_price_delta"}:
+            option_selector = self._similar_option_selector(page, candidates)
+            if option_selector:
+                candidates = [option_selector]
+                counts = {option_selector: 1}
 
         return PickedElement(
             url=sanitize_value(raw.get("url"), 300),
@@ -665,6 +670,56 @@ class PickerSession:
                 if (imgCount(node) >= 2) { container = node; break; }
               }
               return imgCount(container) >= 2 ? `${selectorFor(container)} img` : selectorFor(img);
+            }
+            """,
+            candidates,
+        ) or "")
+
+    def _similar_option_selector(self, page: Page, candidates: list[str]) -> str:
+        return str(page.evaluate(
+            r"""
+            (candidates) => {
+              const cssEscape = (window.CSS && CSS.escape)
+                ? CSS.escape
+                : (s) => String(s).replace(/[^a-zA-Z0-9_-]/g, '\\$&');
+              function nthPath(el) {
+                const parts = [];
+                for (let node = el; node && node.nodeType === 1 && parts.length < 6; node = node.parentElement) {
+                  const tag = node.tagName.toLowerCase();
+                  const siblings = Array.prototype.filter.call(
+                    node.parentElement ? node.parentElement.children : [],
+                    (x) => x.tagName === node.tagName
+                  );
+                  parts.unshift(`${tag}:nth-of-type(${siblings.indexOf(node) + 1})`);
+                }
+                return parts.join(' > ');
+              }
+              function stable(el) {
+                const tag = el.tagName.toLowerCase();
+                if (el.id) return `#${cssEscape(el.id)}`;
+                const classes = Array.prototype.slice.call(el.classList || []).slice(0, 2).filter(Boolean);
+                if (classes.length) return `${tag}.${classes.map(cssEscape).join('.')}`;
+                return nthPath(el);
+              }
+              let picked = null;
+              for (const sel of candidates || []) {
+                try { picked = document.querySelector(sel); } catch (_) {}
+                if (picked) break;
+              }
+              if (!picked || !picked.tagName) return '';
+              const tag = picked.tagName.toLowerCase();
+              if (tag === 'option' && picked.parentElement) return `${stable(picked.parentElement)} option`;
+              if (tag === 'select') return `${stable(picked)} option`;
+              const cls = Array.prototype.slice.call(picked.classList || []).filter(Boolean)[0] || '';
+              if (cls) {
+                const same = `${tag}.${cssEscape(cls)}`;
+                try { if (document.querySelectorAll(same).length >= 2) return same; } catch (_) {}
+              }
+              const parent = picked.parentElement;
+              if (!parent) return stable(picked);
+              const scoped = `${stable(parent)} > ${tag}`;
+              try { if (document.querySelectorAll(scoped).length >= 2) return scoped; } catch (_) {}
+              return stable(picked);
             }
             """,
             candidates,

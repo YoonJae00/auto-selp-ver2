@@ -22,6 +22,8 @@ PRODUCT_COLUMNS = [
     "main_image_url",
     "extra_image_urls",
     "detail_content",
+    "option_values",
+    "option_prices",
     "brand_name",
     "manufacturer",
     "model_name",
@@ -62,6 +64,17 @@ def _stringify(value: object) -> str:
     return str(value)
 
 
+def _option_csv(options: list[ProductOption]) -> tuple[str, str]:
+    values: list[str] = []
+    prices: list[str] = []
+    for opt in options:
+        value = opt.option_display_name or opt.option_value_1 or ""
+        if value:
+            values.append(str(value))
+            prices.append("" if opt.option_supply_price is None else str(opt.option_supply_price))
+    return ",".join(values), ",".join(prices)
+
+
 def export_to_excel(
     session: Session,
     supplier_id: str | None,
@@ -85,6 +98,11 @@ def export_to_excel(
     option_count = 0
 
     for product in products:
+        options = session.execute(
+            select(ProductOption).where(ProductOption.product_id == product.id).order_by(ProductOption.option_position)
+        ).scalars().all()
+        option_values, option_prices = _option_csv(options)
+
         products_sheet.append([
             _stringify(product.supplier_name),
             _stringify(product.supplier_product_id),
@@ -97,14 +115,12 @@ def export_to_excel(
             _stringify(product.main_image_url),
             _stringify(product.extra_image_urls),
             _stringify(product.detail_content),
+            option_values,
+            option_prices,
             _stringify(product.brand_name),
             _stringify(product.manufacturer),
             _stringify(product.model_name),
         ])
-
-        options = session.execute(
-            select(ProductOption).where(ProductOption.product_id == product.id).order_by(ProductOption.option_position)
-        ).scalars().all()
 
         for opt in options:
             options_sheet.append([
