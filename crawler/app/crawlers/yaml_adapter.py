@@ -54,6 +54,20 @@ def _extract_signed_number(text: str | None) -> int | None:
         return None
 
 
+def _split_option_text_price(text: str | None) -> tuple[str | None, int | None]:
+    if not text:
+        return None, None
+    cleaned = re.sub(r"\s+", " ", text).strip()
+    match = re.search(r"\s*[\(\[]\s*([+-])\s*([\d,]+)\s*원?\s*[\)\]]\s*$", cleaned)
+    if not match:
+        return cleaned or None, None
+    name = cleaned[:match.start()].strip()
+    if not name:
+        return cleaned, None
+    sign = -1 if match.group(1) == "-" else 1
+    return name, sign * int(match.group(2).replace(",", ""))
+
+
 def _apply_transform(value: str | None, transform: str) -> str | int | None:
     if value is None:
         return None
@@ -520,7 +534,8 @@ class YAMLAdapter(BaseAdapter):
         for group_config in config.groups:
             values = await page.query_selector_all(group_config.values_selector)
             for index, el in enumerate(values):
-                value_text = await self._read_option_value(el, group_config)
+                raw_value_text = await self._read_option_value(el, group_config)
+                value_text, text_price_delta = _split_option_text_price(raw_value_text)
                 if not value_text:
                     continue
                 option_data = {
@@ -538,6 +553,9 @@ class YAMLAdapter(BaseAdapter):
                     price_delta_raw = await self._extract_field(page, config.option_price_delta)
                     price_delta = _extract_signed_number(str(price_delta_raw)) if isinstance(price_delta_raw, str) else price_delta_raw
                     option_supply = (base_price or 0) + (price_delta or 0) if base_price else None
+                elif text_price_delta is not None:
+                    price_delta = text_price_delta
+                    option_supply = base_price + price_delta if base_price is not None else None
                 image_url = None
                 if config.option_image_url:
                     image_url = await self._extract_field(page, config.option_image_url)
@@ -567,7 +585,7 @@ class YAMLAdapter(BaseAdapter):
                     option_main_image_url=image_url if isinstance(image_url, str) else None,
                     option_extra_image_urls=[],
                     option_position=index + 1,
-                    raw_option_text=value_text,
+                    raw_option_text=raw_value_text,
                     raw_option_metadata={"group": group_config.name, "value": value_text},
                 ))
         return options

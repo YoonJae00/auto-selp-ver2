@@ -160,10 +160,12 @@ class AdapterStudioViewModel(BaseViewModel):
     def _probe_summary_with_checks(self) -> dict:
         result = dict(self._probe_summary)
         if "categories" in result:
-            result["categories"] = [
-                {**c, "checked": c.get("url") not in self._excluded_urls}
-                for c in (result["categories"] or [])
+            kept = [
+                c for c in (result["categories"] or [])
+                if c.get("url") not in self._excluded_urls
             ]
+            result["categories"] = kept
+            result["categoryCount"] = len(kept)
         return result
 
     @Slot(str, bool)

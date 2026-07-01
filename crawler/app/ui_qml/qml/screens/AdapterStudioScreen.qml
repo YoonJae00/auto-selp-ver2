@@ -156,7 +156,28 @@ Item {
                             Layout.preferredHeight: 120
                             clip: true
                             model: root.viewModel.probeSummary.categories || []
-                            delegate: Text { required property var modelData; width: ListView.view.width; text: modelData.name || modelData.url || ""; color: Ui.Theme.text; elide: Text.ElideRight }
+                            delegate: RowLayout {
+                                required property var modelData
+                                width: ListView.view.width
+                                spacing: 6
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: modelData.name || modelData.url || ""
+                                    color: Ui.Theme.text
+                                    elide: Text.ElideRight
+                                    verticalAlignment: Text.AlignVCenter
+                                }
+                                ToolButton {
+                                    text: "✕"
+                                    flat: true
+                                    enabled: !root.viewModel.busy
+                                    onClicked: root.viewModel.setCategoryExcluded(modelData.url || modelData.name, true)
+                                    ToolTip.text: "이 카테고리를 목록에서 제거"
+                                    ToolTip.visible: hovered
+                                    ToolTip.delay: 400
+                                    Accessible.name: "카테고리 제거: " + (modelData.name || modelData.url || "")
+                                }
+                            }
                         }
                         ListView {
                             Layout.fillWidth: true; Layout.fillHeight: true; clip: true

@@ -59,6 +59,20 @@ def test_yaml_hash_uses_exact_text_including_trailing_newline() -> None:
     assert yaml_content_hash("a: 1\n") != yaml_content_hash("a: 1")
 
 
+def test_excluded_category_is_removed_from_summary_and_count(vm) -> None:
+    vm._probe_summary = {
+        "categoryCount": 2,
+        "categories": [
+            {"name": "Home", "url": "/home"},
+            {"name": "주방용품", "url": "/kitchen"},
+        ],
+    }
+    vm.setCategoryExcluded("/home", True)
+    summary = vm.probeSummary
+    assert [c["name"] for c in summary["categories"]] == ["주방용품"]
+    assert summary["categoryCount"] == 1
+
+
 def test_stage_is_bounded_to_four_stage_workflow(vm) -> None:
     vm.setCurrentStage(-10)
     assert vm.currentStage == 0

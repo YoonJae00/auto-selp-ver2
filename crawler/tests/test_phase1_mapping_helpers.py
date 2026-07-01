@@ -4,7 +4,14 @@ import pytest
 
 from app.analyzer.adapter_schema import FieldExtractor, OptionGroupConfig, OptionsConfig
 from app.analyzer.site_probe import normalize_sample_products
-from app.crawlers.yaml_adapter import YAMLAdapter, _image_csv, _map_supplier_status, _status_from_maxq_value, _supported_image_url
+from app.crawlers.yaml_adapter import (
+    YAMLAdapter,
+    _image_csv,
+    _map_supplier_status,
+    _split_option_text_price,
+    _status_from_maxq_value,
+    _supported_image_url,
+)
 
 
 class _FakeElement:
@@ -71,6 +78,15 @@ def test_image_csv_filters_and_joins_supported_images() -> None:
     assert _image_csv(["/d/no-extension"]) is None
 
 
+def test_split_option_text_price_only_reads_trailing_parenthesized_price() -> None:
+    assert _split_option_text_price("M (+5000원)") == ("M", 5000)
+    assert _split_option_text_price("L(+10,000)") == ("L", 10000)
+    assert _split_option_text_price("XL (-1,000원)") == ("XL", -1000)
+    assert _split_option_text_price("100ml (+500원)") == ("100ml", 500)
+    assert _split_option_text_price("아이폰 15") == ("아이폰 15", None)
+    assert _split_option_text_price("블랙 (추가금 없음)") == ("블랙 (추가금 없음)", None)
+
+
 @pytest.mark.asyncio
 async def test_extract_field_prefers_selector_before_fallback_from() -> None:
     adapter = YAMLAdapter.__new__(YAMLAdapter)
@@ -110,6 +126,26 @@ async def test_extract_options_matches_option_prices_by_index() -> None:
     assert [opt.option_value_1 for opt in options] == ["블랙", "화이트", "그레이"]
     assert [opt.option_supply_price for opt in options] == [12900, 13900, 14900]
     assert [opt.option_price_delta for opt in options] == [900, 1900, 2900]
+
+
+@pytest.mark.asyncio
+async def test_extract_options_splits_price_from_option_text() -> None:
+    adapter = YAMLAdapter.__new__(YAMLAdapter)
+    adapter.adapter = type("Adapter", (), {
+        "adapter": type("AdapterData", (), {
+            "options": OptionsConfig(groups=[OptionGroupConfig(name="사이즈", values_selector=".option")])
+        })()
+    })()
+    page = _FakePage({
+        ".option": [_FakeElement("M (+5000원)"), _FakeElement("L (+10,000원)"), _FakeElement("아이폰 15")],
+    })
+
+    options = await adapter._extract_options(page, "P1", 12000)
+
+    assert [opt.option_value_1 for opt in options] == ["M", "L", "아이폰 15"]
+    assert [opt.option_price_delta for opt in options] == [5000, 10000, None]
+    assert [opt.option_supply_price for opt in options] == [17000, 22000, None]
+    assert [opt.raw_option_text for opt in options] == ["M (+5000원)", "L (+10,000원)", "아이폰 15"]
 
 
 def test_normalize_sample_products_deduplicates_and_prefers_quality() -> None:
