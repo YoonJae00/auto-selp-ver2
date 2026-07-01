@@ -11,6 +11,7 @@ from app.analyzer.adapter_schema import (
     CategoriesConfig,
     FieldExtractor,
     OptionsConfig,
+    extract_url_value,
 )
 from app.credentials.store import load_supplier_credentials
 from app.crawlers.base import BaseAdapter, CategoryEntry, CrawlResult, StockSnapshotData
@@ -473,12 +474,7 @@ class YAMLAdapter(BaseAdapter):
 
     async def _extract_field_fallback_from(self, page, extractor: FieldExtractor) -> str | None:
         if extractor.fallback_from == "url":
-            if extractor.url_pattern:
-                import re
-                url = page.url
-                m = re.search(extractor.url_pattern, url)
-                return m.group(1) if m and m.lastindex else None
-            return None
+            return extract_url_value(page.url, extractor)
 
         if extractor.fallback_from == "maxq":
             maxq = await page.query_selector("input[name='maxq']")

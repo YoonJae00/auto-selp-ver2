@@ -42,7 +42,7 @@ from app.workers.lifecycle import stop_workers
 
 MAPPING_ROLES = (
     "key", "label", "fieldPath", "selector", "attribute", "transform", "status",
-    "testValue", "testOk", "urlPattern", "urlAllowed", "testable", "extraEnabled",
+    "testValue", "testOk", "urlPattern", "urlParam", "urlAllowed", "testable", "extraEnabled",
 )
 def yaml_content_hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
@@ -723,7 +723,7 @@ class AdapterStudioViewModel(BaseViewModel):
 
     @Slot(str, str)
     def setFieldUrlPattern(self, field_key: str, pattern: str) -> None:
-        """Set or clear url_pattern for a product field and update YAML."""
+        """Set or clear url_pattern (advanced regex) for a product field and update YAML."""
         try:
             raw = yaml.safe_load(self._yaml_text)
             product = raw.get("adapter", {}).get("product", {})
@@ -737,11 +737,46 @@ class AdapterStudioViewModel(BaseViewModel):
                 field.pop("selector", None)
             else:
                 field.pop("url_pattern", None)
-                if field.get("fallback_from") == "url":
+                if field.get("fallback_from") == "url" and not field.get("url_param"):
                     field["fallback_from"] = "none"
             self.setYamlText(yaml.safe_dump(raw, allow_unicode=True, sort_keys=False))
         except Exception as exc:
             self.set_field_errors({"yamlText": f"YAML 오류: {exc}"})
+
+    @Slot(str, str)
+    def setFieldUrlParam(self, field_key: str, param_name: str) -> None:
+        """Set or clear url_param (query-parameter name) for a product field and update YAML."""
+        try:
+            raw = yaml.safe_load(self._yaml_text)
+            product = raw.get("adapter", {}).get("product", {})
+            field = product.get(field_key)
+            if field is None:
+                field = {}
+                product[field_key] = field
+            if param_name:
+                field["url_param"] = param_name
+                field["fallback_from"] = "url"
+                field.pop("selector", None)
+                field.pop("url_pattern", None)
+            else:
+                field.pop("url_param", None)
+                if field.get("fallback_from") == "url" and not field.get("url_pattern"):
+                    field["fallback_from"] = "none"
+            self.setYamlText(yaml.safe_dump(raw, allow_unicode=True, sort_keys=False))
+        except Exception as exc:
+            self.set_field_errors({"yamlText": f"YAML 오류: {exc}"})
+
+    @Slot(result="QVariantList")
+    def urlParamOptions(self) -> list[dict[str, str]]:
+        """샘플 상품 URL의 쿼리 파라미터를 [{name, value, display}, ...]로 반환. 없으면 빈 리스트."""
+        from urllib.parse import parse_qsl, urlparse
+        target = self._picker_target_url()
+        if not target:
+            return []
+        options: list[dict[str, str]] = []
+        for name, value in parse_qsl(urlparse(target).query):
+            options.append({"name": name, "value": value, "display": f"{name} = {value}"})
+        return options
 
     @Slot(bool)
     def setExtraImagesEnabled(self, enabled: bool) -> None:

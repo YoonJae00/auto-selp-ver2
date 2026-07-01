@@ -24,13 +24,14 @@ ListView {
         required property bool testOk
         required property int index
         required property string urlPattern
+        required property string urlParam
         required property bool urlAllowed
         required property bool testable
         required property bool extraEnabled
         objectName: "mappingRow-" + index
         readonly property var vm: ListView.view.viewModel
         readonly property real contentImplicitHeight: content.implicitHeight
-        property bool urlMode: urlPattern !== ""
+        property bool urlMode: urlPattern !== "" || urlParam !== ""
         function publishGeometry() {
             if (index === 0) {
                 root.firstRowHeight = height
@@ -78,7 +79,7 @@ ListView {
                 }
                 Text {
                     Layout.fillWidth: true
-                    text: mappingRow.urlMode ? ("URL: " + (mappingRow.urlPattern || "패턴 없음")) : (mappingRow.testValue || mappingRow.selector || "선택자 없음")
+                    text: mappingRow.urlMode ? ("URL: " + (mappingRow.urlParam ? ("파라미터 " + mappingRow.urlParam) : (mappingRow.urlPattern || "미설정"))) : (mappingRow.testValue || mappingRow.selector || "선택자 없음")
                     color: mappingRow.urlMode ? Ui.Theme.accent : (mappingRow.testValue ? (mappingRow.testOk ? Ui.Theme.success : Ui.Theme.danger) : Ui.Theme.textMuted)
                     elide: Text.ElideRight
                     font.family: "monospace"
@@ -100,6 +101,7 @@ ListView {
                     onClicked: {
                         if (mappingRow.urlMode) {
                             mappingRow.urlMode = false
+                            mappingRow.vm.setFieldUrlParam(mappingRow.key, "")
                             mappingRow.vm.setFieldUrlPattern(mappingRow.key, "")
                         } else {
                             mappingRow.urlMode = true
@@ -114,14 +116,52 @@ ListView {
                     onClicked: mappingRow.vm.testSingle(mappingRow.key)
                 }
             }
-            TextField {
+            ColumnLayout {
+                id: urlArea
                 visible: mappingRow.urlMode
                 Layout.fillWidth: true
-                placeholderText: "정규식 예: goodsno=(\\d+)"
-                text: mappingRow.urlPattern
-                font.family: "monospace"
-                font.pixelSize: 11
-                onEditingFinished: mappingRow.vm.setFieldUrlPattern(mappingRow.key, text)
+                spacing: 4
+                property var urlOptions: mappingRow.urlMode ? mappingRow.vm.urlParamOptions() : []
+                property bool advancedOpen: mappingRow.urlPattern !== ""
+
+                Text {
+                    Layout.fillWidth: true
+                    visible: urlArea.urlOptions.length === 0
+                    text: "이 URL에 파라미터가 없습니다 — 아래 '직접 입력(고급)'을 사용하세요."
+                    color: Ui.Theme.textMuted
+                    wrapMode: Text.WordWrap
+                    font.pixelSize: 11
+                }
+                ComboBox {
+                    visible: urlArea.urlOptions.length > 0
+                    Layout.fillWidth: true
+                    model: urlArea.urlOptions
+                    textRole: "display"
+                    font.pixelSize: 11
+                    currentIndex: {
+                        for (var i = 0; i < urlArea.urlOptions.length; i++)
+                            if (urlArea.urlOptions[i].name === mappingRow.urlParam)
+                                return i
+                        return -1
+                    }
+                    displayText: currentIndex < 0 ? "상품코드에 해당하는 파라미터를 선택하세요" : currentText
+                    onActivated: mappingRow.vm.setFieldUrlParam(mappingRow.key, urlArea.urlOptions[currentIndex].name)
+                }
+                AppButton {
+                    size: "compact"
+                    text: urlArea.advancedOpen ? "직접 입력 닫기" : "직접 입력(고급)"
+                    ToolTip.text: "상품코드가 경로(예: /product/12345)에 있을 때 정규식으로 직접 입력"
+                    onClicked: urlArea.advancedOpen = !urlArea.advancedOpen
+                }
+                TextField {
+                    visible: urlArea.advancedOpen
+                    Layout.fillWidth: true
+                    placeholderText: "정규식 예: goodsno=(\\d+)"
+                    text: mappingRow.urlPattern
+                    font.family: "monospace"
+                    font.pixelSize: 11
+                    onEditingFinished: mappingRow.vm.setFieldUrlPattern(mappingRow.key, text)
+                }
             }
         }
     }

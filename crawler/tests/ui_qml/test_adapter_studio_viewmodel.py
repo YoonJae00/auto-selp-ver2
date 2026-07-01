@@ -104,6 +104,31 @@ def test_extra_images_toggle_updates_yaml(vm) -> None:
     assert "extra_image_urls:" not in vm.yamlText
 
 
+def test_set_url_param_writes_yaml_and_drops_selector(vm) -> None:
+    vm.acceptGeneratedYaml(VALID_YAML)
+
+    vm.setFieldUrlParam("supplier_product_code", "goodsno")
+    import yaml as _yaml
+    field = _yaml.safe_load(vm.yamlText)["adapter"]["product"]["supplier_product_code"]
+    assert field["url_param"] == "goodsno"
+    assert field["fallback_from"] == "url"
+    assert "selector" not in field
+
+    vm.setFieldUrlParam("supplier_product_code", "")
+    field = _yaml.safe_load(vm.yamlText)["adapter"]["product"]["supplier_product_code"]
+    assert "url_param" not in field
+    assert field["fallback_from"] == "none"
+
+
+def test_url_param_options_parses_sample_url(vm) -> None:
+    vm.setDetailUrl("https://shop.example/goods/view?goodsno=12345&cate=001")
+    options = vm.urlParamOptions()
+    names = [o["name"] for o in options]
+    assert names == ["goodsno", "cate"]
+    assert options[0]["value"] == "12345"
+    assert options[0]["display"] == "goodsno = 12345"
+
+
 def test_editing_validated_yaml_makes_validation_stale(vm) -> None:
     vm.acceptGeneratedYaml(VALID_YAML)
     tested_hash = vm.beginValidation()
@@ -627,7 +652,7 @@ def test_mapping_rows_never_clip_at_wide_or_narrow_width(qt_app) -> None:
         b'''import QtQuick\nimport QtQuick.Window\nimport QtQml.Models\nimport "components" as Components\n'''
         b'''Window { visible: true; width: 900; height: 300; QtObject { id: vm; property bool busy: false; function pickElement(x) {} function testSingle(x) {} }\n'''
         b'''Components.MappingTable { objectName: "mapping"; anchors.fill: parent; viewModel: vm;\n'''
-        b'''model: ListModel { ListElement { key: "raw_product_name"; label: "Product"; fieldPath: "adapter.product.raw_product_name"; selector: ".very-long-selector"; attribute: ""; transform: ""; status: "ok"; testValue: ""; testOk: false; urlPattern: ""; urlAllowed: false; testable: true; extraEnabled: true } } } }''',
+        b'''model: ListModel { ListElement { key: "raw_product_name"; label: "Product"; fieldPath: "adapter.product.raw_product_name"; selector: ".very-long-selector"; attribute: ""; transform: ""; status: "ok"; testValue: ""; testOk: false; urlPattern: ""; urlParam: ""; urlAllowed: false; testable: true; extraEnabled: true } } } }''',
         QUrl.fromLocalFile(str(QML_DIRECTORY / "MappingGeometryProbe.qml")),
     )
     probe = component.create()

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import re
 from typing import Any, Literal
+from urllib.parse import parse_qs, urlparse
 
 from pydantic import BaseModel, Field
 
@@ -82,7 +84,18 @@ class FieldExtractor(BaseModel):
     optional: bool = False
     fallback: str | None = None
     fallback_from: Literal["url", "cart_button", "maxq", "none"] = "none"
+    url_param: str | None = None  # 쿼리 파라미터 이름. fallback_from="url"일 때 url_pattern보다 우선
     url_pattern: str | None = None  # regex; group 1이 추출값. fallback_from="url"일 때 사용
+
+
+def extract_url_value(url: str, extractor: "FieldExtractor") -> str | None:
+    """fallback_from="url"일 때 URL에서 값 추출. url_param(쿼리 파라미터) 우선, 없으면 url_pattern(정규식)."""
+    if extractor.url_param:
+        return parse_qs(urlparse(url).query).get(extractor.url_param, [None])[0]
+    if extractor.url_pattern:
+        m = re.search(extractor.url_pattern, url)
+        return m.group(1) if m and m.lastindex else None
+    return None
 
 
 class StatusMapping(BaseModel):
@@ -203,17 +216,18 @@ def get_product_field_mappings(adapter: "Adapter") -> list[dict[str, Any]]:
             rows.append({
                 **base,
                 "selector": "", "attribute": "", "transform": "",
-                "status": "missing", "urlPattern": "",
+                "status": "missing", "urlPattern": "", "urlParam": "",
             })
-        elif not extractor.selector.strip() and not extractor.url_pattern:
+        elif not extractor.selector.strip() and not extractor.url_pattern and not extractor.url_param:
             rows.append({
                 **base,
                 "selector": "", "attribute": "", "transform": "",
-                "status": "empty", "urlPattern": "",
+                "status": "empty", "urlPattern": "", "urlParam": "",
             })
         else:
             url_pat = extractor.url_pattern or ""
-            if url_pat:
+            url_param = extractor.url_param or ""
+            if url_param or url_pat:
                 desc = ""
                 status = "ok"
             else:
@@ -233,7 +247,7 @@ def get_product_field_mappings(adapter: "Adapter") -> list[dict[str, Any]]:
                 **base,
                 "selector": desc, "attribute": extractor.attribute or "",
                 "transform": extractor.transform or "",
-                "status": status, "urlPattern": url_pat,
+                "status": status, "urlPattern": url_pat, "urlParam": url_param,
             })
     option_group = adapter.adapter.options.groups[0] if adapter.adapter.options.groups else None
     rows.append({
@@ -244,7 +258,7 @@ def get_product_field_mappings(adapter: "Adapter") -> list[dict[str, Any]]:
         "attribute": "",
         "transform": "",
         "status": "ok" if option_group and option_group.values_selector.strip() else "missing",
-        "urlPattern": "",
+        "urlPattern": "", "urlParam": "",
         "urlAllowed": False,
         "testable": False,
         "extraEnabled": True,
@@ -258,7 +272,7 @@ def get_product_field_mappings(adapter: "Adapter") -> list[dict[str, Any]]:
         "attribute": option_price.attribute if option_price and option_price.attribute else "",
         "transform": option_price.transform if option_price else "",
         "status": "ok" if option_price and option_price.selector.strip() else "missing",
-        "urlPattern": "",
+        "urlPattern": "", "urlParam": "",
         "urlAllowed": False,
         "testable": False,
         "extraEnabled": True,

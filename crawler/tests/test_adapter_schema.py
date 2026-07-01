@@ -11,6 +11,7 @@ from app.analyzer.adapter_schema import (
     NavigationConfig,
     OptionsConfig,
     ProductConfig,
+    extract_url_value,
     get_product_field_mappings,
 )
 
@@ -149,6 +150,33 @@ def test_mapping_rows_include_option_price_row() -> None:
     assert price["key"] == "option_prices"
     assert price["fieldPath"] == "adapter.options.option_price_delta"
     assert price["selector"] == ".price"
+
+
+def test_mapping_row_url_param_marks_ok() -> None:
+    adapter = Adapter.model_validate({
+        "adapter": {
+            "name": "Shop",
+            "base_url": "https://shop.example",
+            "product": {
+                "supplier_product_code": {"fallback_from": "url", "url_param": "goodsno"},
+            },
+        }
+    })
+    row = next(r for r in get_product_field_mappings(adapter) if r["key"] == "supplier_product_code")
+    assert row["status"] == "ok"
+    assert row["urlParam"] == "goodsno"
+
+
+def test_extract_url_value_prefers_query_param() -> None:
+    url = "https://shop.example/goods/view?goodsno=12345&cate=001"
+    assert extract_url_value(url, FieldExtractor(url_param="goodsno")) == "12345"
+    assert extract_url_value(url, FieldExtractor(url_param="cate")) == "001"
+    # missing param -> None
+    assert extract_url_value(url, FieldExtractor(url_param="nope")) is None
+    # regex fallback still works when no url_param
+    assert extract_url_value(url, FieldExtractor(url_pattern=r"goodsno=(\d+)")) == "12345"
+    # url_param wins over url_pattern
+    assert extract_url_value(url, FieldExtractor(url_param="cate", url_pattern=r"goodsno=(\d+)")) == "001"
 
 
 def test_invalid_browser_channel_raises() -> None:

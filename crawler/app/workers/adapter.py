@@ -10,6 +10,7 @@ from typing import Any, Coroutine
 from PySide6.QtCore import QObject, QThread, Signal, Slot
 
 from app.analyzer.adapter_generator import generate_adapter_yaml
+from app.analyzer.adapter_schema import extract_url_value
 from app.analyzer.picker_session import PickerSession
 from app.analyzer.site_probe import probe_site
 from app.crawlers.yaml_adapter import _status_from_maxq_value
@@ -779,6 +780,8 @@ class AdapterTestWorker(_AsyncWorker):
         return await element.inner_text()
 
     async def _extract_test_fallback_from(self, page, extractor) -> str | None:
+        if extractor.fallback_from == "url":
+            return extract_url_value(page.url, extractor)
         if extractor.fallback_from == "maxq":
             maxq = await page.query_selector("input[name='maxq']")
             return _status_from_maxq_value(await maxq.get_attribute("value")) if maxq else None
