@@ -1,0 +1,3 @@
+# Gitignored files copied into new worktrees so the project runs.
+.env
+crawler/adapters_data/*.yaml
