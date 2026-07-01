@@ -61,15 +61,15 @@ class OpenAIClient(LLMClient):
     async def generate(self, system_prompt: str, user_prompt: str) -> str:
         from openai import AsyncOpenAI
 
-        client = AsyncOpenAI(api_key=self.api_key, max_retries=3, timeout=60.0)
         try:
-            response = await client.chat.completions.create(
-                model="gpt-5.4-mini",
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-            )
+            async with AsyncOpenAI(api_key=self.api_key, max_retries=3, timeout=60.0) as client:
+                response = await client.chat.completions.create(
+                    model="gpt-5.4-mini",
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                )
             return response.choices[0].message.content or ""
         except _OpenAIRateLimitError:
             raise QuotaExceededError(

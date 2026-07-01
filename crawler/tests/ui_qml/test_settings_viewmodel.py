@@ -49,7 +49,7 @@ def test_empty_secret_preserves_existing_key_on_save(qt_app) -> None:
     deleted: list[str] = []
     vm = make_settings_vm(keys={"gemini": "existing-secret"}, saved=saved, deleted=deleted)
 
-    assert vm.save("openai", "chrome", 3, False, True, "", "") is True
+    assert vm.save("openai", "chrome", 3, False, True, False, "", "") is True
 
     assert saved[-1].llm_provider == "openai"
     assert vm._key_loader("gemini") == "existing-secret"
@@ -88,5 +88,5 @@ def test_secret_save_failure_does_not_echo_submitted_key(qt_app) -> None:
         key_deleter=lambda _provider: None,
     )
 
-    assert vm.save("gemini", "msedge", 0, True, True, "TOPSECRET", "") is False
+    assert vm.save("gemini", "msedge", 0, True, True, False, "TOPSECRET", "") is False
     assert "TOPSECRET" not in repr(vm.fieldErrors)

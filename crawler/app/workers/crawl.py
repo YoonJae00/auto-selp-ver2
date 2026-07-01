@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Callable
@@ -12,7 +13,10 @@ from app.crawlers.registry import adapter_exists, load_adapter
 from app.crawlers.yaml_adapter import YAMLAdapter
 from app.db.models import CrawlRun, Product, ProductOption
 from app.db.session import get_session
-from app.diagnostics import sanitize_diagnostic
+from app.diagnostics import log_exception, sanitize_diagnostic
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -92,14 +96,21 @@ class CategoryDiscoveryWorker(_AsyncThread):
         try:
             self._execute(self._discover())
         except asyncio.CancelledError:
+            logger.info("category discovery cancelled supplier=%s", self.request.supplier_name)
             self.cancelled.emit()
         except Exception as exc:
+            log_exception(logger, f"category discovery failed supplier={self.request.supplier_name}", exc)
             self.error.emit(str(exc))
 
     async def _discover(self) -> None:
         engine = None
         categories = None
         try:
+            logger.info(
+                "category discovery started supplier=%s adapter=%s",
+                self.request.supplier_name,
+                self.request.adapter_file,
+            )
             if not self._adapter_checker(self.request.adapter_file):
                 raise FileNotFoundError(f"어댑터 파일이 없습니다: {self.request.adapter_file}")
             model = self._adapter_loader(self.request.adapter_file)
@@ -114,6 +125,11 @@ class CategoryDiscoveryWorker(_AsyncThread):
             if engine is not None:
                 await engine.close()
         if not self.isInterruptionRequested() and categories is not None:
+            logger.info(
+                "category discovery completed supplier=%s categories=%d",
+                self.request.supplier_name,
+                len(categories),
+            )
             self.categories_found.emit(categories)
             self.finished.emit(categories)
 
@@ -147,8 +163,10 @@ class CrawlWorker(_AsyncThread):
         try:
             self._execute(self._crawl())
         except asyncio.CancelledError:
+            logger.info("crawl cancelled supplier=%s products=%d options=%d", self.request.supplier_name, *self._counts)
             self.cancelled.emit(*self._counts)
         except Exception as exc:
+            log_exception(logger, f"crawl failed supplier={self.request.supplier_name}", exc)
             self.error.emit(str(exc))
 
     async def _crawl(self) -> None:
@@ -158,6 +176,14 @@ class CrawlWorker(_AsyncThread):
         products = options = 0
         engine = None
         try:
+            logger.info(
+                "crawl started supplier=%s adapter=%s categories=%d max_pages=%d delay=%d",
+                request.supplier_name,
+                request.adapter_file,
+                len(request.categories),
+                request.max_pages,
+                request.delay_seconds,
+            )
             run = CrawlRun(
                 supplier_id=request.supplier_id, run_type="full", status="running",
                 started_at=datetime.now(timezone.utc),
@@ -175,8 +201,10 @@ class CrawlWorker(_AsyncThread):
                 delay_seconds=request.delay_seconds, supplier_slug=request.credential_key,
             )
             if model.adapter.login.required:
+                logger.info("crawl login required supplier=%s", request.supplier_name)
                 self.progress.emit("도매처 로그인 중...")
             for category_id, category_path in request.categories:
+                logger.info("crawl category started supplier=%s category=%s", request.supplier_name, category_path)
                 self.progress.emit(f"[카테고리] {category_path}")
                 async for result in adapter.crawl_category(category_id, request.max_pages):
                     products += 1
@@ -194,9 +222,11 @@ class CrawlWorker(_AsyncThread):
                     self._persist_result(session, run.id, result)
                     if products % 5 == 0:
                         session.commit()
+                logger.info("crawl category completed supplier=%s category=%s products=%d", request.supplier_name, category_path, products)
             await engine.close()
             engine = None
             self._finish_run(session, run, "completed", products, options)
+            logger.info("crawl completed supplier=%s products=%d options=%d", request.supplier_name, products, options)
             self.finished.emit(products, options)
         except asyncio.CancelledError:
             try:
@@ -214,6 +244,7 @@ class CrawlWorker(_AsyncThread):
             raise
         except Exception as exc:
             safe = sanitize_diagnostic(exc)
+            log_exception(logger, f"crawl exception supplier={request.supplier_name}", exc)
             if engine is not None:
                 try:
                     await engine.close()

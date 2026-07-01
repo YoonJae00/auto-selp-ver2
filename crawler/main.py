@@ -27,8 +27,10 @@ def main() -> None:
     from PySide6.QtGui import QGuiApplication
 
     from app.db.session import init_db
+    from app.diagnostics import configure_logging
     from app.ui_qml.application import create_engine
 
+    configure_logging()
     init_db()
     app = QGuiApplication(sys.argv)
     app.setApplicationName("Auto-Selp Crawler")

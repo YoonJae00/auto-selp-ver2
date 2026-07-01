@@ -117,6 +117,13 @@ Item {
                     checked: root.viewModel.autoFallbackEnabled
                     Accessible.name: text
                 }
+                CheckBox {
+                    id: pickerAiCheck
+                    objectName: "settingsPickerAiCheck"
+                    text: "요소 선택 AI 검증 (토큰 비용 발생)"
+                    checked: root.viewModel.pickerAiValidation
+                    Accessible.name: text
+                }
             }
 
             InlineBanner {
@@ -140,6 +147,7 @@ Item {
                             delaySpin.value,
                             updateCheck.checked,
                             fallbackCheck.checked,
+                            pickerAiCheck.checked,
                             geminiKey.text,
                             openaiKey.text
                         )) {
