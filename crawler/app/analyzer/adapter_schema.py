@@ -118,6 +118,14 @@ class AjaxOptionConfig(BaseModel):
     response_path: str | None = None
 
 
+class OptionTextParserConfig(BaseModel):
+    enabled: bool = False
+    pattern: str = ""
+    price_kind: Literal["delta", "supply"] = "delta"
+    confidence: Literal["high", "medium", "low"] = "low"
+    examples: list[str] = Field(default_factory=list)
+
+
 class OptionGroupConfig(BaseModel):
     name: str
     group_label_selector: str | None = None
@@ -135,6 +143,7 @@ class OptionsConfig(BaseModel):
     option_price_delta: FieldExtractor | None = None
     option_stock_quantity: FieldExtractor | None = None
     ajax_option: AjaxOptionConfig = Field(default_factory=AjaxOptionConfig)
+    option_text_parser: OptionTextParserConfig = Field(default_factory=OptionTextParserConfig)
 
 
 class ProductConfig(BaseModel):
@@ -218,7 +227,12 @@ def get_product_field_mappings(adapter: "Adapter") -> list[dict[str, Any]]:
                 "selector": "", "attribute": "", "transform": "",
                 "status": "missing", "urlPattern": "", "urlParam": "",
             })
-        elif not extractor.selector.strip() and not extractor.url_pattern and not extractor.url_param:
+        elif (
+            not extractor.selector.strip()
+            and not extractor.url_pattern
+            and not extractor.url_param
+            and extractor.fallback_from in (None, "", "none")
+        ):
             rows.append({
                 **base,
                 "selector": "", "attribute": "", "transform": "",
@@ -229,6 +243,9 @@ def get_product_field_mappings(adapter: "Adapter") -> list[dict[str, Any]]:
             url_param = extractor.url_param or ""
             if url_param or url_pat:
                 desc = ""
+                status = "ok"
+            elif extractor.fallback_from not in (None, "", "none") and not extractor.selector.strip():
+                desc = f"자동 판정: {extractor.fallback_from}"
                 status = "ok"
             else:
                 desc = extractor.selector
@@ -260,21 +277,22 @@ def get_product_field_mappings(adapter: "Adapter") -> list[dict[str, Any]]:
         "status": "ok" if option_group and option_group.values_selector.strip() else "missing",
         "urlPattern": "", "urlParam": "",
         "urlAllowed": False,
-        "testable": False,
+        "testable": True,
         "extraEnabled": True,
     })
     option_price = adapter.adapter.options.option_price_delta
+    option_text_parser = adapter.adapter.options.option_text_parser
     rows.append({
         "key": OPTION_PRICES_ROW_KEY,
         "label": "옵션가격",
         "fieldPath": OPTION_PRICES_FIELD_PATH,
-        "selector": option_price.selector if option_price else "",
+        "selector": option_price.selector if option_price else ("AI 옵션 파서" if option_text_parser.enabled else ""),
         "attribute": option_price.attribute if option_price and option_price.attribute else "",
         "transform": option_price.transform if option_price else "",
-        "status": "ok" if option_price and option_price.selector.strip() else "missing",
+        "status": "ok" if (option_price and option_price.selector.strip()) or option_text_parser.enabled else "missing",
         "urlPattern": "", "urlParam": "",
         "urlAllowed": False,
-        "testable": False,
+        "testable": True,
         "extraEnabled": True,
     })
     return rows

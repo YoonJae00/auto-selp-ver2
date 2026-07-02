@@ -2,16 +2,20 @@ from __future__ import annotations
 
 import pytest
 
-from app.analyzer.adapter_schema import FieldExtractor, OptionGroupConfig, OptionsConfig
+from app.analyzer.adapter_schema import FieldExtractor, OptionGroupConfig, OptionsConfig, get_product_field_mappings
 from app.analyzer.site_probe import normalize_sample_products
 from app.crawlers.yaml_adapter import (
     YAMLAdapter,
     _image_csv,
+    _image_values,
     _map_supplier_status,
     _split_option_text_price,
     _status_from_maxq_value,
     _supported_image_url,
+    _without_images,
 )
+from app.analyzer.option_text_parser import parse_option_text
+from app.workers.adapter import AdapterTestWorker, _status_suggestion_from_snapshots
 
 
 class _FakeElement:
@@ -63,28 +67,119 @@ def test_canonical_status_passes_through_before_mapping_or_default() -> None:
     assert _map_supplier_status(" stopped ", {}, "available") == "stopped"
 
 
+def test_status_mapping_allows_keyword_inside_image_src() -> None:
+    assert _map_supplier_status("/images/btn_soldout.gif", {"soldout": "sold_out"}, "available") == "sold_out"
+
+
 def test_supported_image_url_allows_selected_formats_with_query() -> None:
     assert _supported_image_url("https://img.test/a.JPG?x=1") == "https://img.test/a.JPG?x=1"
     assert _supported_image_url("/img/a.jpeg#v") == "/img/a.jpeg#v"
     assert _supported_image_url("/img/a.png") == "/img/a.png"
     assert _supported_image_url("/img/a.webp") == "/img/a.webp"
-    assert _supported_image_url("/img/a.gif") == "/img/a.gif"  # gif now accepted
+    assert _supported_image_url("/img/a.gif") is None  # gif excluded (banners/spacers)
     assert _supported_image_url("/img/no-extension") == "/img/no-extension"  # CDN/resizer now accepted
 
 
 def test_image_csv_filters_and_joins_supported_images() -> None:
-    assert _image_csv(["/d/1.jpg", "/d/2.webp?x=1", "/d/3.gif", None]) == "/d/1.jpg,/d/2.webp?x=1,/d/3.gif"
+    assert _image_csv(["/d/1.jpg", "/d/2.webp?x=1", "/d/3.gif", None]) == "/d/1.jpg,/d/2.webp?x=1"
     assert _image_csv("/d/one.png") == "/d/one.png"
     assert _image_csv(["/d/no-extension"]) == "/d/no-extension"
 
 
-def test_split_option_text_price_only_reads_trailing_parenthesized_price() -> None:
+def test_without_images_removes_main_image_with_relative_or_absolute_url() -> None:
+    images = _image_values(["/img/main.jpg", "https://shop.test/img/detail.jpg", "/img/banner.gif"])
+
+    assert _without_images(images, "https://shop.test/img/main.jpg", "https://shop.test/p/1") == [
+        "https://shop.test/img/detail.jpg"
+    ]
+
+
+def test_split_option_text_price_legacy_fallback_reads_trailing_signed_price() -> None:
     assert _split_option_text_price("M (+5000원)") == ("M", 5000)
     assert _split_option_text_price("L(+10,000)") == ("L", 10000)
     assert _split_option_text_price("XL (-1,000원)") == ("XL", -1000)
     assert _split_option_text_price("100ml (+500원)") == ("100ml", 500)
+    assert _split_option_text_price("브라운 + 0원") == ("브라운", 0)
+    assert _split_option_text_price("아이보리 + 1000원") == ("아이보리", 1000)
+    assert _split_option_text_price("블랙 - 500원") == ("블랙", -500)
     assert _split_option_text_price("아이폰 15") == ("아이폰 15", None)
     assert _split_option_text_price("블랙 (추가금 없음)") == ("블랙 (추가금 없음)", None)
+
+
+def test_option_text_parser_reads_delta_rule() -> None:
+    parser = {
+        "enabled": True,
+        "pattern": r"^(?P<value>.*?)\s*\((?P<sign>[+-])(?P<price>[\d,]+)원?\)$",
+        "price_kind": "delta",
+        "confidence": "high",
+    }
+
+    parsed = parse_option_text("M (+5000원)", parser, 12000)
+
+    assert parsed.value == "M"
+    assert parsed.price_delta == 5000
+    assert parsed.supply_price == 17000
+
+
+def test_option_text_parser_reads_supply_rule() -> None:
+    parser = {
+        "enabled": True,
+        "pattern": r"^(?P<value>.*?)\s*/\s*(?P<price>[\d,]+)원?$",
+        "price_kind": "supply",
+        "confidence": "medium",
+    }
+
+    parsed = parse_option_text("블랙 / 13,900원", parser, 12000)
+
+    assert parsed.value == "블랙"
+    assert parsed.supply_price == 13900
+    assert parsed.price_delta == 1900
+
+
+def test_option_text_parser_low_confidence_falls_back_to_legacy() -> None:
+    parser = {
+        "enabled": True,
+        "pattern": r"^(?P<value>.*?) / (?P<price>\d+)$",
+        "price_kind": "supply",
+        "confidence": "low",
+    }
+
+    parsed = parse_option_text("M (+5000원)", parser, 12000)
+
+    assert parsed.value == "M"
+    assert parsed.price_delta == 5000
+    assert parsed.supply_price == 17000
+
+
+def test_mapping_rows_mark_option_price_ok_when_option_text_parser_enabled() -> None:
+    adapter = type("Adapter", (), {
+        "adapter": type("AdapterData", (), {
+            "product": type("Product", (), {
+                "supplier_product_code": None,
+                "raw_product_name": None,
+                "supplier_status": None,
+                "supply_price": None,
+                "origin": None,
+                "main_image_url": None,
+                "detail_content": None,
+                "extra_image_urls": None,
+            })(),
+            "options": OptionsConfig(
+                groups=[OptionGroupConfig(name="색상", values_selector=".option")],
+                option_text_parser={
+                    "enabled": True,
+                    "pattern": r"^(?P<value>.*?) / (?P<price>[\d,]+)원?$",
+                    "price_kind": "supply",
+                    "confidence": "high",
+                },
+            )
+        })()
+    })()
+
+    price_row = next(row for row in get_product_field_mappings(adapter) if row["key"] == "option_prices")
+
+    assert price_row["status"] == "ok"
+    assert price_row["selector"] == "AI 옵션 파서"
 
 
 @pytest.mark.asyncio
@@ -148,6 +243,73 @@ async def test_extract_options_splits_price_from_option_text() -> None:
     assert [opt.raw_option_text for opt in options] == ["M (+5000원)", "L (+10,000원)", "아이폰 15"]
 
 
+@pytest.mark.asyncio
+async def test_extract_options_uses_configured_option_text_parser() -> None:
+    adapter = YAMLAdapter.__new__(YAMLAdapter)
+    adapter.adapter = type("Adapter", (), {
+        "adapter": type("AdapterData", (), {
+            "options": OptionsConfig(
+                groups=[OptionGroupConfig(name="색상", values_selector=".option")],
+                option_text_parser={
+                    "enabled": True,
+                    "pattern": r"^(?P<value>.*?)\s*/\s*(?P<price>[\d,]+)원?$",
+                    "price_kind": "supply",
+                    "confidence": "high",
+                },
+            )
+        })()
+    })()
+    page = _FakePage({
+        ".option": [_FakeElement("블랙 / 13,900원"), _FakeElement("화이트 / 14,900원")],
+    })
+
+    options = await adapter._extract_options(page, "P1", 12000)
+
+    assert [opt.option_value_1 for opt in options] == ["블랙", "화이트"]
+    assert [opt.option_supply_price for opt in options] == [13900, 14900]
+    assert [opt.option_price_delta for opt in options] == [1900, 2900]
+
+
+@pytest.mark.asyncio
+async def test_adapter_test_worker_previews_embedded_option_prices() -> None:
+    worker = AdapterTestWorker.__new__(AdapterTestWorker)
+    adapter = type("Adapter", (), {
+        "adapter": type("AdapterData", (), {
+            "options": OptionsConfig(groups=[OptionGroupConfig(name="색상", values_selector=".option")])
+        })()
+    })()
+    page = _FakePage({
+        ".option": [_FakeElement("브라운 + 0원"), _FakeElement("아이보리 + 1000원")],
+    })
+
+    assert await worker._extract_test_option(page, adapter, "option_values") == "2개 · 브라운, 아이보리"
+    assert await worker._extract_test_option(page, adapter, "option_prices") == "2개 · 0, 1000"
+
+
+@pytest.mark.asyncio
+async def test_adapter_test_worker_previews_configured_option_text_parser() -> None:
+    worker = AdapterTestWorker.__new__(AdapterTestWorker)
+    adapter = type("Adapter", (), {
+        "adapter": type("AdapterData", (), {
+            "options": OptionsConfig(
+                groups=[OptionGroupConfig(name="색상", values_selector=".option")],
+                option_text_parser={
+                    "enabled": True,
+                    "pattern": r"^(?P<value>.*?)\s*/\s*(?P<price>[\d,]+)원?$",
+                    "price_kind": "supply",
+                    "confidence": "high",
+                },
+            )
+        })()
+    })()
+    page = _FakePage({
+        ".option": [_FakeElement("블랙 / 13,900원"), _FakeElement("화이트 / 14,900원")],
+    })
+
+    assert await worker._extract_test_option(page, adapter, "option_values") == "2개 · 블랙, 화이트"
+    assert await worker._extract_test_option(page, adapter, "option_prices") == "2개 · 13900, 14900"
+
+
 def test_normalize_sample_products_deduplicates_and_prefers_quality() -> None:
     products = [
         {"url": "/p/1", "name": "", "image_url": ""},
@@ -163,3 +325,32 @@ def test_normalize_sample_products_deduplicates_and_prefers_quality() -> None:
     ]
     assert normalized[0]["name"] == "좋은상품"
     assert normalized[0]["image_url"] == "https://example.com/img.jpg"
+
+
+def test_status_snapshot_suggestion_prefers_maxq_difference() -> None:
+    suggestion = _status_suggestion_from_snapshots(
+        {"maxq_value": "12", "has_buy_button": True},
+        {"maxq_value": "0", "has_buy_button": False},
+    )
+
+    assert suggestion is not None
+    assert suggestion["fallback_from"] == "maxq"
+    assert suggestion["confidence"] == "high"
+
+
+def test_status_snapshot_suggestion_uses_cart_button_difference() -> None:
+    suggestion = _status_suggestion_from_snapshots(
+        {"maxq_value": "", "has_buy_button": True},
+        {"maxq_value": "", "has_buy_button": False},
+    )
+
+    assert suggestion is not None
+    assert suggestion["fallback_from"] == "cart_button"
+    assert suggestion["confidence"] == "medium"
+
+
+def test_status_snapshot_suggestion_returns_none_when_unclear() -> None:
+    assert _status_suggestion_from_snapshots(
+        {"maxq_value": "", "has_buy_button": False},
+        {"maxq_value": "", "has_buy_button": False},
+    ) is None

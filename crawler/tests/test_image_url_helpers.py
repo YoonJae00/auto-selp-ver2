@@ -9,7 +9,8 @@ from app.crawlers.yaml_adapter import (
 
 def test_supported_image_url_extensions() -> None:
     assert _supported_image_url("https://cdn.x.com/a/b.jpg") == "https://cdn.x.com/a/b.jpg"
-    assert _supported_image_url("https://cdn.x.com/a/b.GIF") == "https://cdn.x.com/a/b.GIF"
+    assert _supported_image_url("https://cdn.x.com/a/b.PNG") == "https://cdn.x.com/a/b.PNG"
+    assert _supported_image_url("https://cdn.x.com/a/b.gif") is None  # gif excluded (banners/spacers)
     assert _supported_image_url("https://cdn.x.com/a/b.webp?w=800") == "https://cdn.x.com/a/b.webp?w=800"
 
 

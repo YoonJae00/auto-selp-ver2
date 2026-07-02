@@ -23,7 +23,7 @@ Item {
         Components.InlineBanner {
             Layout.fillWidth: true
             visible: text.length > 0
-            text: root.viewModel.fieldErrors.form || root.viewModel.fieldErrors.yamlText || root.viewModel.fieldErrors.detailUrl || ""
+            text: root.viewModel.fieldErrors.form || root.viewModel.fieldErrors.yamlText || root.viewModel.fieldErrors.detailUrl || root.viewModel.fieldErrors.soldoutUrl || ""
             severity: "danger"
         }
         Components.GlassPanel {
@@ -346,6 +346,12 @@ Item {
                         }
                         RowLayout {
                             spacing: 8
+                            Components.AppButton {
+                                text: "AI 옵션 분석"
+                                enabled: !root.viewModel.busy
+                                onClicked: root.viewModel.analyzeOptionTextParser()
+                                Accessible.name: text
+                            }
                             Components.AppButton {
                                 text: root.viewModel.previewActive ? "미리보기 닫기" : "매핑 미리보기"
                                 selected: true

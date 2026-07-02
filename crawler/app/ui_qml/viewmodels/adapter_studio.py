@@ -13,7 +13,9 @@ from PySide6.QtCore import QObject, Property, QTimer, Signal, Slot
 from app.analyzer.adapter_schema import (
     FIELD_LABELS_KO,
     OPTION_PRICES_FIELD_PATH,
+    OPTION_PRICES_ROW_KEY,
     OPTION_VALUES_FIELD_PATH,
+    OPTION_VALUES_ROW_KEY,
     get_product_field_mappings,
 )
 from app.analyzer.element_picker import suggest_defaults_for_field
@@ -37,8 +39,10 @@ from app.workers.adapter import (
     AdapterTestRequest, AdapterTestWorker, CategoryMenuProbeRequest, CategoryMenuProbeWorker,
     GenerateRequest, GenerateWorker,
     MappingPreviewJob, MappingPreviewRequest,
-    PickerJob, PickerRequest,
+    OptionTextParserAnalyzeRequest, OptionTextParserAnalyzeWorker,
+    PickerJob, PickerRequest, PickerValidateRequest, PickerValidateWorker,
     PickerWorker, ProbeRequest, ProbeWorker,
+    SoldoutCompareRequest, SoldoutCompareWorker,
     close_picker_session, stop_picker_thread,
 )
 from app.workers.lifecycle import stop_workers
@@ -48,6 +52,9 @@ MAPPING_ROLES = (
     "key", "label", "fieldPath", "selector", "attribute", "transform", "status",
     "testValue", "testOk", "urlPattern", "urlParam", "urlAllowed", "testable", "extraEnabled",
 )
+IMAGE_PICKER_FIELD_PATHS = {"adapter.product.detail_content", "adapter.product.extra_image_urls"}
+
+
 def yaml_content_hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
@@ -74,7 +81,10 @@ class AdapterStudioViewModel(BaseViewModel):
         self._factories = {
             "probe": ProbeWorker, "generate": GenerateWorker,
             "picker": PickerJob, "test": AdapterTestWorker,
+            "picker_validate": PickerValidateWorker,
             "category_probe": CategoryMenuProbeWorker,
+            "option_parser": OptionTextParserAnalyzeWorker,
+            "soldout_compare": SoldoutCompareWorker,
             **dict(worker_factories or {}),
         }
         self._current_stage = 0
@@ -124,6 +134,10 @@ class AdapterStudioViewModel(BaseViewModel):
         self._needs_mapping_login = False
         self._manual_login_pending = False
         self._preview_active = False
+        self._auto_preview_token = 0
+        self._soldout_url = ""
+        self._soldout_suggestion: dict[str, Any] = {}
+        self._soldout_compare_open = False
         self._inputs = {
             "supplierName": "", "mainUrl": "", "listingUrl": "", "detailUrl": "",
             "needsLogin": False, "loginUrl": "", "username": "", "password": "",
@@ -164,6 +178,9 @@ class AdapterStudioViewModel(BaseViewModel):
     categoryAnalysisReady = Property(bool, lambda self: self._category_analysis_ready, notify=stateChanged)
     categoryAnalysisMessage = Property(str, lambda self: self._category_analysis_message, notify=stateChanged)
     canAcceptPickedHint = Property(bool, lambda self: bool(self._pending_hint) and not self._picker_validation_active, notify=stateChanged)
+    soldoutUrl = Property(str, lambda self: self._soldout_url, notify=stateChanged)
+    soldoutSuggestion = Property("QVariantMap", lambda self: dict(self._soldout_suggestion), notify=stateChanged)
+    soldoutCompareOpen = Property(bool, lambda self: self._soldout_compare_open, notify=stateChanged)
 
     def _probe_summary_with_checks(self) -> dict:
         result = dict(self._probe_summary)
@@ -202,10 +219,10 @@ class AdapterStudioViewModel(BaseViewModel):
             "adapter.categories.navigation.menu_selector": "카테고리 메뉴 안의 대표 항목 하나(예: 의류, 상의)를 클릭하세요. 이 선택은 AI 설정 생성의 카테고리 힌트로 사용됩니다.",
             "adapter.listing.product_link": "상품 카드 안의 상세페이지 링크를 클릭하세요.",
             "adapter.product.main_image_url": "상품 대표 이미지를 클릭하세요.",
-            "adapter.product.extra_image_urls": "추가 이미지 중 하나를 클릭하세요. 같은 선택자에 매칭되는 이미지를 여러 개 수집합니다.",
+            "adapter.product.extra_image_urls": "추가 이미지/갤러리 영역 박스를 클릭하세요. AI가 이미지 선택자를 분석하고, 결과는 4단계 검증에서 확인됩니다.",
             "adapter.product.raw_product_name": "상품명 텍스트를 클릭하세요.",
             "adapter.product.supply_price": "공급가격 텍스트를 클릭하세요.",
-            "adapter.product.detail_content": "상세 페이지 이미지 중 아무거나 한 장을 클릭하세요. 주변 이미지를 자동으로 함께 수집합니다.",
+            "adapter.product.detail_content": "상세 이미지들이 들어있는 영역 박스를 클릭하세요. AI가 이미지 선택자를 분석하고, 결과는 4단계 검증에서 확인됩니다.",
             OPTION_VALUES_FIELD_PATH: "옵션값 하나를 클릭하세요. 같은 그룹의 값을 자동으로 함께 수집합니다.",
             OPTION_PRICES_FIELD_PATH: "옵션가격 하나를 클릭하세요. 같은 순서의 가격들을 자동으로 함께 수집합니다.",
         }
@@ -287,7 +304,31 @@ class AdapterStudioViewModel(BaseViewModel):
 
     @Slot(str)
     def setDetailUrl(self, url: str) -> None:
-        self._inputs["detailUrl"] = str(url or "").strip()
+        next_url = str(url or "").strip()
+        if next_url == self._inputs.get("detailUrl"):
+            return
+        self._inputs["detailUrl"] = next_url
+        self._clear_mapping_preview_values()
+        if self._current_stage == 2 and self._yaml_text:
+            self._schedule_mapping_preview()
+        else:
+            self._auto_preview_token += 1
+        self._emit()
+
+    @Slot(str)
+    def setSoldoutUrl(self, url: str) -> None:
+        next_url = str(url or "").strip()
+        if next_url == self._soldout_url:
+            return
+        self._soldout_url = next_url
+        self._soldout_suggestion = {}
+        self._emit()
+
+    @Slot(bool)
+    def setSoldoutCompareOpen(self, open_: bool) -> None:
+        self._soldout_compare_open = bool(open_)
+        if not self._soldout_compare_open:
+            self._soldout_suggestion = {}
         self._emit()
 
     @Slot("QVariantMap")
@@ -637,6 +678,7 @@ class AdapterStudioViewModel(BaseViewModel):
         self._clear_save_warning()
         self._current_stage = 2
         self._refresh_mapping_rows()
+        self._schedule_mapping_preview()
         self._emit()
 
     @Slot(str)
@@ -656,6 +698,30 @@ class AdapterStudioViewModel(BaseViewModel):
         except Exception:
             rows = []
         self._mapping_rows.resetRows([{**row, "testValue": "", "testOk": False} for row in rows])
+
+    def _clear_mapping_preview_values(self) -> None:
+        if self._yaml_text:
+            self._refresh_mapping_rows()
+
+    def _schedule_mapping_preview(self) -> None:
+        self._auto_preview_token += 1
+        token = self._auto_preview_token
+        QTimer.singleShot(450, lambda: self._run_scheduled_mapping_preview(token))
+
+    def _run_scheduled_mapping_preview(self, token: int) -> None:
+        if token != self._auto_preview_token:
+            return
+        if self._current_stage != 2 or self._busy or not self._yaml_text:
+            return
+        target = self._picker_target_url()
+        if not target.startswith(("http://", "https://")):
+            return
+        try:
+            if not self._extract_preview_fields():
+                return
+        except Exception:
+            return
+        self.previewMapping()
 
     @Slot(result=str)
     def beginValidation(self) -> str:
@@ -684,14 +750,120 @@ class AdapterStudioViewModel(BaseViewModel):
             updated.append({**row, "testValue": str(hits[0])[:100] if hits else "", "testOk": bool(hits)})
         self._mapping_rows.resetRows(updated)
 
+    def _preview_field(self, key: str, label: str, extractor) -> dict:
+        return {
+            "key": key,
+            "label": label,
+            "selector": extractor.selector or "",
+            "attribute": extractor.attribute or "",
+            "fallback_attribute": extractor.fallback_attribute or "",
+            "html": bool(extractor.html),
+            "multiple": bool(extractor.multiple),
+            "transform": extractor.transform or "strip",
+            "fallback": extractor.fallback or "",
+            "fallback_from": extractor.fallback_from or "none",
+            "url_param": extractor.url_param or "",
+            "url_pattern": extractor.url_pattern or "",
+        }
+
     def _extract_preview_fields(self) -> list[dict]:
         adapter = load_adapter_from_text(self._yaml_text)
         product = adapter.adapter.product
-        return [
-            {"key": k, "label": FIELD_LABELS_KO[k], "selector": getattr(product, k).selector}
-            for k in FIELD_LABELS_KO
-            if getattr(product, k, None) is not None and getattr(product, k).selector.strip()
-        ]
+        fields = []
+        for key, label in FIELD_LABELS_KO.items():
+            extractor = getattr(product, key, None)
+            if extractor and (
+                extractor.selector.strip()
+                or extractor.url_param
+                or extractor.url_pattern
+                or extractor.fallback_from not in (None, "", "none")
+            ):
+                fields.append(self._preview_field(key, label, extractor))
+        option_group = adapter.adapter.options.groups[0] if adapter.adapter.options.groups else None
+        if option_group and option_group.values_selector.strip():
+            attribute = option_group.value_attribute if option_group.value_text == "attribute" else (
+                "value" if option_group.value_text == "value" else ""
+            )
+            option_text_parser = adapter.adapter.options.option_text_parser.model_dump(mode="json")
+            fields.append({
+                "key": OPTION_VALUES_ROW_KEY,
+                "label": "옵션값",
+                "selector": option_group.values_selector,
+                "attribute": attribute or "",
+                "fallback_attribute": "",
+                "html": False,
+                "multiple": True,
+                "transform": "strip",
+                "fallback": "",
+                "fallback_from": "none",
+                "url_param": "",
+                "url_pattern": "",
+                "option_text_parser": option_text_parser,
+            })
+        option_price = adapter.adapter.options.option_price_delta
+        if option_price and option_price.selector.strip():
+            fields.append(self._preview_field(OPTION_PRICES_ROW_KEY, "옵션가격", option_price))
+        elif option_group and option_group.values_selector.strip() and adapter.adapter.options.option_text_parser.enabled:
+            fields.append({
+                "key": OPTION_PRICES_ROW_KEY,
+                "label": "옵션가격",
+                "selector": option_group.values_selector,
+                "attribute": "",
+                "fallback_attribute": "",
+                "html": False,
+                "multiple": True,
+                "transform": "strip",
+                "fallback": "",
+                "fallback_from": "none",
+                "url_param": "",
+                "url_pattern": "",
+                "option_text_parser": adapter.adapter.options.option_text_parser.model_dump(mode="json"),
+            })
+        return fields
+
+    @Slot(result=bool)
+    def analyzeOptionTextParser(self) -> bool:
+        if not self._guard_operation("adapter-option-parser"):
+            return False
+        try:
+            adapter = load_adapter_from_text(self._yaml_text)
+            group = adapter.adapter.options.groups[0] if adapter.adapter.options.groups else None
+            if group is None or not group.values_selector.strip():
+                self.set_field_errors({"form": "옵션값 선택자를 먼저 선택하세요."})
+                return False
+        except Exception as exc:
+            self.set_field_errors({"yamlText": f"YAML 오류: {exc}"})
+            return False
+        target = self._picker_target_url()
+        if not target:
+            self.set_field_errors({"form": "분석할 상품 URL이 없습니다."})
+            return False
+        username = password = None
+        if self._inputs["needsLogin"]:
+            loaded = self._load_transient_credentials()
+            if loaded:
+                username, password = loaded
+        login_url = str(self._inputs.get("loginUrl") or "").strip() or str(self._inputs.get("mainUrl") or "").strip() or None
+        request = OptionTextParserAnalyzeRequest(
+            self._yaml_text, target, login_url, username, password,
+            supplier_key=self._credential_key() if self._inputs["needsLogin"] else None,
+        )
+        worker = self._factories["option_parser"](request)
+        return self._connect_worker(
+            worker, finished=self._option_parser_finished,
+            key="adapter-option-parser", label="AI 옵션 분석", stage="map",
+        )
+
+    def _option_parser_finished(self, result: dict) -> None:
+        try:
+            raw = yaml.safe_load(self._yaml_text) or {}
+            options = raw.setdefault("adapter", {}).setdefault("options", {})
+            options["option_text_parser"] = dict(result.get("parser") or {})
+            self.setYamlText(yaml.safe_dump(raw, allow_unicode=True, sort_keys=False))
+            self.set_field_errors({})
+        except Exception as exc:
+            self.set_field_errors({"yamlText": f"YAML 오류: {exc}"})
+        self._operation_done()
 
     @Slot()
     def previewMapping(self) -> bool:
@@ -729,7 +901,24 @@ class AdapterStudioViewModel(BaseViewModel):
         )
 
     def _preview_finished(self, result: dict) -> None:
+        self._apply_preview_result(result)
         self._operation_done()
+
+    def _apply_preview_result(self, result: Mapping[str, Any]) -> None:
+        values = dict(result.get("values") or {})
+        found = set(result.get("found") or [])
+        try:
+            rows = get_product_field_mappings(load_adapter_from_text(self._yaml_text))
+        except Exception:
+            return
+        self._mapping_rows.resetRows([
+            {
+                **row,
+                "testValue": str(values.get(row["key"], ""))[:100],
+                "testOk": row["key"] in found and bool(values.get(row["key"])),
+            }
+            for row in rows
+        ])
 
     @Slot()
     def closePreview(self) -> None:
@@ -826,17 +1015,127 @@ class AdapterStudioViewModel(BaseViewModel):
             self._extra_test_urls.remove(url)
             self._emit()
 
+    @Slot(result=bool)
+    def compareSoldoutStatus(self) -> bool:
+        if not self._guard_operation("adapter-soldout-compare"):
+            return False
+        try:
+            load_adapter_from_text(self._yaml_text)
+        except Exception as exc:
+            self.set_field_errors({"yamlText": f"YAML 오류: {exc}"})
+            return False
+        available_url = self._picker_target_url()
+        soldout_url = str(self._soldout_url or "").strip()
+        if not available_url.startswith(("http://", "https://")):
+            self.set_field_errors({"detailUrl": "판매중 상품 URL을 먼저 입력하세요."})
+            return False
+        if not soldout_url.startswith(("http://", "https://")):
+            self.set_field_errors({"soldoutUrl": "품절 상품 URL은 http:// 또는 https://로 시작해야 합니다."})
+            return False
+        if soldout_url == available_url:
+            self.set_field_errors({"soldoutUrl": "판매중 상품과 다른 품절 상품 URL을 입력하세요."})
+            return False
+        username = password = None
+        if self._inputs["needsLogin"]:
+            loaded = self._load_transient_credentials()
+            if loaded:
+                username, password = loaded
+        login_url = str(self._inputs["loginUrl"] or "").strip() or str(self._inputs["mainUrl"] or "").strip() or None
+        request = SoldoutCompareRequest(
+            self._yaml_text,
+            available_url,
+            soldout_url,
+            login_url,
+            username,
+            password,
+            supplier_key=self._credential_key() if self._inputs["needsLogin"] else None,
+        )
+        worker = self._factories["soldout_compare"](request)
+        self._inputs["username"] = self._inputs["password"] = ""
+        self._soldout_suggestion = {}
+        self.set_field_errors({})
+        return self._connect_worker(
+            worker,
+            finished=self._soldout_compare_finished,
+            key="adapter-soldout-compare",
+            label="품절 상태 비교",
+            stage="map",
+        )
+
+    def _soldout_compare_finished(self, result: dict) -> None:
+        self._soldout_suggestion = dict(result or {})
+        if self._soldout_suggestion.get("confidence") == "low":
+            self.set_field_errors({"soldoutUrl": "품절 요소를 확신하지 못했습니다. 판매 상태 행에서 수동으로 선택하세요."})
+        self._operation_done()
+
+    @Slot(result=bool)
+    def acceptSoldoutSuggestion(self) -> bool:
+        suggestion = dict(self._soldout_suggestion or {})
+        if not suggestion:
+            return False
+        if suggestion.get("confidence") == "low":
+            self.set_field_errors({"soldoutUrl": "신뢰도가 낮은 제안은 자동 적용하지 않습니다."})
+            return False
+        selector = str(suggestion.get("selector") or "").strip()
+        fallback_from = str(suggestion.get("fallback_from") or "none").strip()
+        if fallback_from not in {"none", "cart_button", "maxq"}:
+            fallback_from = "none"
+        if not selector and fallback_from == "none":
+            self.set_field_errors({"soldoutUrl": "적용할 선택자나 fallback 규칙이 없습니다."})
+            return False
+        try:
+            raw = yaml.safe_load(self._yaml_text) or {}
+            product = raw.setdefault("adapter", {}).setdefault("product", {})
+            field: dict[str, Any] = {}
+            if selector:
+                field["selector"] = selector
+                if "img" in selector.lower():
+                    field["attribute"] = "alt"
+                    field["fallback_attribute"] = "src"
+            if fallback_from != "none":
+                field["fallback_from"] = fallback_from
+            product["supplier_status"] = field
+            mapping = dict(suggestion.get("mapping") or {})
+            if fallback_from in {"cart_button", "maxq"}:
+                mapping.update({"available": "available", "sold_out": "sold_out"})
+            else:
+                mapping.setdefault("품절", "sold_out")
+                mapping.setdefault("완판", "sold_out")
+                mapping.setdefault("soldout", "sold_out")
+                mapping.setdefault("sold out", "sold_out")
+                mapping.setdefault("판매중", "available")
+            product["status_mapping"] = {
+                "mapping": mapping,
+                "default": suggestion.get("default") or "available",
+            }
+            self._soldout_suggestion = {}
+            self._soldout_compare_open = False
+            self.set_field_errors({})
+            self.setYamlText(yaml.safe_dump(raw, allow_unicode=True, sort_keys=False))
+            self._emit()
+            return True
+        except Exception as exc:
+            self.set_field_errors({"yamlText": f"YAML 오류: {exc}"})
+            return False
+
+    @Slot()
+    def rejectSoldoutSuggestion(self) -> None:
+        self._soldout_suggestion = {}
+        self._soldout_compare_open = False
+        self._emit()
+
     def _build_validation_products(self) -> list[dict[str, Any]]:
         """검증 raw 결과를 상품별로 피벗: [{index, url, name, imageUrl, fields:[{key,label,value,ok}]}]."""
         raw = self._validation_raw
         if not raw:
             return []
         count = max((len(entries) for entries in raw.values() if isinstance(entries, list)), default=0)
+        labels = {**FIELD_LABELS_KO, "option_values": "옵션값", "option_prices": "옵션가격"}
         products: list[dict[str, Any]] = []
         for i in range(count):
             fields: list[dict[str, Any]] = []
             url = ""
-            for key, label in FIELD_LABELS_KO.items():
+            for key, label in labels.items():
                 entries = raw.get(key)
                 if not isinstance(entries, list) or i >= len(entries):
                     continue
@@ -848,6 +1147,8 @@ class AdapterStudioViewModel(BaseViewModel):
                     "label": label,
                     "value": str(value or ""),
                     "ok": bool(value) and is_field_value_ok(key, entry),
+                    "imageUrls": list(entry.get("imageUrls") or []),
+                    "imageCount": int(entry.get("imageCount") or 0),
                 })
             def field_value(key: str) -> str:
                 entries = raw.get(key)
@@ -1143,6 +1444,9 @@ class AdapterStudioViewModel(BaseViewModel):
         self._operation_done()
         if field_path == "adapter.categories.navigation.menu_selector":
             self._start_category_menu_analysis(picked)
+        elif field_path in IMAGE_PICKER_FIELD_PATHS:
+            if not self._start_picker_validation(picked, field_path):
+                self.acceptPickedHint()
         else:
             # 브라우저의 Yes(이 요소가 맞나요?)가 곧 확인이다 — 앱 모달 없이
             # 바로 적용하고 브라우저 세션을 닫는다.
@@ -1203,6 +1507,36 @@ class AdapterStudioViewModel(BaseViewModel):
             self._category_analysis_message = f"카테고리 {len(categories)}개 발견"
         self._operation_done()
 
+    def _start_picker_validation(self, picked, field_path: str) -> bool:
+        label = self._field_label_for_path(field_path)
+        request = PickerValidateRequest(
+            picked_element=picked,
+            field_path=field_path,
+            field_label=label,
+        )
+        worker = self._factories["picker_validate"](request)
+        self._picker_validation_active = True
+        self._picker_validation_confidence = ""
+        self._picker_validation_note = ""
+        self._picker_validation_selector = ""
+        ok = self._connect_worker(
+            worker, finished=self._picker_validation_finished,
+            key="adapter-pick-validate", label="AI 선택자 검증", stage="map",
+        )
+        if not ok:
+            self._picker_validation_active = False
+        return ok
+
+    def _picker_validation_finished(self, result: dict) -> None:
+        self._pending_validation = result
+        self._picker_validation_active = False
+        self._picker_validation_selector = str(result.get("validated_selector", ""))
+        self._picker_validation_confidence = str(result.get("confidence", ""))
+        self._picker_validation_note = str(result.get("note", ""))
+        self._operation_done()
+        if self._pending_hint and self._pending_hint[1] in IMAGE_PICKER_FIELD_PATHS:
+            self.acceptPickedHint()
+
     @Slot()
     def rejectPickedHint(self) -> None:
         self._pending_hint = None
@@ -1249,6 +1583,16 @@ class AdapterStudioViewModel(BaseViewModel):
             validated = str(validation.get("validated_selector", "")).strip()
             if validated:
                 defaults["selector"] = validated
+            if field_path in IMAGE_PICKER_FIELD_PATHS:
+                attribute = str(validation.get("attribute") or "").strip()
+                if attribute in {"src", "data-src"}:
+                    defaults["attribute"] = attribute
+                defaults["multiple"] = bool(validation.get("multiple", True))
+                if field_path == "adapter.product.detail_content":
+                    defaults["html"] = False
+        elif validation and field_path in IMAGE_PICKER_FIELD_PATHS:
+            note = str(validation.get("note") or "AI 이미지 분석 신뢰도가 낮아 기존 선택자로 저장했습니다.").strip()
+            self.set_field_errors({"form": note[:160]})
         # 선택자가 비어 있으면 후보 중 하나로 폴백; 그래도 없으면 사용자에게 안내
         if not str(defaults.get("selector", "")).strip():
             fallback = next((c for c in (picked.selector_candidates or []) if str(c).strip()), "")

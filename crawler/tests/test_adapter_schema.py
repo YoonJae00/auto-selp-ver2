@@ -130,7 +130,9 @@ def test_mapping_rows_hide_unused_fields_and_include_option_row() -> None:
     assert rows[-2]["key"] == "option_values"
     assert rows[-2]["fieldPath"] == "adapter.options.groups.0.values_selector"
     assert rows[-2]["selector"] == ".opt option"
+    assert rows[-2]["testable"] is True
     assert rows[-1]["key"] == "option_prices"
+    assert rows[-1]["testable"] is True
 
 
 def test_mapping_rows_include_option_price_row() -> None:
@@ -165,6 +167,21 @@ def test_mapping_row_url_param_marks_ok() -> None:
     row = next(r for r in get_product_field_mappings(adapter) if r["key"] == "supplier_product_code")
     assert row["status"] == "ok"
     assert row["urlParam"] == "goodsno"
+
+
+def test_mapping_row_fallback_from_marks_ok() -> None:
+    adapter = Adapter.model_validate({
+        "adapter": {
+            "name": "Shop",
+            "base_url": "https://shop.example",
+            "product": {
+                "supplier_status": {"fallback_from": "maxq"},
+            },
+        }
+    })
+    row = next(r for r in get_product_field_mappings(adapter) if r["key"] == "supplier_status")
+    assert row["status"] == "ok"
+    assert row["selector"] == "자동 판정: maxq"
 
 
 def test_extract_url_value_prefers_query_param() -> None:

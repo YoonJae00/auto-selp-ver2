@@ -104,6 +104,33 @@ def test_extra_images_toggle_updates_yaml(vm) -> None:
     assert "extra_image_urls:" not in vm.yamlText
 
 
+def test_option_parser_finished_updates_yaml(vm) -> None:
+    import yaml as _yaml
+
+    vm.acceptGeneratedYaml(VALID_YAML + """
+  options:
+    detection: dom
+    groups:
+    - name: 색상
+      values_selector: .option
+""")
+
+    vm._option_parser_finished({
+        "parser": {
+            "enabled": True,
+            "pattern": r"^(?P<value>.*?) / (?P<price>[\d,]+)원?$",
+            "price_kind": "supply",
+            "confidence": "high",
+            "examples": ["블랙 / 13,900원"],
+        }
+    })
+
+    parser = _yaml.safe_load(vm.yamlText)["adapter"]["options"]["option_text_parser"]
+    assert parser["enabled"] is True
+    assert parser["price_kind"] == "supply"
+    assert "?P<value>" in parser["pattern"]
+
+
 def test_set_url_param_writes_yaml_and_drops_selector(vm) -> None:
     vm.acceptGeneratedYaml(VALID_YAML)
 
@@ -157,6 +184,53 @@ def test_validation_products_pivot_raw_results_by_product(vm) -> None:
     # product code equal to the url must be flagged as not ok
     code1 = next(f for f in products[1]["fields"] if f["key"] == "supplier_product_code")
     assert code1["ok"] is False
+
+
+def test_validation_products_exposes_image_counts_and_preview_urls(vm) -> None:
+    vm.acceptGeneratedYaml(VALID_YAML)
+    raw = {
+        "detail_content": [{
+            "url": "https://s/1",
+            "value": "3개 인식",
+            "ok": True,
+            "imageUrls": ["https://s/d1.jpg", "https://s/d2.jpg", "https://s/d3.jpg"],
+            "imageCount": 3,
+        }],
+        "extra_image_urls": [{
+            "url": "https://s/1",
+            "value": "0개 인식",
+            "ok": False,
+            "imageUrls": [],
+            "imageCount": 0,
+        }],
+    }
+
+    vm.acceptValidation(raw, vm.beginValidation())
+    fields = vm.validationProducts[0]["fields"]
+    detail = next(f for f in fields if f["key"] == "detail_content")
+    extra = next(f for f in fields if f["key"] == "extra_image_urls")
+
+    assert detail["value"] == "3개 인식"
+    assert detail["imageCount"] == 3
+    assert detail["imageUrls"] == ["https://s/d1.jpg", "https://s/d2.jpg", "https://s/d3.jpg"]
+    assert detail["ok"] is True
+    assert extra["value"] == "0개 인식"
+    assert extra["ok"] is False
+
+
+def test_validation_products_include_option_results(vm) -> None:
+    vm.acceptGeneratedYaml(VALID_YAML)
+    raw = {
+        **successful_results(),
+        "option_values": [{"url": "https://s/1", "value": "2개 · 브라운, 아이보리", "ok": True}],
+        "option_prices": [{"url": "https://s/1", "value": "2개 · 0, 1000", "ok": True}],
+    }
+
+    vm.acceptValidation(raw, vm.beginValidation())
+
+    fields = vm.validationProducts[0]["fields"]
+    assert next(f for f in fields if f["key"] == "option_values")["value"] == "2개 · 브라운, 아이보리"
+    assert next(f for f in fields if f["key"] == "option_prices")["value"] == "2개 · 0, 1000"
 
 
 def test_validation_products_empty_without_results(vm) -> None:
@@ -246,6 +320,78 @@ class FakeWorker(QObject):
         return False
 
 
+def test_soldout_compare_dispatches_urls_and_applies_yaml() -> None:
+    import yaml
+
+    from app.ui_qml.viewmodels.adapter_studio import AdapterStudioViewModel
+
+    app = AppViewModel()
+    made = []
+
+    def factory(*args, **kwargs):
+        worker = FakeWorker(*args, **kwargs)
+        made.append(worker)
+        return worker
+
+    vm = AdapterStudioViewModel(app_view_model=app, worker_factories={"soldout_compare": factory})
+    vm.setConnectionInputs({
+        "supplierName": "Test Shop",
+        "mainUrl": "https://shop.example",
+        "detailUrl": "https://shop.example/p/available",
+    })
+    vm.acceptGeneratedYaml(VALID_YAML)
+    vm.setSoldoutUrl("https://shop.example/p/soldout")
+
+    assert vm.compareSoldoutStatus() is True
+    request = made[0].args[0]
+    assert request.available_url == "https://shop.example/p/available"
+    assert request.soldout_url == "https://shop.example/p/soldout"
+
+    made[0].finished.emit({
+        "selector": ".soldout",
+        "fallback_from": "none",
+        "mapping": {"품절": "sold_out"},
+        "default": "available",
+        "confidence": "high",
+        "note": "품절 페이지에만 표시됨",
+    })
+
+    assert vm.soldoutSuggestion["confidence"] == "high"
+    vm.setSoldoutCompareOpen(True)
+    assert vm.acceptSoldoutSuggestion() is True
+    assert vm.soldoutCompareOpen is False
+    product = yaml.safe_load(vm.yamlText)["adapter"]["product"]
+    assert product["supplier_status"]["selector"] == ".soldout"
+    assert product["status_mapping"]["mapping"]["품절"] == "sold_out"
+    assert product["status_mapping"]["mapping"]["판매중"] == "available"
+
+
+def test_soldout_compare_rejects_invalid_and_same_url(vm) -> None:
+    vm.acceptGeneratedYaml(VALID_YAML)
+    vm.setSoldoutUrl("not-a-url")
+    assert vm.compareSoldoutStatus() is False
+    assert "soldoutUrl" in vm.fieldErrors
+
+    vm.setSoldoutUrl("https://shop.example/p/1")
+    assert vm.compareSoldoutStatus() is False
+    assert "다른 품절 상품" in vm.fieldErrors["soldoutUrl"]
+
+
+def test_soldout_low_confidence_does_not_apply(vm) -> None:
+    vm.acceptGeneratedYaml(VALID_YAML)
+    before = vm.yamlText
+    vm._soldout_suggestion = {
+        "selector": ".maybe",
+        "fallback_from": "none",
+        "confidence": "low",
+        "mapping": {"품절": "sold_out"},
+    }
+
+    assert vm.acceptSoldoutSuggestion() is False
+    assert vm.yamlText == before
+    assert "soldoutUrl" in vm.fieldErrors
+
+
 def test_probe_maps_to_shared_task_and_cancels_without_navigation_side_effect(monkeypatch) -> None:
     from app.ui_qml.viewmodels.adapter_studio import AdapterStudioViewModel
 
@@ -300,6 +446,154 @@ def test_single_field_test_dispatches_field_and_updates_mapping(vm) -> None:
     assert vm.validationStale is False
     assert vm.canSave is True
     assert app.activeTask.state == "completed"
+
+
+def _row_by_key(vm, key: str) -> dict:
+    return next(row for row in vm.mappingRows._rows if row["key"] == key)
+
+
+def test_preview_mapping_completion_updates_mapping_rows(monkeypatch) -> None:
+    from app.ui_qml.viewmodels import adapter_studio
+
+    made = []
+
+    class PreviewWorker(QObject):
+        finished = Signal(object)
+        error = Signal(str)
+        progress = Signal(str)
+        cancelled = Signal()
+
+        def __init__(self, request):
+            super().__init__()
+            self.request = request
+            made.append(self)
+
+        def start(self):
+            pass
+
+        def requestInterruption(self):
+            pass
+
+        def isRunning(self):
+            return False
+
+    monkeypatch.setattr(adapter_studio, "MappingPreviewJob", PreviewWorker)
+    vm = adapter_studio.AdapterStudioViewModel(app_view_model=AppViewModel())
+    vm.setConnectionInputs({
+        "supplierName": "Test Shop",
+        "mainUrl": "https://shop.example",
+        "detailUrl": "https://shop.example/p/1",
+    })
+    vm.acceptGeneratedYaml(VALID_YAML)
+
+    assert vm.previewMapping() is True
+    assert made[0].request.fields[0]["key"] == "supplier_product_code"
+
+    made[0].finished.emit({
+        "found": ["raw_product_name"],
+        "missing": ["supply_price"],
+        "values": {"raw_product_name": "Preview Product"},
+    })
+
+    assert _row_by_key(vm, "raw_product_name")["testValue"] == "Preview Product"
+    assert _row_by_key(vm, "raw_product_name")["testOk"] is True
+    assert _row_by_key(vm, "supply_price")["testValue"] == ""
+
+
+def test_generated_yaml_auto_previews_sample_detail_url(monkeypatch, qt_app) -> None:
+    from PySide6.QtTest import QTest
+
+    from app.ui_qml.viewmodels import adapter_studio
+
+    made = []
+
+    class PreviewWorker(QObject):
+        finished = Signal(object)
+        error = Signal(str)
+        progress = Signal(str)
+        cancelled = Signal()
+
+        def __init__(self, request):
+            super().__init__()
+            self.request = request
+            made.append(self)
+
+        def start(self):
+            self.finished.emit({
+                "found": ["raw_product_name"],
+                "missing": [],
+                "values": {"raw_product_name": "Sample Product"},
+            })
+
+        def requestInterruption(self):
+            pass
+
+        def isRunning(self):
+            return False
+
+    monkeypatch.setattr(adapter_studio, "MappingPreviewJob", PreviewWorker)
+    vm = adapter_studio.AdapterStudioViewModel(app_view_model=AppViewModel())
+    vm.setConnectionInputs({
+        "supplierName": "Test Shop",
+        "mainUrl": "https://shop.example",
+        "detailUrl": "https://shop.example/p/1",
+    })
+
+    vm.acceptGeneratedYaml(VALID_YAML)
+    QTest.qWait(550)
+
+    assert made[-1].request.target_url == "https://shop.example/p/1"
+    assert _row_by_key(vm, "raw_product_name")["testValue"] == "Sample Product"
+
+
+def test_detail_url_change_clears_then_auto_refreshes_preview(monkeypatch, qt_app) -> None:
+    from PySide6.QtTest import QTest
+
+    from app.ui_qml.viewmodels import adapter_studio
+
+    made = []
+
+    class PreviewWorker(QObject):
+        finished = Signal(object)
+        error = Signal(str)
+        progress = Signal(str)
+        cancelled = Signal()
+
+        def __init__(self, request):
+            super().__init__()
+            self.request = request
+            made.append(self)
+
+        def start(self):
+            self.finished.emit({
+                "found": ["raw_product_name"],
+                "missing": [],
+                "values": {"raw_product_name": "New Product"},
+            })
+
+        def requestInterruption(self):
+            pass
+
+        def isRunning(self):
+            return False
+
+    monkeypatch.setattr(adapter_studio, "MappingPreviewJob", PreviewWorker)
+    vm = adapter_studio.AdapterStudioViewModel(app_view_model=AppViewModel())
+    vm.setConnectionInputs({
+        "supplierName": "Test Shop",
+        "mainUrl": "https://shop.example",
+        "detailUrl": "https://shop.example/p/1",
+    })
+    vm.acceptGeneratedYaml(VALID_YAML)
+    vm._apply_preview_result({"found": ["raw_product_name"], "values": {"raw_product_name": "Old Product"}})
+
+    vm.setDetailUrl("https://shop.example/p/2")
+
+    assert _row_by_key(vm, "raw_product_name")["testValue"] == ""
+    QTest.qWait(550)
+
+    assert made[-1].request.target_url == "https://shop.example/p/2"
+    assert _row_by_key(vm, "raw_product_name")["testValue"] == "New Product"
 
 
 def test_adapter_studio_uses_shared_worker_implementations_without_legacy_builder() -> None:
@@ -1310,6 +1604,85 @@ def test_browser_confirmed_pick_applies_without_app_modal(monkeypatch) -> None:
     assert vm._mapping_hints[-1].chosen_selector == ".picked-name"
     assert "selector: .picked-name" in vm.yamlText
     assert closed == [True]
+
+
+def test_image_pick_runs_ai_analysis_and_applies_validated_selector(monkeypatch) -> None:
+    from app.analyzer.element_picker import PickedElement
+    from app.ui_qml.viewmodels import adapter_studio
+    from app.ui_qml.viewmodels.adapter_studio import AdapterStudioViewModel
+    import yaml as _yaml
+
+    closed = []
+    made = []
+    monkeypatch.setattr(adapter_studio, "close_picker_session", lambda: closed.append(True))
+    vm = AdapterStudioViewModel(
+        app_view_model=AppViewModel(),
+        worker_factories={"picker_validate": lambda request: made.append(FakeWorker(request)) or made[-1]},
+    )
+    vm.acceptGeneratedYaml(VALID_YAML)
+    picked = PickedElement(
+        url="https://shop.example/p/1",
+        selector=".rule-detail img",
+        selector_candidates=[".clicked-img", ".box img", ".rule-detail img"],
+        match_counts={".clicked-img": 1, ".box img": 2, ".rule-detail img": 5},
+        image_candidates=[{"src": "/detail1.jpg", "alt": "detail"}],
+    )
+
+    vm._picked(picked, "adapter.product.detail_content")
+
+    assert made
+    assert made[-1].args[0].field_path == "adapter.product.detail_content"
+    made[-1].finished.emit({
+        "validated_selector": ".ai-detail img",
+        "attribute": "data-src",
+        "multiple": True,
+        "confidence": "high",
+        "note": "상세 영역",
+    })
+
+    field = _yaml.safe_load(vm.yamlText)["adapter"]["product"]["detail_content"]
+    assert field["selector"] == ".ai-detail img"
+    assert field["attribute"] == "data-src"
+    assert field["multiple"] is True
+    assert field["html"] is False
+    assert vm.hasPendingHint is False
+    assert closed == [True]
+
+
+def test_image_pick_falls_back_to_rule_selector_when_ai_confidence_low(monkeypatch) -> None:
+    from app.analyzer.element_picker import PickedElement
+    from app.ui_qml.viewmodels import adapter_studio
+    from app.ui_qml.viewmodels.adapter_studio import AdapterStudioViewModel
+    import yaml as _yaml
+
+    monkeypatch.setattr(adapter_studio, "close_picker_session", lambda: None)
+    made = []
+    vm = AdapterStudioViewModel(
+        app_view_model=AppViewModel(),
+        worker_factories={"picker_validate": lambda request: made.append(FakeWorker(request)) or made[-1]},
+    )
+    vm.acceptGeneratedYaml(VALID_YAML)
+    picked = PickedElement(
+        url="https://shop.example/p/1",
+        selector=".rule-extra img",
+        selector_candidates=[".rule-extra img"],
+        match_counts={".rule-extra img": 3},
+        image_candidates=[{"src": "/extra1.jpg", "alt": "extra"}],
+    )
+
+    vm._picked(picked, "adapter.product.extra_image_urls")
+    made[-1].finished.emit({
+        "validated_selector": ".bad-ai img",
+        "attribute": "data-src",
+        "multiple": True,
+        "confidence": "low",
+        "note": "불확실",
+    })
+
+    field = _yaml.safe_load(vm.yamlText)["adapter"]["product"]["extra_image_urls"]
+    assert field["selector"] == ".rule-extra img"
+    assert field["attribute"] == "src"
+    assert field["multiple"] is True
 
 
 def test_picker_cancel_resets_state_and_allows_next_pick(monkeypatch) -> None:

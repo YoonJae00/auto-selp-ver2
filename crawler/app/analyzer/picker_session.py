@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import re
 import time
 import shutil
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Literal
 
 from playwright.sync_api import Browser, BrowserContext, Page, sync_playwright
 
+from app.analyzer.adapter_schema import extract_url_value
 from app.analyzer.element_picker import (
     INSTRUCTION_OVERLAY_SCRIPT,
     MAPPING_PREVIEW_SCRIPT,
@@ -19,7 +22,23 @@ from app.analyzer.element_picker import (
     sanitize_html_preview,
     sanitize_value,
 )
+from app.analyzer.option_text_parser import parse_option_text
 from app.config import load_config
+
+
+def _apply_preview_transform(value: str | None, transform: str | None) -> str | None:
+    if not value:
+        return None
+    if transform == "extract_number":
+        match = re.search(r"-?\d[\d,]*", value)
+        return match.group().replace(",", "") if match else value.strip()
+    if transform == "extract_signed_number":
+        match = re.search(r"([+-]?)\s*([\d,]+)", value)
+        if not match:
+            return value.strip()
+        sign = "-" if match.group(1) == "-" else ""
+        return sign + match.group(2).replace(",", "")
+    return value.strip()[:100]
 
 
 def _safe_goto(page: Page, url: str, wait_until: Literal["commit", "domcontentloaded", "load", "networkidle"] = "domcontentloaded") -> bool:
@@ -598,11 +617,34 @@ class PickerSession:
             for k, v in (raw.get("matchCounts") or {}).items()
             if str(k) in candidates
         }
+        image_candidates: list[dict] = []
+        image_default_selector = ""
         if field_path in {"adapter.product.detail_content", "adapter.product.extra_image_urls"}:
-            broad_selector = self._detail_image_selector(page, candidates)
-            if broad_selector:
-                candidates = [broad_selector]
-                counts = {broad_selector: 1}
+            detail_context = self._detail_image_context(page, candidates)
+            detail_selectors = [
+                sanitize_value(v, 220)
+                for v in detail_context.get("selectors", [])
+                if sanitize_value(v, 220)
+            ]
+            if detail_selectors:
+                candidates = detail_selectors
+                counts = {
+                    str(k): int(v)
+                    for k, v in (detail_context.get("matchCounts") or {}).items()
+                    if str(k) in candidates
+                }
+                image_default_selector = sanitize_value(detail_context.get("defaultSelector"), 220)
+            image_candidates = [
+                {
+                    "selector": sanitize_value(item.get("selector"), 220),
+                    "src": sanitize_value(item.get("src"), 300),
+                    "dataSrc": sanitize_value(item.get("dataSrc"), 300),
+                    "alt": sanitize_value(item.get("alt"), 160),
+                    "classes": sanitize_value(item.get("classes"), 160),
+                }
+                for item in list(detail_context.get("images") or [])[:20]
+                if isinstance(item, dict)
+            ]
         elif field_path in {"adapter.options.groups.0.values_selector", "adapter.options.option_price_delta"}:
             option_selector = self._similar_option_selector(page, candidates)
             if option_selector:
@@ -611,7 +653,7 @@ class PickerSession:
 
         return PickedElement(
             url=sanitize_value(raw.get("url"), 300),
-            selector=choose_best_selector(candidates, counts),
+            selector=image_default_selector or choose_best_selector(candidates, counts),
             selector_candidates=candidates,
             text=sanitize_value(raw.get("text"), 300),
             html_preview=sanitize_html_preview(raw.get("htmlPreview"), 500),
@@ -621,15 +663,21 @@ class PickerSession:
             classes=[sanitize_value(c, 80) for c in raw.get("classes", [])[:10]],
             match_counts=counts,
             container_links=list(raw.get("containerLinks") or []),
+            image_candidates=image_candidates,
         )
 
-    def _detail_image_selector(self, page: Page, candidates: list[str]) -> str:
-        return str(page.evaluate(
+    def _detail_image_context(self, page: Page, candidates: list[str]) -> dict:
+        return dict(page.evaluate(
             r"""
             (candidates) => {
               const cssEscape = (window.CSS && CSS.escape)
                 ? CSS.escape
                 : (s) => String(s).replace(/[^a-zA-Z0-9_-]/g, '\\$&');
+              function uniq(arr) {
+                const seen = {}, out = [];
+                for (const item of arr) if (item && !seen[item]) { seen[item] = 1; out.push(item); }
+                return out;
+              }
               function nthPath(el) {
                 const parts = [];
                 for (let node = el; node && node.nodeType === 1 && parts.length < 6; node = node.parentElement) {
@@ -642,62 +690,57 @@ class PickerSession:
                 }
                 return parts.join(' > ');
               }
-              function selectorFor(el) {
+              function stable(el) {
                 const tag = el.tagName.toLowerCase();
                 if (el.id) return `#${cssEscape(el.id)}`;
-                const classes = Array.prototype.slice.call(el.classList || []).slice(0, 3).filter(Boolean);
-                if (classes.length) {
-                  const sel = `${tag}.${classes.map(cssEscape).join('.')}`;
-                  try { if (document.querySelectorAll(sel).length === 1) return sel; } catch (_) {}
-                }
+                const classes = Array.prototype.slice.call(el.classList || []).slice(0, 2).filter(Boolean);
+                if (classes.length) return `${tag}.${classes.map(cssEscape).join('.')}`;
                 return nthPath(el);
               }
-              // A "stable" selector generalises across products: an id, or a class combo
-              // that matches at least one element. Positional nth-of-type paths do not.
-              function stableSelector(el) {
-                if (el.id) return `#${cssEscape(el.id)}`;
-                const tag = el.tagName.toLowerCase();
-                const classes = Array.prototype.slice.call(el.classList || []).slice(0, 3).filter(Boolean);
-                if (classes.length) {
-                  const sel = `${tag}.${classes.map(cssEscape).join('.')}`;
-                  try { if (document.querySelectorAll(sel).length >= 1) return sel; } catch (_) {}
-                }
-                return '';
-              }
               function imgCount(el) {
-                return el.querySelectorAll('img[src],img[data-src]').length;
+                return el ? el.querySelectorAll('img[src],img[data-src]').length : 0;
               }
-              const DETAIL_RE = /detail|desc|prod|goods|view|content|info|cont/i;
+              function imageRows(box) {
+                return Array.prototype.slice.call((box || document).querySelectorAll('img[src],img[data-src]'), 0, 20).map((img) => ({
+                  selector: stable(img),
+                  src: img.getAttribute('src') || '',
+                  dataSrc: img.getAttribute('data-src') || '',
+                  alt: img.getAttribute('alt') || '',
+                  classes: Array.prototype.slice.call(img.classList || []).join(' '),
+                }));
+              }
               let picked = null;
               for (const sel of candidates || []) {
                 try { picked = document.querySelector(sel); } catch (_) {}
                 if (picked) break;
               }
-              if (!picked) return '';
-              const img = picked.tagName && picked.tagName.toLowerCase() === 'img'
-                ? picked
-                : picked.querySelector('img[src],img[data-src]');
-              if (!img) return '';
-              // Collect img→body ancestors that (a) hold >=2 images and (b) have a stable
-              // selector. Prefer one whose id/class names read like a detail block; else
-              // the stable ancestor with the most images.
-              let keyword = null;
-              let best = null;
-              for (let node = img.parentElement; node && node !== document.body; node = node.parentElement) {
-                if (imgCount(node) < 2) continue;
-                const sel = stableSelector(node);
-                if (!sel) continue;
-                if (!best || imgCount(node) > imgCount(best.node)) best = { node, sel };
-                if (!keyword && DETAIL_RE.test(`${node.id} ${node.className}`)) keyword = { node, sel };
+              if (!picked || !picked.tagName) return {selectors: [], matchCounts: {}, images: [], defaultSelector: ''};
+              const img = picked.tagName.toLowerCase() === 'img' ? picked : picked.querySelector('img[src],img[data-src]');
+              if (!img) return {selectors: [stable(picked)], matchCounts: {}, images: [], defaultSelector: stable(picked)};
+
+              const selectors = [stable(img)];
+              const pickedImgs = imgCount(picked);
+              if (pickedImgs > 0) selectors.push(`${stable(picked)} img`);
+              if (img.parentElement && imgCount(img.parentElement) > 0) selectors.push(`${stable(img.parentElement)} img`);
+
+              let group = img.parentElement || img;
+              for (let node = group; node && node !== document.body; node = node.parentElement) {
+                if (imgCount(node) >= 2) { group = node; break; }
               }
-              const chosen = keyword || best;
-              if (chosen) return `${chosen.sel} img`;
-              // No stable multi-image ancestor — fall back to the single image selector.
-              return selectorFor(img);
+              if (group && group !== img && imgCount(group) > 0) selectors.push(`${stable(group)} img`);
+
+              const finalSelectors = uniq(selectors);
+              const counts = {};
+              for (const sel of finalSelectors) {
+                try { counts[sel] = document.querySelectorAll(sel).length; } catch (_) { counts[sel] = 9999; }
+              }
+              const defaultSelector = imgCount(group) >= 2 ? `${stable(group)} img` : stable(img);
+              const imageBox = pickedImgs > 0 ? picked : group;
+              return {selectors: finalSelectors, matchCounts: counts, images: imageRows(imageBox), defaultSelector};
             }
             """,
             candidates,
-        ) or "")
+        ) or {})
 
     def _similar_option_selector(self, page: Page, candidates: list[str]) -> str:
         return str(page.evaluate(
@@ -787,29 +830,88 @@ class PickerSession:
     def preview_mapping(self, url: str, fields: list[dict]) -> dict:
         """Navigate to url and draw overlay boxes for each mapped field.
 
-        Returns {"found": [key, ...], "missing": [key, ...]}.
-        Selector resolution and coordinate calculation run in JS so scroll
-        offsets are captured correctly and Playwright-specific selectors work.
+        Returns {"found": [key, ...], "missing": [key, ...], "values": {key: value}}.
         """
         page = self._ensure_page()
         _safe_goto(page, url)
-        # Let JS resolve selectors and calculate absolute coordinates
-        found_keys = page.evaluate(
-            """(fields) => {
-                const found = [];
-                fields.forEach(({key, label, selector}) => {
-                    try {
-                        const el = document.querySelector(selector);
-                        if (el) found.push(key);
-                    } catch (_) {}
-                });
-                return found;
-            }""",
-            fields,
-        )
+        found_keys = []
+        values = {}
+        for field in fields:
+            key = field.get("key")
+            if not key:
+                continue
+            value = self._preview_field_value(page, field)
+            if value:
+                values[key] = value
+                found_keys.append(key)
+                continue
+            selector = str(field.get("selector") or "").strip()
+            if selector:
+                try:
+                    if page.query_selector(selector):
+                        found_keys.append(key)
+                except Exception:
+                    pass
         page.evaluate(MAPPING_PREVIEW_SCRIPT, fields)
         missing = [f["key"] for f in fields if f["key"] not in found_keys]
-        return {"found": list(found_keys), "missing": missing}
+        return {"found": list(found_keys), "missing": missing, "values": values}
+
+    def _preview_field_value(self, page: Page, field: dict) -> str | None:
+        selector = str(field.get("selector") or "").strip()
+        transform = field.get("transform") or "strip"
+        if selector:
+            try:
+                if field.get("multiple"):
+                    reads = [
+                        self._read_preview_element(element, field) or ""
+                        for element in page.query_selector_all(selector)
+                    ]
+                    parser = field.get("option_text_parser")
+                    if parser:
+                        parsed = [parse_option_text(item, parser) for item in reads if item]
+                        if field.get("key") == "option_prices":
+                            prices = [
+                                item.price_delta if item.price_delta is not None else item.supply_price
+                                for item in parsed
+                                if item.price_delta is not None or item.supply_price is not None
+                            ]
+                            if prices:
+                                preview = ", ".join(str(item) for item in prices[:5])
+                                return f"{len(prices)}개 · {preview}"[:100]
+                        else:
+                            values = [item.value for item in parsed if item.value]
+                            if values:
+                                preview = ", ".join(item[:50] for item in values[:5])
+                                return f"{len(values)}개 · {preview}"[:100]
+                    values = [_apply_preview_transform(item, transform) for item in reads if item]
+                    values = [item for item in values if item]
+                    if values:
+                        preview = ", ".join(item[:50] for item in values[:5])
+                        return f"{len(values)}개 · {preview}"[:100]
+                else:
+                    element = page.query_selector(selector)
+                    if element:
+                        return _apply_preview_transform(self._read_preview_element(element, field), transform)
+            except Exception:
+                pass
+        if field.get("fallback_from") == "url":
+            value = extract_url_value(
+                page.url,
+                SimpleNamespace(url_param=field.get("url_param"), url_pattern=field.get("url_pattern")),
+            )
+            return _apply_preview_transform(value, transform)
+        fallback = field.get("fallback")
+        return _apply_preview_transform(str(fallback), transform) if fallback else None
+
+    def _read_preview_element(self, element, field: dict) -> str | None:
+        if field.get("html"):
+            return element.inner_html()
+        attribute = field.get("attribute")
+        if attribute:
+            value = element.get_attribute(attribute)
+            fallback_attribute = field.get("fallback_attribute")
+            return value or (element.get_attribute(fallback_attribute) if fallback_attribute else None)
+        return element.inner_text()
 
     def close(self) -> None:
         """Close page, browser, playwright, and clean up the temp profile."""

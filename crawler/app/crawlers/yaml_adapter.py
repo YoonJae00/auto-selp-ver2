@@ -13,6 +13,7 @@ from app.analyzer.adapter_schema import (
     OptionsConfig,
     extract_url_value,
 )
+from app.analyzer.option_text_parser import parse_option_text, _legacy_split_option_text_price
 from app.credentials.store import load_supplier_credentials
 from app.crawlers.base import BaseAdapter, CategoryEntry, CrawlResult, StockSnapshotData
 from app.crawlers.engine import PlaywrightEngine
@@ -56,17 +57,7 @@ def _extract_signed_number(text: str | None) -> int | None:
 
 
 def _split_option_text_price(text: str | None) -> tuple[str | None, int | None]:
-    if not text:
-        return None, None
-    cleaned = re.sub(r"\s+", " ", text).strip()
-    match = re.search(r"\s*[\(\[]\s*([+-])\s*([\d,]+)\s*원?\s*[\)\]]\s*$", cleaned)
-    if not match:
-        return cleaned or None, None
-    name = cleaned[:match.start()].strip()
-    if not name:
-        return cleaned, None
-    sign = -1 if match.group(1) == "-" else 1
-    return name, sign * int(match.group(2).replace(",", ""))
+    return _legacy_split_option_text_price(text)
 
 
 def _apply_transform(value: str | None, transform: str) -> str | int | None:
@@ -93,13 +84,21 @@ def _map_supplier_status(status_value: Any, mapping: dict[str, str], default: st
         cleaned = str(status_value).strip()
         if cleaned in {"available", "sold_out", "stopped", "unknown"}:
             return cleaned
-        return mapping.get(cleaned, default)
+        if cleaned in mapping:
+            return mapping[cleaned]
+        lowered = cleaned.lower()
+        for key, value in mapping.items():
+            needle = str(key).strip().lower()
+            if len(needle) >= 2 and needle in lowered:
+                return value
+        return default
     return default if default == "available" else "unknown"
 
 
 # Placeholder/decorative image markers — lazy-load spacers, blank pixels, icons.
 _JUNK_IMAGE_RE = re.compile(r"blank|spacer|1x1|no_?image|noimg|transparent|/icon", re.IGNORECASE)
-_IMAGE_EXT = (".jpg", ".jpeg", ".png", ".webp", ".gif")
+# gif is excluded: on these sites gifs are almost always banners/spacers, not product images.
+_IMAGE_EXT = (".jpg", ".jpeg", ".png", ".webp")
 
 
 def _is_placeholder_src(value: Any) -> bool:
@@ -125,9 +124,20 @@ def _supported_image_url(value: Any) -> str | None:
     return url if path.endswith(_IMAGE_EXT) or "." not in last_segment else None
 
 
-def _image_csv(value: Any) -> str | None:
+def _image_values(value: Any) -> list[str]:
     values = value if isinstance(value, list) else ([value] if value else [])
-    images = [img for img in (_supported_image_url(item) for item in values) if img]
+    return [img for img in (_supported_image_url(item) for item in values) if img]
+
+
+def _without_images(images: list[str], excluded: str | None, base_url: str = "") -> list[str]:
+    if not excluded:
+        return images
+    excluded_key = urljoin(base_url, excluded)
+    return [img for img in images if urljoin(base_url, img) != excluded_key]
+
+
+def _image_csv(value: Any) -> str | None:
+    images = _image_values(value)
     return ",".join(images) or None
 
 
@@ -411,12 +421,10 @@ class YAMLAdapter(BaseAdapter):
             main_image = fields.get("main_image_url")
             main_image = _supported_image_url(main_image)
 
-            detail = _image_csv(fields.get("detail_content"))
+            detail_images = _without_images(_image_values(fields.get("detail_content")), main_image, page.url)
+            detail = ",".join(detail_images) or None
 
-            extra_images = fields.get("extra_image_urls")
-            if not isinstance(extra_images, list):
-                extra_images = [extra_images] if extra_images else []
-            extra_images = [img for img in (_supported_image_url(item) for item in extra_images) if img]
+            extra_images = _without_images(_image_values(fields.get("extra_image_urls")), main_image, page.url)
 
             raw_meta: dict[str, Any] = {
                 "url": url,
@@ -575,7 +583,8 @@ class YAMLAdapter(BaseAdapter):
             values = await page.query_selector_all(group_config.values_selector)
             for index, el in enumerate(values):
                 raw_value_text = await self._read_option_value(el, group_config)
-                value_text, text_price_delta = _split_option_text_price(raw_value_text)
+                parsed_text = parse_option_text(raw_value_text, config.option_text_parser, base_price)
+                value_text = parsed_text.value
                 if not value_text:
                     continue
                 option_data = {
@@ -593,9 +602,9 @@ class YAMLAdapter(BaseAdapter):
                     price_delta_raw = await self._extract_field(page, config.option_price_delta)
                     price_delta = _extract_signed_number(str(price_delta_raw)) if isinstance(price_delta_raw, str) else price_delta_raw
                     option_supply = (base_price or 0) + (price_delta or 0) if base_price else None
-                elif text_price_delta is not None:
-                    price_delta = text_price_delta
-                    option_supply = base_price + price_delta if base_price is not None else None
+                elif parsed_text.price_delta is not None or parsed_text.supply_price is not None:
+                    price_delta = parsed_text.price_delta
+                    option_supply = parsed_text.supply_price
                 image_url = None
                 if config.option_image_url:
                     image_url = await self._extract_field(page, config.option_image_url)

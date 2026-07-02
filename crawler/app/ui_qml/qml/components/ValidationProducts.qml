@@ -75,24 +75,44 @@ Item {
                         Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: Ui.Theme.border }
                         Repeater {
                             model: card.modelData.fields
-                            delegate: RowLayout {
+                            delegate: ColumnLayout {
                                 required property var modelData
                                 Layout.fillWidth: true
-                                spacing: 6
-                                Text {
-                                    text: modelData.label
-                                    color: Ui.Theme.textMuted
-                                    font.pixelSize: 11
-                                    Layout.preferredWidth: 64
-                                }
-                                Text {
+                                spacing: 4
+                                RowLayout {
                                     Layout.fillWidth: true
-                                    text: modelData.value || "—"
-                                    color: modelData.value === "" ? Ui.Theme.textMuted : (modelData.ok ? Ui.Theme.success : Ui.Theme.danger)
-                                    font.pixelSize: 11
-                                    wrapMode: Text.WrapAnywhere
-                                    maximumLineCount: 2
-                                    elide: Text.ElideRight
+                                    spacing: 6
+                                    Text {
+                                        text: modelData.label
+                                        color: Ui.Theme.textMuted
+                                        font.pixelSize: 11
+                                        Layout.preferredWidth: 64
+                                    }
+                                    Text {
+                                        Layout.fillWidth: true
+                                        text: modelData.value || "—"
+                                        color: modelData.value === "" ? Ui.Theme.textMuted : (modelData.ok ? Ui.Theme.success : Ui.Theme.danger)
+                                        font.pixelSize: 11
+                                        wrapMode: Text.WrapAnywhere
+                                        maximumLineCount: 2
+                                        elide: Text.ElideRight
+                                    }
+                                }
+                                RowLayout {
+                                    visible: modelData.imageUrls && modelData.imageUrls.length > 0
+                                    Layout.leftMargin: 70
+                                    spacing: 4
+                                    Repeater {
+                                        model: modelData.imageUrls || []
+                                        delegate: Image {
+                                            required property string modelData
+                                            source: modelData
+                                            Layout.preferredWidth: 34
+                                            Layout.preferredHeight: 34
+                                            fillMode: Image.PreserveAspectFit
+                                            asynchronous: true
+                                        }
+                                    }
                                 }
                             }
                         }
