@@ -49,7 +49,7 @@ def _value(entry: dict[str, Any]) -> str:
     return str(entry.get("value") or "").strip()
 
 
-def _is_success(field: str, entry: dict[str, Any]) -> bool:
+def is_field_value_ok(field: str, entry: dict[str, Any]) -> bool:
     value = _value(entry)
     if field == "raw_product_name":
         return bool(value) and value != "이름 없음"
@@ -65,7 +65,7 @@ def _is_success(field: str, entry: dict[str, Any]) -> bool:
 
 def _field_validation(field: str, entries: list[dict[str, Any]]) -> FieldValidation:
     total = len(entries)
-    passed = sum(1 for entry in entries if _is_success(field, entry))
+    passed = sum(1 for entry in entries if is_field_value_ok(field, entry))
     return FieldValidation(field=field, passed=passed, total=total, ok=total > 0 and passed >= _threshold(total))
 
 

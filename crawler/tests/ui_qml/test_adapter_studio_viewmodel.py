@@ -129,6 +129,55 @@ def test_url_param_options_parses_sample_url(vm) -> None:
     assert options[0]["display"] == "goodsno = 12345"
 
 
+def test_validation_products_pivot_raw_results_by_product(vm) -> None:
+    vm.acceptGeneratedYaml(VALID_YAML)
+    raw = {
+        "raw_product_name": [
+            {"url": "https://s/1", "value": "티셔츠", "ok": True},
+            {"url": "https://s/2", "value": "바지", "ok": True},
+        ],
+        "supply_price": [
+            {"url": "https://s/1", "value": "10,000", "ok": True},
+            {"url": "https://s/2", "value": "", "ok": False},
+        ],
+        "supplier_product_code": [
+            {"url": "https://s/1", "value": "1001", "ok": True},
+            {"url": "https://s/2", "value": "https://s/2", "ok": True},  # code == url → fail
+        ],
+    }
+    vm.acceptValidation(raw, vm.beginValidation())
+    products = vm.validationProducts
+    assert len(products) == 2
+    assert products[0]["name"] == "티셔츠"
+    assert products[0]["url"] == "https://s/1"
+    price0 = next(f for f in products[0]["fields"] if f["key"] == "supply_price")
+    assert price0["value"] == "10,000" and price0["ok"] is True
+    price1 = next(f for f in products[1]["fields"] if f["key"] == "supply_price")
+    assert price1["value"] == "" and price1["ok"] is False
+    # product code equal to the url must be flagged as not ok
+    code1 = next(f for f in products[1]["fields"] if f["key"] == "supplier_product_code")
+    assert code1["ok"] is False
+
+
+def test_validation_products_empty_without_results(vm) -> None:
+    assert vm.validationProducts == []
+
+
+def test_needs_more_test_urls_and_add(vm) -> None:
+    # fixture provides only detailUrl and no sampleProducts → 1 test url
+    assert vm.testUrls == ["https://shop.example/p/1"]
+    assert vm.needsMoreTestUrls is True
+    assert vm.addTestUrl("https://shop.example/p/2") is True
+    assert vm.addTestUrl("not-a-url") is False  # rejected
+    assert vm.addTestUrl("https://shop.example/p/3") is True
+    assert vm.testUrls == [
+        "https://shop.example/p/1", "https://shop.example/p/2", "https://shop.example/p/3",
+    ]
+    assert vm.needsMoreTestUrls is False
+    vm.removeTestUrl("https://shop.example/p/2")
+    assert vm.needsMoreTestUrls is True
+
+
 def test_editing_validated_yaml_makes_validation_stale(vm) -> None:
     vm.acceptGeneratedYaml(VALID_YAML)
     tested_hash = vm.beginValidation()

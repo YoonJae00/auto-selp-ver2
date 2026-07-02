@@ -18,7 +18,11 @@ from app.analyzer.adapter_schema import (
 )
 from app.analyzer.element_picker import suggest_defaults_for_field
 from app.analyzer.mapping_hints import MappingHint, apply_locked_hints_to_yaml_dict
-from app.analyzer.validation_summary import build_validation_summary, get_save_gate_decision
+from app.analyzer.validation_summary import (
+    build_validation_summary,
+    get_save_gate_decision,
+    is_field_value_ok,
+)
 from app.config import load_config
 from app.analyzer.session_store import clear_session_state, save_session_state
 from app.credentials.store import (
@@ -80,6 +84,8 @@ class AdapterStudioViewModel(BaseViewModel):
         self._validated_hash: str | None = None
         self._validation_stale = True
         self._validation_summary = None
+        self._validation_raw: dict[str, list[dict]] = {}
+        self._extra_test_urls: list[str] = []
         self._save_warning: dict[str, Any] = {}
         self._warning_ack: tuple[str, str] | None = None
         self._mapping_rows = ListModel(MAPPING_ROLES, parent=self)
@@ -129,6 +135,9 @@ class AdapterStudioViewModel(BaseViewModel):
     yamlDirty = Property(bool, lambda self: self._yaml_dirty, notify=stateChanged)
     validationStale = Property(bool, lambda self: self._validation_stale, notify=stateChanged)
     validationSummary = Property("QVariantMap", lambda self: self._summary_map(), notify=stateChanged)
+    validationProducts = Property("QVariantList", lambda self: self._build_validation_products(), notify=stateChanged)
+    testUrls = Property("QVariantList", lambda self: self._available_test_urls(), notify=stateChanged)
+    needsMoreTestUrls = Property(bool, lambda self: len(self._available_test_urls()) < 3, notify=stateChanged)
     mappingRows = Property(QObject, lambda self: self._mapping_rows, constant=True)
     probeSummary = Property("QVariantMap", lambda self: self._probe_summary_with_checks(), notify=stateChanged)
     allProductsAutoDetected = Property(bool, lambda self: bool(self._probe_summary.get("hasAllProducts")), notify=stateChanged)
@@ -197,7 +206,7 @@ class AdapterStudioViewModel(BaseViewModel):
             "adapter.product.extra_image_urls": "추가 이미지 중 하나를 클릭하세요. 같은 선택자에 매칭되는 이미지를 여러 개 수집합니다.",
             "adapter.product.raw_product_name": "상품명 텍스트를 클릭하세요.",
             "adapter.product.supply_price": "공급가격 텍스트를 클릭하세요.",
-            "adapter.product.detail_content": "상세 이미지 중 아무거나 한 장을 클릭하세요. 주변 상세 이미지를 자동으로 함께 수집합니다.",
+            "adapter.product.detail_content": "상세 페이지 이미지 중 아무거나 한 장을 클릭하세요. 주변 이미지를 자동으로 함께 수집합니다.",
             OPTION_VALUES_FIELD_PATH: "옵션값 하나를 클릭하세요. 같은 그룹의 값을 자동으로 함께 수집합니다.",
             OPTION_PRICES_FIELD_PATH: "옵션가격 하나를 클릭하세요. 같은 순서의 가격들을 자동으로 함께 수집합니다.",
         }
@@ -527,6 +536,8 @@ class AdapterStudioViewModel(BaseViewModel):
 
     def _probe_finished(self, result) -> None:
         self._excluded_urls = set()
+        self._extra_test_urls = []
+        self._validation_raw = {}
         self._probe_result = result
         self._probe_summary = {
             "finalUrl": result.final_url, "encoding": result.encoding,
@@ -647,6 +658,7 @@ class AdapterStudioViewModel(BaseViewModel):
 
     @Slot("QVariantMap", str)
     def acceptValidation(self, raw_results: Mapping[str, Any], tested_yaml_hash: str) -> None:
+        self._validation_raw = dict(raw_results)
         self._validation_summary = build_validation_summary(dict(raw_results))
         self._validated_hash = str(tested_yaml_hash)
         self._validation_stale = yaml_content_hash(self._yaml_text) != self._validated_hash
@@ -778,6 +790,74 @@ class AdapterStudioViewModel(BaseViewModel):
             options.append({"name": name, "value": value, "display": f"{name} = {value}"})
         return options
 
+    def _available_test_urls(self) -> list[str]:
+        """검증에 쓸 상품 URL: 분석에서 찾은 샘플 + 사용자가 추가한 URL(중복 제거)."""
+        urls = [str(item["url"]) for item in self._probe_summary.get("sampleProducts", []) if item.get("url")]
+        if not urls:
+            detail = str(self._inputs["detailUrl"] or "").strip()
+            if detail:
+                urls = [detail]
+        for extra in self._extra_test_urls:
+            if extra not in urls:
+                urls.append(extra)
+        return urls
+
+    @Slot(str, result=bool)
+    def addTestUrl(self, url: str) -> bool:
+        url = str(url or "").strip()
+        if not url.startswith(("http://", "https://")):
+            self.set_field_errors({"extraTestUrl": "URL은 http:// 또는 https://로 시작해야 합니다."})
+            return False
+        if url not in self._available_test_urls():
+            self._extra_test_urls.append(url)
+        self.set_field_errors({})
+        self._emit()
+        return True
+
+    @Slot(str)
+    def removeTestUrl(self, url: str) -> None:
+        url = str(url or "").strip()
+        if url in self._extra_test_urls:
+            self._extra_test_urls.remove(url)
+            self._emit()
+
+    def _build_validation_products(self) -> list[dict[str, Any]]:
+        """검증 raw 결과를 상품별로 피벗: [{index, url, name, imageUrl, fields:[{key,label,value,ok}]}]."""
+        raw = self._validation_raw
+        if not raw:
+            return []
+        count = max((len(entries) for entries in raw.values() if isinstance(entries, list)), default=0)
+        products: list[dict[str, Any]] = []
+        for i in range(count):
+            fields: list[dict[str, Any]] = []
+            url = ""
+            for key, label in FIELD_LABELS_KO.items():
+                entries = raw.get(key)
+                if not isinstance(entries, list) or i >= len(entries):
+                    continue
+                entry = entries[i]
+                url = url or str(entry.get("url") or "")
+                value = entry.get("value")
+                fields.append({
+                    "key": key,
+                    "label": label,
+                    "value": str(value or ""),
+                    "ok": bool(value) and is_field_value_ok(key, entry),
+                })
+            def field_value(key: str) -> str:
+                entries = raw.get(key)
+                if isinstance(entries, list) and i < len(entries):
+                    return str(entries[i].get("value") or "")
+                return ""
+            products.append({
+                "index": i + 1,
+                "url": url,
+                "name": field_value("raw_product_name"),
+                "imageUrl": field_value("main_image_url"),
+                "fields": fields,
+            })
+        return products
+
     @Slot(bool)
     def setExtraImagesEnabled(self, enabled: bool) -> None:
         try:
@@ -813,10 +893,7 @@ class AdapterStudioViewModel(BaseViewModel):
         except Exception as exc:
             self.set_field_errors({"yamlText": f"YAML 오류: {exc}"})
             return False
-        urls = [str(item.get("url")) for item in self._probe_summary.get("sampleProducts", []) if item.get("url")]
-        if not urls:
-            detail = str(self._inputs["detailUrl"] or "").strip()
-            urls = [detail] if detail else []
+        urls = self._available_test_urls()
         if not urls:
             self.set_field_errors({"form": "테스트할 상품 URL이 없습니다."})
             return False

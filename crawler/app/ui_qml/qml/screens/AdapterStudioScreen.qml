@@ -365,17 +365,70 @@ Item {
                         }
                     }
                     ColumnLayout {
+                        spacing: 8
                         Text { text: "검증 및 저장"; color: Ui.Theme.text; font.pixelSize: 20; font.weight: Font.Bold }
                         Text { text: root.viewModel.validationSummary.message || "검증이 필요합니다."; color: root.viewModel.canSave ? Ui.Theme.success : Ui.Theme.warning }
-                        Text { text: "샘플 " + (root.viewModel.validationSummary.totalSamples || 0) + "개"; color: Ui.Theme.textMuted }
+                        Text { text: "테스트 상품 " + (root.viewModel.testUrls.length || 0) + "개"; color: Ui.Theme.textMuted }
                         Components.InlineBanner {
                             Layout.fillWidth: true
                             visible: Boolean(root.viewModel.saveWarning.message)
                             text: root.viewModel.saveWarning.message || ""
                             severity: "warning"
                         }
-                        Item { Layout.fillHeight: true }
+                        // 테스트 상품이 3개 미만이면 URL 추가 요청
+                        Components.GlassPanel {
+                            Layout.fillWidth: true
+                            visible: root.viewModel.needsMoreTestUrls
+                            implicitHeight: addUrlCol.implicitHeight + 24
+                            color: Qt.alpha(Ui.Theme.warning, 0.10)
+                            border.color: Ui.Theme.warning
+                            ColumnLayout {
+                                id: addUrlCol
+                                anchors.fill: parent
+                                anchors.margins: 12
+                                spacing: 6
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: "자동으로 찾은 테스트 상품이 " + (root.viewModel.testUrls.length || 0) + "개뿐입니다. 정확한 검증을 위해 상품 상세 URL을 3개까지 추가해 주세요."
+                                    color: Ui.Theme.warning
+                                    font.pixelSize: 12
+                                    wrapMode: Text.Wrap
+                                }
+                                Repeater {
+                                    model: root.viewModel.testUrls
+                                    delegate: RowLayout {
+                                        required property var modelData
+                                        Layout.fillWidth: true
+                                        spacing: 6
+                                        Text { Layout.fillWidth: true; text: modelData; color: Ui.Theme.textMuted; font.pixelSize: 11; elide: Text.ElideMiddle }
+                                    }
+                                }
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 6
+                                    Components.AppTextField {
+                                        id: extraUrlField
+                                        Layout.fillWidth: true
+                                        placeholderText: "추가할 상품 상세 URL (https://...)"
+                                        size: "compact"
+                                        Accessible.name: "추가 테스트 상품 URL"
+                                        onAccepted: if (root.viewModel.addTestUrl(text)) text = ""
+                                    }
+                                    Components.AppButton {
+                                        text: "추가"
+                                        enabled: !root.viewModel.busy && extraUrlField.text.length > 0
+                                        onClicked: if (root.viewModel.addTestUrl(extraUrlField.text)) extraUrlField.text = ""
+                                    }
+                                }
+                            }
+                        }
+                        Components.ValidationProducts {
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            model: root.viewModel.validationProducts
+                        }
                         RowLayout {
+                            Components.AppButton { text: "매핑 수정"; enabled: !root.viewModel.busy; onClicked: root.viewModel.setCurrentStage(2) }
                             Components.AppButton { text: "검증 실행"; enabled: !root.viewModel.busy; onClicked: root.viewModel.testAll() }
                             Components.AppButton {
                                 visible: Boolean(root.viewModel.saveWarning.allowContinue)

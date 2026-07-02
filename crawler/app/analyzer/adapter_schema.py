@@ -184,7 +184,7 @@ FIELD_LABELS_KO: dict[str, str] = {
     "supply_price": "공급가",
     "origin": "원산지",
     "main_image_url": "대표 이미지",
-    "detail_content": "상세 이미지",
+    "detail_content": "상세 페이지",
     "extra_image_urls": "추가 이미지",
 }
 
