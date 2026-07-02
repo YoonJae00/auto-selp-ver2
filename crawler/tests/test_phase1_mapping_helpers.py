@@ -12,6 +12,7 @@ from app.crawlers.yaml_adapter import (
     _status_from_maxq_value,
     _supported_image_url,
 )
+from app.workers.adapter import AdapterTestWorker
 
 
 class _FakeElement:
@@ -78,11 +79,14 @@ def test_image_csv_filters_and_joins_supported_images() -> None:
     assert _image_csv(["/d/no-extension"]) is None
 
 
-def test_split_option_text_price_only_reads_trailing_parenthesized_price() -> None:
+def test_split_option_text_price_reads_trailing_signed_price() -> None:
     assert _split_option_text_price("M (+5000원)") == ("M", 5000)
     assert _split_option_text_price("L(+10,000)") == ("L", 10000)
     assert _split_option_text_price("XL (-1,000원)") == ("XL", -1000)
     assert _split_option_text_price("100ml (+500원)") == ("100ml", 500)
+    assert _split_option_text_price("브라운 + 0원") == ("브라운", 0)
+    assert _split_option_text_price("아이보리 + 1000원") == ("아이보리", 1000)
+    assert _split_option_text_price("블랙 - 500원") == ("블랙", -500)
     assert _split_option_text_price("아이폰 15") == ("아이폰 15", None)
     assert _split_option_text_price("블랙 (추가금 없음)") == ("블랙 (추가금 없음)", None)
 
@@ -146,6 +150,22 @@ async def test_extract_options_splits_price_from_option_text() -> None:
     assert [opt.option_price_delta for opt in options] == [5000, 10000, None]
     assert [opt.option_supply_price for opt in options] == [17000, 22000, None]
     assert [opt.raw_option_text for opt in options] == ["M (+5000원)", "L (+10,000원)", "아이폰 15"]
+
+
+@pytest.mark.asyncio
+async def test_adapter_test_worker_previews_embedded_option_prices() -> None:
+    worker = AdapterTestWorker.__new__(AdapterTestWorker)
+    adapter = type("Adapter", (), {
+        "adapter": type("AdapterData", (), {
+            "options": OptionsConfig(groups=[OptionGroupConfig(name="색상", values_selector=".option")])
+        })()
+    })()
+    page = _FakePage({
+        ".option": [_FakeElement("브라운 + 0원"), _FakeElement("아이보리 + 1000원")],
+    })
+
+    assert await worker._extract_test_option(page, adapter, "option_values") == "2개 · 브라운, 아이보리"
+    assert await worker._extract_test_option(page, adapter, "option_prices") == "2개 · 0, 1000"
 
 
 def test_normalize_sample_products_deduplicates_and_prefers_quality() -> None:

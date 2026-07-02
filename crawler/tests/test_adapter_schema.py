@@ -130,7 +130,9 @@ def test_mapping_rows_hide_unused_fields_and_include_option_row() -> None:
     assert rows[-2]["key"] == "option_values"
     assert rows[-2]["fieldPath"] == "adapter.options.groups.0.values_selector"
     assert rows[-2]["selector"] == ".opt option"
+    assert rows[-2]["testable"] is True
     assert rows[-1]["key"] == "option_prices"
+    assert rows[-1]["testable"] is True
 
 
 def test_mapping_rows_include_option_price_row() -> None:

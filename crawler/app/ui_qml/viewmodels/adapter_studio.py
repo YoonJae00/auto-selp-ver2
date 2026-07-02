@@ -827,11 +827,12 @@ class AdapterStudioViewModel(BaseViewModel):
         if not raw:
             return []
         count = max((len(entries) for entries in raw.values() if isinstance(entries, list)), default=0)
+        labels = {**FIELD_LABELS_KO, "option_values": "옵션값", "option_prices": "옵션가격"}
         products: list[dict[str, Any]] = []
         for i in range(count):
             fields: list[dict[str, Any]] = []
             url = ""
-            for key, label in FIELD_LABELS_KO.items():
+            for key, label in labels.items():
                 entries = raw.get(key)
                 if not isinstance(entries, list) or i >= len(entries):
                     continue

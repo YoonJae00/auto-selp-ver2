@@ -159,6 +159,21 @@ def test_validation_products_pivot_raw_results_by_product(vm) -> None:
     assert code1["ok"] is False
 
 
+def test_validation_products_include_option_results(vm) -> None:
+    vm.acceptGeneratedYaml(VALID_YAML)
+    raw = {
+        **successful_results(),
+        "option_values": [{"url": "https://s/1", "value": "2개 · 브라운, 아이보리", "ok": True}],
+        "option_prices": [{"url": "https://s/1", "value": "2개 · 0, 1000", "ok": True}],
+    }
+
+    vm.acceptValidation(raw, vm.beginValidation())
+
+    fields = vm.validationProducts[0]["fields"]
+    assert next(f for f in fields if f["key"] == "option_values")["value"] == "2개 · 브라운, 아이보리"
+    assert next(f for f in fields if f["key"] == "option_prices")["value"] == "2개 · 0, 1000"
+
+
 def test_validation_products_empty_without_results(vm) -> None:
     assert vm.validationProducts == []
 
