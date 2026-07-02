@@ -12,9 +12,10 @@ from PySide6.QtCore import QObject, QThread, Signal, Slot
 
 from app.analyzer.adapter_generator import generate_adapter_yaml
 from app.analyzer.adapter_schema import extract_url_value
+from app.analyzer.option_text_parser import parse_option_text
 from app.analyzer.picker_session import PickerSession
 from app.analyzer.site_probe import probe_site
-from app.crawlers.yaml_adapter import _split_option_text_price, _status_from_maxq_value
+from app.crawlers.yaml_adapter import _status_from_maxq_value
 
 
 @dataclass
@@ -77,6 +78,17 @@ class MappingPreviewRequest:
     yaml_text: str
     target_url: str
     fields: list[dict]
+    login_url: str | None = None
+    username: str | None = None
+    password: str | None = None
+    storage_state: dict | None = None
+    supplier_key: str | None = None
+
+
+@dataclass
+class OptionTextParserAnalyzeRequest:
+    yaml_text: str
+    target_url: str
     login_url: str | None = None
     username: str | None = None
     password: str | None = None
@@ -763,8 +775,9 @@ class AdapterTestWorker(_AsyncWorker):
         reads = [await self._read_test_option_value(el, group) or "" for el in elements]
         if field_name == "option_prices":
             prices = [
-                price for _, price in (_split_option_text_price(item) for item in reads)
-                if price is not None
+                parsed.price_delta if parsed.price_delta is not None else parsed.supply_price
+                for parsed in (parse_option_text(item, options.option_text_parser) for item in reads)
+                if parsed.price_delta is not None or parsed.supply_price is not None
             ]
             if not prices:
                 return None
@@ -772,7 +785,7 @@ class AdapterTestWorker(_AsyncWorker):
             return f"{len(prices)}개 · {preview}"
         values: list[str] = []
         for item in reads:
-            value = (_split_option_text_price(item)[0] or "").strip()
+            value = (parse_option_text(item, options.option_text_parser).value or "").strip()
             if value:
                 values.append(value)
         if not values:
@@ -847,6 +860,115 @@ class AdapterTestWorker(_AsyncWorker):
 
 
 TestWorker = AdapterTestWorker
+
+
+class OptionTextParserAnalyzeWorker(_AsyncWorker):
+    finished = Signal(dict)
+
+    def __init__(self, request: OptionTextParserAnalyzeRequest) -> None:
+        super().__init__()
+        self.request = request
+
+    def run(self) -> None:
+        try:
+            self._run_async(self._analyze(), self.finished.emit)
+        finally:
+            self.request.password = None
+
+    async def _analyze(self) -> dict:
+        import json
+        from app.analyzer.llm_client import get_llm_client
+        from app.config import load_config
+        from app.crawlers.engine import create_engine
+        from app.crawlers.registry import load_adapter_from_text
+
+        adapter = load_adapter_from_text(self.request.yaml_text)
+        group = adapter.adapter.options.groups[0] if adapter.adapter.options.groups else None
+        if group is None or not group.values_selector.strip():
+            raise ValueError("옵션값 선택자를 먼저 매핑하세요.")
+
+        state = self.request.storage_state
+        if state is None and self.request.supplier_key:
+            try:
+                from app.analyzer.session_store import load_session_state
+                state = load_session_state(self.request.supplier_key)
+            except Exception:
+                pass
+
+        async with create_engine(headless=True, storage_state=state) as engine:
+            page = await engine.new_page()
+            if self.request.login_url and self.request.username and self.request.password and state is None:
+                from app.analyzer.login_helper import perform_login as _login_shared
+                await _login_shared(page, self.request.login_url, self.request.username, self.request.password)
+            await page.goto(self.request.target_url, wait_until="domcontentloaded", timeout=15_000)
+            await page.wait_for_timeout(1000)
+            elements = await page.query_selector_all(group.values_selector)
+            examples: list[str] = []
+            for el in elements[:30]:
+                if group.value_text == "value":
+                    text = await el.get_attribute("value")
+                elif group.value_text == "attribute" and group.value_attribute:
+                    text = await el.get_attribute(group.value_attribute)
+                else:
+                    text = await el.inner_text()
+                text = " ".join(str(text or "").split())
+                if text:
+                    examples.append(text[:200])
+            await page.close()
+
+        if not examples:
+            raise ValueError("옵션 샘플 텍스트를 찾지 못했습니다.")
+
+        client = get_llm_client(load_config().llm_provider)
+        system_prompt = (
+            "당신은 도매 쇼핑몰 옵션 텍스트 파서 설계자입니다. "
+            "옵션 텍스트 예시에서 옵션값과 가격을 분리하는 Python 정규식을 만드세요.\n\n"
+            "반드시 JSON만 응답하세요:\n"
+            '{"enabled": true, "pattern": "정규식", "price_kind": "delta|supply", '
+            '"confidence": "high|medium|low", "examples": ["예시"]}\n\n'
+            "규칙:\n"
+            "1. pattern에는 named group (?P<value>...), (?P<price>...)가 반드시 있어야 합니다.\n"
+            "2. 부호가 가격과 분리되어 있으면 (?P<sign>[+-])를 사용하세요.\n"
+            "3. 가격이 추가금/차감금이면 price_kind=delta, 옵션 공급가 자체면 supply입니다.\n"
+            "4. 확신이 없으면 confidence=low로 응답하세요.\n"
+            "5. JSON 외 텍스트는 출력하지 마세요."
+        )
+        user_prompt = "옵션 텍스트 예시:\n" + "\n".join(f"- {item}" for item in examples)
+        response = await client.generate(system_prompt, user_prompt)
+        text = response.strip()
+        if text.startswith("```"):
+            lines = text.split("\n")
+            end = len(lines) - 1 if lines[-1].strip() == "```" else len(lines)
+            text = "\n".join(lines[1:end]).strip()
+        result = json.loads(text)
+
+        pattern = str(result.get("pattern") or "").strip()
+        price_kind = str(result.get("price_kind") or "delta").strip()
+        confidence = str(result.get("confidence") or "low").strip()
+        if price_kind not in {"delta", "supply"}:
+            price_kind = "delta"
+        if confidence not in {"high", "medium", "low"}:
+            confidence = "low"
+        if not pattern or "?P<value>" not in pattern or "?P<price>" not in pattern:
+            raise ValueError("AI가 유효한 옵션 파서 정규식을 만들지 못했습니다.")
+        if confidence == "low":
+            raise ValueError("AI 옵션 분석 신뢰도가 낮습니다. 옵션값 선택자를 다시 확인하세요.")
+        try:
+            re.compile(pattern)
+        except re.error as exc:
+            raise ValueError(f"AI 옵션 파서 정규식 오류: {exc}") from exc
+
+        parser = {
+            "enabled": True,
+            "pattern": pattern,
+            "price_kind": price_kind,
+            "confidence": confidence,
+            "examples": examples[:10],
+        }
+        parsed = [parse_option_text(item, parser, use_legacy=False) for item in examples[:5]]
+        if not any(item.value and (item.price_delta is not None or item.supply_price is not None) for item in parsed):
+            raise ValueError("AI 옵션 파서가 샘플 옵션을 분리하지 못했습니다.")
+        return {"parser": parser, "examples": examples[:10]}
 
 
 @dataclass

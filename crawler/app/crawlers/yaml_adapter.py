@@ -13,6 +13,7 @@ from app.analyzer.adapter_schema import (
     OptionsConfig,
     extract_url_value,
 )
+from app.analyzer.option_text_parser import parse_option_text, _legacy_split_option_text_price
 from app.credentials.store import load_supplier_credentials
 from app.crawlers.base import BaseAdapter, CategoryEntry, CrawlResult, StockSnapshotData
 from app.crawlers.engine import PlaywrightEngine
@@ -56,22 +57,7 @@ def _extract_signed_number(text: str | None) -> int | None:
 
 
 def _split_option_text_price(text: str | None) -> tuple[str | None, int | None]:
-    if not text:
-        return None, None
-    cleaned = re.sub(r"\s+", " ", text).strip()
-    for pattern in (
-        r"\s*[\(\[]\s*(?P<sign>[+-])\s*(?P<amount>[\d,]+)\s*원?\s*[\)\]]\s*$",
-        r"\s*(?:[/|:]\s*)?(?P<sign>[+-])\s*(?P<amount>[\d,]+)\s*원?\s*$",
-    ):
-        match = re.search(pattern, cleaned)
-        if not match:
-            continue
-        name = cleaned[:match.start()].strip()
-        if not name:
-            return cleaned, None
-        sign = -1 if match.group("sign") == "-" else 1
-        return name, sign * int(match.group("amount").replace(",", ""))
-    return cleaned or None, None
+    return _legacy_split_option_text_price(text)
 
 
 def _apply_transform(value: str | None, transform: str) -> str | int | None:
@@ -545,7 +531,8 @@ class YAMLAdapter(BaseAdapter):
             values = await page.query_selector_all(group_config.values_selector)
             for index, el in enumerate(values):
                 raw_value_text = await self._read_option_value(el, group_config)
-                value_text, text_price_delta = _split_option_text_price(raw_value_text)
+                parsed_text = parse_option_text(raw_value_text, config.option_text_parser, base_price)
+                value_text = parsed_text.value
                 if not value_text:
                     continue
                 option_data = {
@@ -563,9 +550,9 @@ class YAMLAdapter(BaseAdapter):
                     price_delta_raw = await self._extract_field(page, config.option_price_delta)
                     price_delta = _extract_signed_number(str(price_delta_raw)) if isinstance(price_delta_raw, str) else price_delta_raw
                     option_supply = (base_price or 0) + (price_delta or 0) if base_price else None
-                elif text_price_delta is not None:
-                    price_delta = text_price_delta
-                    option_supply = base_price + price_delta if base_price is not None else None
+                elif parsed_text.price_delta is not None or parsed_text.supply_price is not None:
+                    price_delta = parsed_text.price_delta
+                    option_supply = parsed_text.supply_price
                 image_url = None
                 if config.option_image_url:
                     image_url = await self._extract_field(page, config.option_image_url)

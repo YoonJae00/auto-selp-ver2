@@ -22,6 +22,7 @@ from app.analyzer.element_picker import (
     sanitize_html_preview,
     sanitize_value,
 )
+from app.analyzer.option_text_parser import parse_option_text
 from app.config import load_config
 
 
@@ -865,6 +866,23 @@ class PickerSession:
                         self._read_preview_element(element, field) or ""
                         for element in page.query_selector_all(selector)
                     ]
+                    parser = field.get("option_text_parser")
+                    if parser:
+                        parsed = [parse_option_text(item, parser) for item in reads if item]
+                        if field.get("key") == "option_prices":
+                            prices = [
+                                item.price_delta if item.price_delta is not None else item.supply_price
+                                for item in parsed
+                                if item.price_delta is not None or item.supply_price is not None
+                            ]
+                            if prices:
+                                preview = ", ".join(str(item) for item in prices[:5])
+                                return f"{len(prices)}개 · {preview}"[:100]
+                        else:
+                            values = [item.value for item in parsed if item.value]
+                            if values:
+                                preview = ", ".join(item[:50] for item in values[:5])
+                                return f"{len(values)}개 · {preview}"[:100]
                     values = [_apply_preview_transform(item, transform) for item in reads if item]
                     values = [item for item in values if item]
                     if values:

@@ -347,6 +347,12 @@ Item {
                         RowLayout {
                             spacing: 8
                             Components.AppButton {
+                                text: "AI 옵션 분석"
+                                enabled: !root.viewModel.busy
+                                onClicked: root.viewModel.analyzeOptionTextParser()
+                                Accessible.name: text
+                            }
+                            Components.AppButton {
                                 text: root.viewModel.previewActive ? "미리보기 닫기" : "매핑 미리보기"
                                 selected: true
                                 // 미리보기가 열린 동안에는 busy여도 닫을 수 있어야 함.

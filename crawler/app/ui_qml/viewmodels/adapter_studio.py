@@ -39,6 +39,7 @@ from app.workers.adapter import (
     AdapterTestRequest, AdapterTestWorker, CategoryMenuProbeRequest, CategoryMenuProbeWorker,
     GenerateRequest, GenerateWorker,
     MappingPreviewJob, MappingPreviewRequest,
+    OptionTextParserAnalyzeRequest, OptionTextParserAnalyzeWorker,
     PickerJob, PickerRequest, PickerValidateRequest, PickerValidateWorker,
     PickerWorker, ProbeRequest, ProbeWorker,
     close_picker_session, stop_picker_thread,
@@ -81,6 +82,7 @@ class AdapterStudioViewModel(BaseViewModel):
             "picker": PickerJob, "test": AdapterTestWorker,
             "picker_validate": PickerValidateWorker,
             "category_probe": CategoryMenuProbeWorker,
+            "option_parser": OptionTextParserAnalyzeWorker,
             **dict(worker_factories or {}),
         }
         self._current_stage = 0
@@ -747,6 +749,7 @@ class AdapterStudioViewModel(BaseViewModel):
             attribute = option_group.value_attribute if option_group.value_text == "attribute" else (
                 "value" if option_group.value_text == "value" else ""
             )
+            option_text_parser = adapter.adapter.options.option_text_parser.model_dump(mode="json")
             fields.append({
                 "key": OPTION_VALUES_ROW_KEY,
                 "label": "옵션값",
@@ -760,11 +763,72 @@ class AdapterStudioViewModel(BaseViewModel):
                 "fallback_from": "none",
                 "url_param": "",
                 "url_pattern": "",
+                "option_text_parser": option_text_parser,
             })
         option_price = adapter.adapter.options.option_price_delta
         if option_price and option_price.selector.strip():
             fields.append(self._preview_field(OPTION_PRICES_ROW_KEY, "옵션가격", option_price))
+        elif option_group and option_group.values_selector.strip() and adapter.adapter.options.option_text_parser.enabled:
+            fields.append({
+                "key": OPTION_PRICES_ROW_KEY,
+                "label": "옵션가격",
+                "selector": option_group.values_selector,
+                "attribute": "",
+                "fallback_attribute": "",
+                "html": False,
+                "multiple": True,
+                "transform": "strip",
+                "fallback": "",
+                "fallback_from": "none",
+                "url_param": "",
+                "url_pattern": "",
+                "option_text_parser": adapter.adapter.options.option_text_parser.model_dump(mode="json"),
+            })
         return fields
+
+    @Slot(result=bool)
+    def analyzeOptionTextParser(self) -> bool:
+        if not self._guard_operation("adapter-option-parser"):
+            return False
+        try:
+            adapter = load_adapter_from_text(self._yaml_text)
+            group = adapter.adapter.options.groups[0] if adapter.adapter.options.groups else None
+            if group is None or not group.values_selector.strip():
+                self.set_field_errors({"form": "옵션값 선택자를 먼저 선택하세요."})
+                return False
+        except Exception as exc:
+            self.set_field_errors({"yamlText": f"YAML 오류: {exc}"})
+            return False
+        target = self._picker_target_url()
+        if not target:
+            self.set_field_errors({"form": "분석할 상품 URL이 없습니다."})
+            return False
+        username = password = None
+        if self._inputs["needsLogin"]:
+            loaded = self._load_transient_credentials()
+            if loaded:
+                username, password = loaded
+        login_url = str(self._inputs.get("loginUrl") or "").strip() or str(self._inputs.get("mainUrl") or "").strip() or None
+        request = OptionTextParserAnalyzeRequest(
+            self._yaml_text, target, login_url, username, password,
+            supplier_key=self._credential_key() if self._inputs["needsLogin"] else None,
+        )
+        worker = self._factories["option_parser"](request)
+        return self._connect_worker(
+            worker, finished=self._option_parser_finished,
+            key="adapter-option-parser", label="AI 옵션 분석", stage="map",
+        )
+
+    def _option_parser_finished(self, result: dict) -> None:
+        try:
+            raw = yaml.safe_load(self._yaml_text) or {}
+            options = raw.setdefault("adapter", {}).setdefault("options", {})
+            options["option_text_parser"] = dict(result.get("parser") or {})
+            self.setYamlText(yaml.safe_dump(raw, allow_unicode=True, sort_keys=False))
+            self.set_field_errors({})
+        except Exception as exc:
+            self.set_field_errors({"yamlText": f"YAML 오류: {exc}"})
+        self._operation_done()
 
     @Slot()
     def previewMapping(self) -> bool:

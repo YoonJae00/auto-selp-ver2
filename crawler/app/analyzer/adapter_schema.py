@@ -118,6 +118,14 @@ class AjaxOptionConfig(BaseModel):
     response_path: str | None = None
 
 
+class OptionTextParserConfig(BaseModel):
+    enabled: bool = False
+    pattern: str = ""
+    price_kind: Literal["delta", "supply"] = "delta"
+    confidence: Literal["high", "medium", "low"] = "low"
+    examples: list[str] = Field(default_factory=list)
+
+
 class OptionGroupConfig(BaseModel):
     name: str
     group_label_selector: str | None = None
@@ -135,6 +143,7 @@ class OptionsConfig(BaseModel):
     option_price_delta: FieldExtractor | None = None
     option_stock_quantity: FieldExtractor | None = None
     ajax_option: AjaxOptionConfig = Field(default_factory=AjaxOptionConfig)
+    option_text_parser: OptionTextParserConfig = Field(default_factory=OptionTextParserConfig)
 
 
 class ProductConfig(BaseModel):
@@ -264,14 +273,15 @@ def get_product_field_mappings(adapter: "Adapter") -> list[dict[str, Any]]:
         "extraEnabled": True,
     })
     option_price = adapter.adapter.options.option_price_delta
+    option_text_parser = adapter.adapter.options.option_text_parser
     rows.append({
         "key": OPTION_PRICES_ROW_KEY,
         "label": "옵션가격",
         "fieldPath": OPTION_PRICES_FIELD_PATH,
-        "selector": option_price.selector if option_price else "",
+        "selector": option_price.selector if option_price else ("AI 옵션 파서" if option_text_parser.enabled else ""),
         "attribute": option_price.attribute if option_price and option_price.attribute else "",
         "transform": option_price.transform if option_price else "",
-        "status": "ok" if option_price and option_price.selector.strip() else "missing",
+        "status": "ok" if (option_price and option_price.selector.strip()) or option_text_parser.enabled else "missing",
         "urlPattern": "", "urlParam": "",
         "urlAllowed": False,
         "testable": True,

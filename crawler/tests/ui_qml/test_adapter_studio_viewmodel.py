@@ -104,6 +104,33 @@ def test_extra_images_toggle_updates_yaml(vm) -> None:
     assert "extra_image_urls:" not in vm.yamlText
 
 
+def test_option_parser_finished_updates_yaml(vm) -> None:
+    import yaml as _yaml
+
+    vm.acceptGeneratedYaml(VALID_YAML + """
+  options:
+    detection: dom
+    groups:
+    - name: 색상
+      values_selector: .option
+""")
+
+    vm._option_parser_finished({
+        "parser": {
+            "enabled": True,
+            "pattern": r"^(?P<value>.*?) / (?P<price>[\d,]+)원?$",
+            "price_kind": "supply",
+            "confidence": "high",
+            "examples": ["블랙 / 13,900원"],
+        }
+    })
+
+    parser = _yaml.safe_load(vm.yamlText)["adapter"]["options"]["option_text_parser"]
+    assert parser["enabled"] is True
+    assert parser["price_kind"] == "supply"
+    assert "?P<value>" in parser["pattern"]
+
+
 def test_set_url_param_writes_yaml_and_drops_selector(vm) -> None:
     vm.acceptGeneratedYaml(VALID_YAML)
 
