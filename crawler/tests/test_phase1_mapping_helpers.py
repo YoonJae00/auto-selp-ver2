@@ -7,10 +7,12 @@ from app.analyzer.site_probe import normalize_sample_products
 from app.crawlers.yaml_adapter import (
     YAMLAdapter,
     _image_csv,
+    _image_values,
     _map_supplier_status,
     _split_option_text_price,
     _status_from_maxq_value,
     _supported_image_url,
+    _without_images,
 )
 
 
@@ -76,6 +78,14 @@ def test_image_csv_filters_and_joins_supported_images() -> None:
     assert _image_csv(["/d/1.jpg", "/d/2.webp?x=1", "/d/3.gif", None]) == "/d/1.jpg,/d/2.webp?x=1"
     assert _image_csv("/d/one.png") == "/d/one.png"
     assert _image_csv(["/d/no-extension"]) is None
+
+
+def test_without_images_removes_main_image_with_relative_or_absolute_url() -> None:
+    images = _image_values(["/img/main.jpg", "https://shop.test/img/detail.jpg", "/img/banner.gif"])
+
+    assert _without_images(images, "https://shop.test/img/main.jpg", "https://shop.test/p/1") == [
+        "https://shop.test/img/detail.jpg"
+    ]
 
 
 def test_split_option_text_price_only_reads_trailing_parenthesized_price() -> None:

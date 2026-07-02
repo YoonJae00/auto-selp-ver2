@@ -598,11 +598,34 @@ class PickerSession:
             for k, v in (raw.get("matchCounts") or {}).items()
             if str(k) in candidates
         }
+        image_candidates: list[dict] = []
+        image_default_selector = ""
         if field_path in {"adapter.product.detail_content", "adapter.product.extra_image_urls"}:
-            broad_selector = self._detail_image_selector(page, candidates)
-            if broad_selector:
-                candidates = [broad_selector]
-                counts = {broad_selector: 1}
+            detail_context = self._detail_image_context(page, candidates)
+            detail_selectors = [
+                sanitize_value(v, 220)
+                for v in detail_context.get("selectors", [])
+                if sanitize_value(v, 220)
+            ]
+            if detail_selectors:
+                candidates = detail_selectors
+                counts = {
+                    str(k): int(v)
+                    for k, v in (detail_context.get("matchCounts") or {}).items()
+                    if str(k) in candidates
+                }
+                image_default_selector = sanitize_value(detail_context.get("defaultSelector"), 220)
+            image_candidates = [
+                {
+                    "selector": sanitize_value(item.get("selector"), 220),
+                    "src": sanitize_value(item.get("src"), 300),
+                    "dataSrc": sanitize_value(item.get("dataSrc"), 300),
+                    "alt": sanitize_value(item.get("alt"), 160),
+                    "classes": sanitize_value(item.get("classes"), 160),
+                }
+                for item in list(detail_context.get("images") or [])[:20]
+                if isinstance(item, dict)
+            ]
         elif field_path in {"adapter.options.groups.0.values_selector", "adapter.options.option_price_delta"}:
             option_selector = self._similar_option_selector(page, candidates)
             if option_selector:
@@ -611,7 +634,7 @@ class PickerSession:
 
         return PickedElement(
             url=sanitize_value(raw.get("url"), 300),
-            selector=choose_best_selector(candidates, counts),
+            selector=image_default_selector or choose_best_selector(candidates, counts),
             selector_candidates=candidates,
             text=sanitize_value(raw.get("text"), 300),
             html_preview=sanitize_html_preview(raw.get("htmlPreview"), 500),
@@ -621,15 +644,21 @@ class PickerSession:
             classes=[sanitize_value(c, 80) for c in raw.get("classes", [])[:10]],
             match_counts=counts,
             container_links=list(raw.get("containerLinks") or []),
+            image_candidates=image_candidates,
         )
 
-    def _detail_image_selector(self, page: Page, candidates: list[str]) -> str:
-        return str(page.evaluate(
+    def _detail_image_context(self, page: Page, candidates: list[str]) -> dict:
+        return dict(page.evaluate(
             r"""
             (candidates) => {
               const cssEscape = (window.CSS && CSS.escape)
                 ? CSS.escape
                 : (s) => String(s).replace(/[^a-zA-Z0-9_-]/g, '\\$&');
+              function uniq(arr) {
+                const seen = {}, out = [];
+                for (const item of arr) if (item && !seen[item]) { seen[item] = 1; out.push(item); }
+                return out;
+              }
               function nthPath(el) {
                 const parts = [];
                 for (let node = el; node && node.nodeType === 1 && parts.length < 6; node = node.parentElement) {
@@ -642,38 +671,57 @@ class PickerSession:
                 }
                 return parts.join(' > ');
               }
-              function selectorFor(el) {
+              function stable(el) {
                 const tag = el.tagName.toLowerCase();
                 if (el.id) return `#${cssEscape(el.id)}`;
                 const classes = Array.prototype.slice.call(el.classList || []).slice(0, 2).filter(Boolean);
-                if (classes.length) {
-                  const sel = `${tag}.${classes.map(cssEscape).join('.')}`;
-                  try { if (document.querySelectorAll(sel).length === 1) return sel; } catch (_) {}
-                }
+                if (classes.length) return `${tag}.${classes.map(cssEscape).join('.')}`;
                 return nthPath(el);
               }
               function imgCount(el) {
-                return el.querySelectorAll('img[src],img[data-src]').length;
+                return el ? el.querySelectorAll('img[src],img[data-src]').length : 0;
+              }
+              function imageRows(box) {
+                return Array.prototype.slice.call((box || document).querySelectorAll('img[src],img[data-src]'), 0, 20).map((img) => ({
+                  selector: stable(img),
+                  src: img.getAttribute('src') || '',
+                  dataSrc: img.getAttribute('data-src') || '',
+                  alt: img.getAttribute('alt') || '',
+                  classes: Array.prototype.slice.call(img.classList || []).join(' '),
+                }));
               }
               let picked = null;
               for (const sel of candidates || []) {
                 try { picked = document.querySelector(sel); } catch (_) {}
                 if (picked) break;
               }
-              if (!picked) return '';
-              const img = picked.tagName && picked.tagName.toLowerCase() === 'img'
-                ? picked
-                : picked.querySelector('img[src],img[data-src]');
-              if (!img) return '';
-              let container = img.parentElement || img;
-              for (let node = container; node && node !== document.body; node = node.parentElement) {
-                if (imgCount(node) >= 2) { container = node; break; }
+              if (!picked || !picked.tagName) return {selectors: [], matchCounts: {}, images: [], defaultSelector: ''};
+              const img = picked.tagName.toLowerCase() === 'img' ? picked : picked.querySelector('img[src],img[data-src]');
+              if (!img) return {selectors: [stable(picked)], matchCounts: {}, images: [], defaultSelector: stable(picked)};
+
+              const selectors = [stable(img)];
+              const pickedImgs = imgCount(picked);
+              if (pickedImgs > 0) selectors.push(`${stable(picked)} img`);
+              if (img.parentElement && imgCount(img.parentElement) > 0) selectors.push(`${stable(img.parentElement)} img`);
+
+              let group = img.parentElement || img;
+              for (let node = group; node && node !== document.body; node = node.parentElement) {
+                if (imgCount(node) >= 2) { group = node; break; }
               }
-              return imgCount(container) >= 2 ? `${selectorFor(container)} img` : selectorFor(img);
+              if (group && group !== img && imgCount(group) > 0) selectors.push(`${stable(group)} img`);
+
+              const finalSelectors = uniq(selectors);
+              const counts = {};
+              for (const sel of finalSelectors) {
+                try { counts[sel] = document.querySelectorAll(sel).length; } catch (_) { counts[sel] = 9999; }
+              }
+              const defaultSelector = imgCount(group) >= 2 ? `${stable(group)} img` : stable(img);
+              const imageBox = pickedImgs > 0 ? picked : group;
+              return {selectors: finalSelectors, matchCounts: counts, images: imageRows(imageBox), defaultSelector};
             }
             """,
             candidates,
-        ) or "")
+        ) or {})
 
     def _similar_option_selector(self, page: Page, candidates: list[str]) -> str:
         return str(page.evaluate(

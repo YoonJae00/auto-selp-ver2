@@ -6,6 +6,7 @@ import re
 import threading
 from dataclasses import dataclass, field
 from typing import Any, Coroutine
+from urllib.parse import urljoin
 
 from PySide6.QtCore import QObject, QThread, Signal, Slot
 
@@ -659,6 +660,7 @@ class GenerateWorker(_AsyncWorker):
 
 class AdapterTestWorker(_AsyncWorker):
     finished = Signal(dict)
+    IMAGE_PREVIEW_FIELDS = {"detail_content", "extra_image_urls"}
     FIELD_NAMES = (
         "supplier_product_code", "raw_product_name",
         "supplier_status", "supply_price", "origin", "main_image_url",
@@ -718,16 +720,19 @@ class AdapterTestWorker(_AsyncWorker):
                 for field_name in self.fields:
                     fraction = completed_fields / total_fields if total_fields else 0.0
                     extractor = getattr(product, field_name, None)
-                    value = error = None
+                    value = error = image_urls = None
                     if extractor:
                         self.progress.emit(f"[progress:{fraction:.2f}] 테스트 중: {field_name}")
                         try:
-                            value = await self._extract_test_field(page, extractor)
+                            value, image_urls = await self._extract_test_field(page, extractor, field_name)
                         except Exception as exc:
                             error = str(exc)
-                    aggregate[field_name].append(
-                        {"url": url, "value": value, "ok": bool(value), "error": error}
-                    )
+                    entry = {"url": url, "value": value, "ok": bool(value), "error": error}
+                    if image_urls is not None:
+                        entry["imageUrls"] = image_urls[:5]
+                        entry["imageCount"] = len(image_urls)
+                        entry["ok"] = bool(image_urls)
+                    aggregate[field_name].append(entry)
                     completed_fields += 1
             await page.close()
         self.raw_results = aggregate
@@ -746,16 +751,19 @@ class AdapterTestWorker(_AsyncWorker):
         self.progress.emit("로그인 중...")
         await _login_shared(page, self.login_url, self.username, self.password, on_progress=self.progress.emit)
 
-    async def _extract_test_field(self, page, extractor) -> str | None:
+    async def _extract_test_field(self, page, extractor, field_name: str = "") -> tuple[str | None, list[str] | None]:
         if extractor.selector:
             if extractor.multiple:
                 elements = await page.query_selector_all(extractor.selector)
                 # ponytail: reads all matched elements for an accurate count; cap if a selector ever matches hundreds
                 reads = [await self._read_test_element(el, extractor) or "" for el in elements]
                 values = [item for item in reads if item]
+                if field_name in self.IMAGE_PREVIEW_FIELDS:
+                    urls = [urljoin(page.url, item) for item in values]
+                    return f"{len(urls)}개 인식", urls
                 if values:
                     preview = ", ".join(item[:50] for item in values[:5])
-                    return f"{len(values)}개 · {preview}"
+                    return f"{len(values)}개 · {preview}", None
             else:
                 element = await page.query_selector(extractor.selector)
                 if element:
@@ -764,14 +772,14 @@ class AdapterTestWorker(_AsyncWorker):
                         if extractor.transform == "extract_number":
                             match = re.search(r"-?\d[\d,]*", value)
                             value = match.group().replace(",", "") if match else value
-                        return value.strip()[:100]
+                        return value.strip()[:100], None
         value = await self._extract_test_fallback_from(page, extractor)
         if value is None:
             value = extractor.fallback or None
         if value and extractor.transform == "extract_number":
             match = re.search(r"-?\d[\d,]*", value)
             value = match.group().replace(",", "") if match else value
-        return value.strip()[:100] if value else None
+        return (value.strip()[:100] if value else None), None
 
     async def _read_test_element(self, element, extractor) -> str | None:
         if extractor.html:
@@ -804,6 +812,9 @@ class PickerValidateRequest:
     picked_element: Any  # PickedElement from element_picker
     field_path: str
     field_label: str
+
+
+IMAGE_PICKER_FIELD_PATHS = {"adapter.product.detail_content", "adapter.product.extra_image_urls"}
 
 
 class PickerValidateWorker(_AsyncWorker):
@@ -847,6 +858,9 @@ class PickerValidateWorker(_AsyncWorker):
         config = load_config()
         provider = config.llm_provider
         client = get_llm_client(provider)
+
+        if self.request.field_path in IMAGE_PICKER_FIELD_PATHS:
+            return await self._validate_image_selector(client, candidates, counts)
 
         system_prompt = (
             "당신은 웹 크롤링 CSS 선택자 검증 전문가입니다. "
@@ -914,6 +928,107 @@ class PickerValidateWorker(_AsyncWorker):
 
         return {
             "validated_selector": validated,
+            "confidence": confidence,
+            "note": note,
+            "original_selector": picked.selector,
+        }
+
+    async def _validate_image_selector(self, client, candidates: list[str], counts: dict) -> dict:
+        import json
+
+        picked = self.request.picked_element
+        images = list(getattr(picked, "image_candidates", []) or [])[:20]
+        field_label = self.request.field_label
+        is_detail = self.request.field_path == "adapter.product.detail_content"
+        target_rule = (
+            "상세 설명 본문에 들어가는 큰 상세 이미지들을 고르세요. "
+            "대표 이미지, 썸네일, 추천상품, 배너, 아이콘, 네비게이션 이미지는 제외하세요."
+            if is_detail else
+            "상품 갤러리의 추가 이미지를 고르세요. 대표 이미지와 상세 설명 본문 이미지, 추천상품, 배너는 제외하세요."
+        )
+        system_prompt = (
+            "당신은 쇼핑몰 DOM에서 상품 이미지 CSS 선택자를 고르는 전문가입니다. "
+            "사용자가 이미지들이 들어있는 영역을 클릭했습니다. 후보 selector와 영역 안 이미지 목록을 보고 "
+            "가장 적절한 이미지 selector를 하나 고르세요.\n\n"
+            "반드시 다음 JSON 형식으로만 응답하세요:\n"
+            '{"selector": "CSS선택자", "attribute": "src|data-src", "multiple": true, '
+            '"confidence": "high|medium|low", "note": "간단한 설명"}\n\n'
+            "규칙:\n"
+            f"1. {target_rule}\n"
+            "2. selector는 가능하면 제공된 후보 중 하나를 사용하세요.\n"
+            "3. 여러 이미지를 수집해야 하므로 multiple은 true로 두세요.\n"
+            "4. 이미지 URL이 data-src에만 있으면 attribute는 data-src, 아니면 src를 사용하세요.\n"
+            "5. 확신이 없으면 confidence를 low로 주세요.\n"
+            "6. JSON 외의 다른 텍스트는 출력하지 마세요."
+        )
+        image_lines = []
+        for idx, item in enumerate(images, 1):
+            image_lines.append(
+                f"{idx}. selector={item.get('selector', '')}, "
+                f"src={item.get('src', '')}, data-src={item.get('dataSrc', '')}, "
+                f"alt={item.get('alt', '')}, class={item.get('classes', '')}"
+            )
+        user_prompt = (
+            f"수집할 필드: {field_label}\n"
+            f"페이지 URL: {picked.url}\n"
+            f"선택 영역 텍스트: {(picked.text or '')[:200]}\n"
+            f"선택 영역 HTML 미리보기: {(picked.html_preview or '')[:500]}\n"
+            "selector 후보와 매치 카운트:\n"
+            + "\n".join(f"- {sel} → {counts.get(sel, '?')}개 매치" for sel in candidates)
+            + "\n\n선택 영역 안 이미지 후보:\n"
+            + ("\n".join(image_lines) if image_lines else "- 이미지 후보 없음")
+        )
+
+        try:
+            response = await client.generate(system_prompt, user_prompt)
+        except Exception as exc:
+            return {
+                "validated_selector": picked.selector,
+                "selector": picked.selector,
+                "attribute": "src",
+                "multiple": True,
+                "confidence": "low",
+                "note": f"AI 이미지 분석 실패: {exc}",
+                "original_selector": picked.selector,
+            }
+
+        text_resp = response.strip()
+        if text_resp.startswith("```"):
+            lines = text_resp.split("\n")
+            end = len(lines) - 1 if lines[-1].strip() == "```" else len(lines)
+            text_resp = "\n".join(lines[1:end])
+        text_resp = text_resp.strip()
+
+        try:
+            result = json.loads(text_resp)
+        except json.JSONDecodeError:
+            return {
+                "validated_selector": picked.selector,
+                "selector": picked.selector,
+                "attribute": "src",
+                "multiple": True,
+                "confidence": "low",
+                "note": "AI 이미지 응답 파싱 실패",
+                "original_selector": picked.selector,
+            }
+
+        selector = str(result.get("selector") or result.get("validated_selector") or "").strip()
+        confidence = str(result.get("confidence", "low")).strip().lower()
+        if confidence not in {"high", "medium", "low"}:
+            confidence = "low"
+        attribute = str(result.get("attribute") or "src").strip()
+        if attribute not in {"src", "data-src"}:
+            attribute = "src"
+        note = str(result.get("note", "")).strip()[:200]
+        if not selector:
+            selector = picked.selector
+            confidence = "low"
+
+        return {
+            "validated_selector": selector,
+            "selector": selector,
+            "attribute": attribute,
+            "multiple": True,
             "confidence": confidence,
             "note": note,
             "original_selector": picked.selector,

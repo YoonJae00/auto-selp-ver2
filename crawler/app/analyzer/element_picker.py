@@ -25,6 +25,7 @@ class PickedElement:
     classes: list[str] = field(default_factory=list)
     match_counts: dict[str, int] = field(default_factory=dict)
     container_links: list[dict] = field(default_factory=list)
+    image_candidates: list[dict] = field(default_factory=list)
 
 
 def sanitize_value(value: Any, limit: int = MAX_TEXT) -> str:

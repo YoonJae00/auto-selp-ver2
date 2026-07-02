@@ -48,6 +48,9 @@ MAPPING_ROLES = (
     "key", "label", "fieldPath", "selector", "attribute", "transform", "status",
     "testValue", "testOk", "urlPattern", "urlParam", "urlAllowed", "testable", "extraEnabled",
 )
+IMAGE_PICKER_FIELD_PATHS = {"adapter.product.detail_content", "adapter.product.extra_image_urls"}
+
+
 def yaml_content_hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
@@ -203,10 +206,10 @@ class AdapterStudioViewModel(BaseViewModel):
             "adapter.categories.navigation.menu_selector": "카테고리 메뉴 안의 대표 항목 하나(예: 의류, 상의)를 클릭하세요. 이 선택은 AI 설정 생성의 카테고리 힌트로 사용됩니다.",
             "adapter.listing.product_link": "상품 카드 안의 상세페이지 링크를 클릭하세요.",
             "adapter.product.main_image_url": "상품 대표 이미지를 클릭하세요.",
-            "adapter.product.extra_image_urls": "추가 이미지 중 하나를 클릭하세요. 같은 선택자에 매칭되는 이미지를 여러 개 수집합니다.",
+            "adapter.product.extra_image_urls": "추가 이미지/갤러리 영역 박스를 클릭하세요. AI가 이미지 선택자를 분석하고, 결과는 4단계 검증에서 확인됩니다.",
             "adapter.product.raw_product_name": "상품명 텍스트를 클릭하세요.",
             "adapter.product.supply_price": "공급가격 텍스트를 클릭하세요.",
-            "adapter.product.detail_content": "상세 페이지 이미지 중 아무거나 한 장을 클릭하세요. 주변 이미지를 자동으로 함께 수집합니다.",
+            "adapter.product.detail_content": "상세 이미지들이 들어있는 영역 박스를 클릭하세요. AI가 이미지 선택자를 분석하고, 결과는 4단계 검증에서 확인됩니다.",
             OPTION_VALUES_FIELD_PATH: "옵션값 하나를 클릭하세요. 같은 그룹의 값을 자동으로 함께 수집합니다.",
             OPTION_PRICES_FIELD_PATH: "옵션가격 하나를 클릭하세요. 같은 순서의 가격들을 자동으로 함께 수집합니다.",
         }
@@ -843,6 +846,8 @@ class AdapterStudioViewModel(BaseViewModel):
                     "label": label,
                     "value": str(value or ""),
                     "ok": bool(value) and is_field_value_ok(key, entry),
+                    "imageUrls": list(entry.get("imageUrls") or []),
+                    "imageCount": int(entry.get("imageCount") or 0),
                 })
             def field_value(key: str) -> str:
                 entries = raw.get(key)
@@ -1138,6 +1143,9 @@ class AdapterStudioViewModel(BaseViewModel):
         self._operation_done()
         if field_path == "adapter.categories.navigation.menu_selector":
             self._start_category_menu_analysis(picked)
+        elif field_path in IMAGE_PICKER_FIELD_PATHS:
+            if not self._start_picker_validation(picked, field_path):
+                self.acceptPickedHint()
         else:
             # 브라우저의 Yes(이 요소가 맞나요?)가 곧 확인이다 — 앱 모달 없이
             # 바로 적용하고 브라우저 세션을 닫는다.
@@ -1225,6 +1233,8 @@ class AdapterStudioViewModel(BaseViewModel):
         self._picker_validation_confidence = str(result.get("confidence", ""))
         self._picker_validation_note = str(result.get("note", ""))
         self._operation_done()
+        if self._pending_hint and self._pending_hint[1] in IMAGE_PICKER_FIELD_PATHS:
+            self.acceptPickedHint()
 
     @Slot()
     def rejectPickedHint(self) -> None:
@@ -1272,6 +1282,16 @@ class AdapterStudioViewModel(BaseViewModel):
             validated = str(validation.get("validated_selector", "")).strip()
             if validated:
                 defaults["selector"] = validated
+            if field_path in IMAGE_PICKER_FIELD_PATHS:
+                attribute = str(validation.get("attribute") or "").strip()
+                if attribute in {"src", "data-src"}:
+                    defaults["attribute"] = attribute
+                defaults["multiple"] = bool(validation.get("multiple", True))
+                if field_path == "adapter.product.detail_content":
+                    defaults["html"] = False
+        elif validation and field_path in IMAGE_PICKER_FIELD_PATHS:
+            note = str(validation.get("note") or "AI 이미지 분석 신뢰도가 낮아 기존 선택자로 저장했습니다.").strip()
+            self.set_field_errors({"form": note[:160]})
         # 선택자가 비어 있으면 후보 중 하나로 폴백; 그래도 없으면 사용자에게 안내
         if not str(defaults.get("selector", "")).strip():
             fallback = next((c for c in (picked.selector_candidates or []) if str(c).strip()), "")

@@ -57,6 +57,8 @@ def is_field_value_ok(field: str, entry: dict[str, Any]) -> bool:
         return bool(re.search(r"\d", value.replace(",", "")))
     if field == "main_image_url":
         return bool(value) and ("/" in value or "." in value or value.startswith("data:"))
+    if field in ("detail_content", "extra_image_urls") and "imageCount" in entry:
+        return int(entry.get("imageCount") or 0) > 0
     if field in ("supplier_product_code", "supplier_product_id"):
         url = str(entry.get("url") or "").strip()
         return bool(value) and value != url and not value.startswith("http://") and not value.startswith("https://")

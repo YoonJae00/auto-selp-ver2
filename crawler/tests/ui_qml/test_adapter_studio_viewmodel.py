@@ -159,6 +159,38 @@ def test_validation_products_pivot_raw_results_by_product(vm) -> None:
     assert code1["ok"] is False
 
 
+def test_validation_products_exposes_image_counts_and_preview_urls(vm) -> None:
+    vm.acceptGeneratedYaml(VALID_YAML)
+    raw = {
+        "detail_content": [{
+            "url": "https://s/1",
+            "value": "3개 인식",
+            "ok": True,
+            "imageUrls": ["https://s/d1.jpg", "https://s/d2.jpg", "https://s/d3.jpg"],
+            "imageCount": 3,
+        }],
+        "extra_image_urls": [{
+            "url": "https://s/1",
+            "value": "0개 인식",
+            "ok": False,
+            "imageUrls": [],
+            "imageCount": 0,
+        }],
+    }
+
+    vm.acceptValidation(raw, vm.beginValidation())
+    fields = vm.validationProducts[0]["fields"]
+    detail = next(f for f in fields if f["key"] == "detail_content")
+    extra = next(f for f in fields if f["key"] == "extra_image_urls")
+
+    assert detail["value"] == "3개 인식"
+    assert detail["imageCount"] == 3
+    assert detail["imageUrls"] == ["https://s/d1.jpg", "https://s/d2.jpg", "https://s/d3.jpg"]
+    assert detail["ok"] is True
+    assert extra["value"] == "0개 인식"
+    assert extra["ok"] is False
+
+
 def test_validation_products_empty_without_results(vm) -> None:
     assert vm.validationProducts == []
 
@@ -1300,6 +1332,85 @@ def test_browser_confirmed_pick_applies_without_app_modal(monkeypatch) -> None:
     assert vm._mapping_hints[-1].chosen_selector == ".picked-name"
     assert "selector: .picked-name" in vm.yamlText
     assert closed == [True]
+
+
+def test_image_pick_runs_ai_analysis_and_applies_validated_selector(monkeypatch) -> None:
+    from app.analyzer.element_picker import PickedElement
+    from app.ui_qml.viewmodels import adapter_studio
+    from app.ui_qml.viewmodels.adapter_studio import AdapterStudioViewModel
+    import yaml as _yaml
+
+    closed = []
+    made = []
+    monkeypatch.setattr(adapter_studio, "close_picker_session", lambda: closed.append(True))
+    vm = AdapterStudioViewModel(
+        app_view_model=AppViewModel(),
+        worker_factories={"picker_validate": lambda request: made.append(FakeWorker(request)) or made[-1]},
+    )
+    vm.acceptGeneratedYaml(VALID_YAML)
+    picked = PickedElement(
+        url="https://shop.example/p/1",
+        selector=".rule-detail img",
+        selector_candidates=[".clicked-img", ".box img", ".rule-detail img"],
+        match_counts={".clicked-img": 1, ".box img": 2, ".rule-detail img": 5},
+        image_candidates=[{"src": "/detail1.jpg", "alt": "detail"}],
+    )
+
+    vm._picked(picked, "adapter.product.detail_content")
+
+    assert made
+    assert made[-1].args[0].field_path == "adapter.product.detail_content"
+    made[-1].finished.emit({
+        "validated_selector": ".ai-detail img",
+        "attribute": "data-src",
+        "multiple": True,
+        "confidence": "high",
+        "note": "상세 영역",
+    })
+
+    field = _yaml.safe_load(vm.yamlText)["adapter"]["product"]["detail_content"]
+    assert field["selector"] == ".ai-detail img"
+    assert field["attribute"] == "data-src"
+    assert field["multiple"] is True
+    assert field["html"] is False
+    assert vm.hasPendingHint is False
+    assert closed == [True]
+
+
+def test_image_pick_falls_back_to_rule_selector_when_ai_confidence_low(monkeypatch) -> None:
+    from app.analyzer.element_picker import PickedElement
+    from app.ui_qml.viewmodels import adapter_studio
+    from app.ui_qml.viewmodels.adapter_studio import AdapterStudioViewModel
+    import yaml as _yaml
+
+    monkeypatch.setattr(adapter_studio, "close_picker_session", lambda: None)
+    made = []
+    vm = AdapterStudioViewModel(
+        app_view_model=AppViewModel(),
+        worker_factories={"picker_validate": lambda request: made.append(FakeWorker(request)) or made[-1]},
+    )
+    vm.acceptGeneratedYaml(VALID_YAML)
+    picked = PickedElement(
+        url="https://shop.example/p/1",
+        selector=".rule-extra img",
+        selector_candidates=[".rule-extra img"],
+        match_counts={".rule-extra img": 3},
+        image_candidates=[{"src": "/extra1.jpg", "alt": "extra"}],
+    )
+
+    vm._picked(picked, "adapter.product.extra_image_urls")
+    made[-1].finished.emit({
+        "validated_selector": ".bad-ai img",
+        "attribute": "data-src",
+        "multiple": True,
+        "confidence": "low",
+        "note": "불확실",
+    })
+
+    field = _yaml.safe_load(vm.yamlText)["adapter"]["product"]["extra_image_urls"]
+    assert field["selector"] == ".rule-extra img"
+    assert field["attribute"] == "src"
+    assert field["multiple"] is True
 
 
 def test_picker_cancel_resets_state_and_allows_next_pick(monkeypatch) -> None:

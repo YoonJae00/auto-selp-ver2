@@ -107,9 +107,20 @@ def _supported_image_url(value: Any) -> str | None:
     return url if path.endswith((".jpg", ".jpeg", ".png", ".webp")) else None
 
 
-def _image_csv(value: Any) -> str | None:
+def _image_values(value: Any) -> list[str]:
     values = value if isinstance(value, list) else ([value] if value else [])
-    images = [img for img in (_supported_image_url(item) for item in values) if img]
+    return [img for img in (_supported_image_url(item) for item in values) if img]
+
+
+def _without_images(images: list[str], excluded: str | None, base_url: str = "") -> list[str]:
+    if not excluded:
+        return images
+    excluded_key = urljoin(base_url, excluded)
+    return [img for img in images if urljoin(base_url, img) != excluded_key]
+
+
+def _image_csv(value: Any) -> str | None:
+    images = _image_values(value)
     return ",".join(images) or None
 
 
@@ -393,12 +404,10 @@ class YAMLAdapter(BaseAdapter):
             main_image = fields.get("main_image_url")
             main_image = _supported_image_url(main_image)
 
-            detail = _image_csv(fields.get("detail_content"))
+            detail_images = _without_images(_image_values(fields.get("detail_content")), main_image, page.url)
+            detail = ",".join(detail_images) or None
 
-            extra_images = fields.get("extra_image_urls")
-            if not isinstance(extra_images, list):
-                extra_images = [extra_images] if extra_images else []
-            extra_images = [img for img in (_supported_image_url(item) for item in extra_images) if img]
+            extra_images = _without_images(_image_values(fields.get("extra_image_urls")), main_image, page.url)
 
             raw_meta: dict[str, Any] = {
                 "url": url,
