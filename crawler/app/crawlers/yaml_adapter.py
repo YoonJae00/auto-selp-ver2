@@ -59,14 +59,19 @@ def _split_option_text_price(text: str | None) -> tuple[str | None, int | None]:
     if not text:
         return None, None
     cleaned = re.sub(r"\s+", " ", text).strip()
-    match = re.search(r"\s*[\(\[]\s*([+-])\s*([\d,]+)\s*원?\s*[\)\]]\s*$", cleaned)
-    if not match:
-        return cleaned or None, None
-    name = cleaned[:match.start()].strip()
-    if not name:
-        return cleaned, None
-    sign = -1 if match.group(1) == "-" else 1
-    return name, sign * int(match.group(2).replace(",", ""))
+    for pattern in (
+        r"\s*[\(\[]\s*(?P<sign>[+-])\s*(?P<amount>[\d,]+)\s*원?\s*[\)\]]\s*$",
+        r"\s*(?:[/|:]\s*)?(?P<sign>[+-])\s*(?P<amount>[\d,]+)\s*원?\s*$",
+    ):
+        match = re.search(pattern, cleaned)
+        if not match:
+            continue
+        name = cleaned[:match.start()].strip()
+        if not name:
+            return cleaned, None
+        sign = -1 if match.group("sign") == "-" else 1
+        return name, sign * int(match.group("amount").replace(",", ""))
+    return cleaned or None, None
 
 
 def _apply_transform(value: str | None, transform: str) -> str | int | None:

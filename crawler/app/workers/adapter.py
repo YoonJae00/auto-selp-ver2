@@ -14,7 +14,7 @@ from app.analyzer.adapter_generator import generate_adapter_yaml
 from app.analyzer.adapter_schema import extract_url_value
 from app.analyzer.picker_session import PickerSession
 from app.analyzer.site_probe import probe_site
-from app.crawlers.yaml_adapter import _status_from_maxq_value
+from app.crawlers.yaml_adapter import _split_option_text_price, _status_from_maxq_value
 
 
 @dataclass
@@ -664,7 +664,7 @@ class AdapterTestWorker(_AsyncWorker):
     FIELD_NAMES = (
         "supplier_product_code", "raw_product_name",
         "supplier_status", "supply_price", "origin", "main_image_url",
-        "detail_content", "extra_image_urls",
+        "detail_content", "extra_image_urls", "option_values", "option_prices",
     )
 
     def __init__(self, request: AdapterTestRequest) -> None:
@@ -721,7 +721,13 @@ class AdapterTestWorker(_AsyncWorker):
                     fraction = completed_fields / total_fields if total_fields else 0.0
                     extractor = getattr(product, field_name, None)
                     value = error = image_urls = None
-                    if extractor:
+                    if field_name in {"option_values", "option_prices"}:
+                        self.progress.emit(f"[progress:{fraction:.2f}] 테스트 중: {field_name}")
+                        try:
+                            value = await self._extract_test_option(page, adapter, field_name)
+                        except Exception as exc:
+                            error = str(exc)
+                    elif extractor:
                         self.progress.emit(f"[progress:{fraction:.2f}] 테스트 중: {field_name}")
                         try:
                             value, image_urls = await self._extract_test_field(page, extractor, field_name)
@@ -744,6 +750,35 @@ class AdapterTestWorker(_AsyncWorker):
                 f"{len(hits)}/{len(entries)} 성공 · {str(hits[0])[:60] if hits else '실패'}"
             )
         return results
+
+    async def _extract_test_option(self, page, adapter, field_name: str) -> str | None:
+        options = adapter.adapter.options
+        group = options.groups[0] if options.groups else None
+        if field_name == "option_prices" and options.option_price_delta:
+            value, _ = await self._extract_test_field(page, options.option_price_delta)
+            return value
+        if group is None:
+            return None
+        elements = await page.query_selector_all(group.values_selector)
+        reads = [await self._read_test_option_value(el, group) or "" for el in elements]
+        if field_name == "option_prices":
+            prices = [
+                price for _, price in (_split_option_text_price(item) for item in reads)
+                if price is not None
+            ]
+            if not prices:
+                return None
+            preview = ", ".join(str(price) for price in prices[:5])
+            return f"{len(prices)}개 · {preview}"
+        values: list[str] = []
+        for item in reads:
+            value = (_split_option_text_price(item)[0] or "").strip()
+            if value:
+                values.append(value)
+        if not values:
+            return None
+        preview = ", ".join(item[:50] for item in values[:5])
+        return f"{len(values)}개 · {preview}"
 
     async def _login(self, page) -> None:
         from app.analyzer.login_helper import perform_login as _login_shared
@@ -787,6 +822,13 @@ class AdapterTestWorker(_AsyncWorker):
         if extractor.attribute:
             value = await element.get_attribute(extractor.attribute)
             return value or (await element.get_attribute(extractor.fallback_attribute) if extractor.fallback_attribute else None)
+        return await element.inner_text()
+
+    async def _read_test_option_value(self, element, group_config) -> str | None:
+        if group_config.value_text == "value":
+            return await element.get_attribute("value")
+        if group_config.value_text == "attribute" and group_config.value_attribute:
+            return await element.get_attribute(group_config.value_attribute)
         return await element.inner_text()
 
     async def _extract_test_fallback_from(self, page, extractor) -> str | None:

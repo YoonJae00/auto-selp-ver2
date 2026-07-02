@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import re
 import time
 import shutil
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Literal
 
 from playwright.sync_api import Browser, BrowserContext, Page, sync_playwright
 
+from app.analyzer.adapter_schema import extract_url_value
 from app.analyzer.element_picker import (
     INSTRUCTION_OVERLAY_SCRIPT,
     MAPPING_PREVIEW_SCRIPT,
@@ -20,6 +23,21 @@ from app.analyzer.element_picker import (
     sanitize_value,
 )
 from app.config import load_config
+
+
+def _apply_preview_transform(value: str | None, transform: str | None) -> str | None:
+    if not value:
+        return None
+    if transform == "extract_number":
+        match = re.search(r"-?\d[\d,]*", value)
+        return match.group().replace(",", "") if match else value.strip()
+    if transform == "extract_signed_number":
+        match = re.search(r"([+-]?)\s*([\d,]+)", value)
+        if not match:
+            return value.strip()
+        sign = "-" if match.group(1) == "-" else ""
+        return sign + match.group(2).replace(",", "")
+    return value.strip()[:100]
 
 
 def _safe_goto(page: Page, url: str, wait_until: Literal["commit", "domcontentloaded", "load", "networkidle"] = "domcontentloaded") -> bool:
@@ -811,29 +829,71 @@ class PickerSession:
     def preview_mapping(self, url: str, fields: list[dict]) -> dict:
         """Navigate to url and draw overlay boxes for each mapped field.
 
-        Returns {"found": [key, ...], "missing": [key, ...]}.
-        Selector resolution and coordinate calculation run in JS so scroll
-        offsets are captured correctly and Playwright-specific selectors work.
+        Returns {"found": [key, ...], "missing": [key, ...], "values": {key: value}}.
         """
         page = self._ensure_page()
         _safe_goto(page, url)
-        # Let JS resolve selectors and calculate absolute coordinates
-        found_keys = page.evaluate(
-            """(fields) => {
-                const found = [];
-                fields.forEach(({key, label, selector}) => {
-                    try {
-                        const el = document.querySelector(selector);
-                        if (el) found.push(key);
-                    } catch (_) {}
-                });
-                return found;
-            }""",
-            fields,
-        )
+        found_keys = []
+        values = {}
+        for field in fields:
+            key = field.get("key")
+            if not key:
+                continue
+            value = self._preview_field_value(page, field)
+            if value:
+                values[key] = value
+                found_keys.append(key)
+                continue
+            selector = str(field.get("selector") or "").strip()
+            if selector:
+                try:
+                    if page.query_selector(selector):
+                        found_keys.append(key)
+                except Exception:
+                    pass
         page.evaluate(MAPPING_PREVIEW_SCRIPT, fields)
         missing = [f["key"] for f in fields if f["key"] not in found_keys]
-        return {"found": list(found_keys), "missing": missing}
+        return {"found": list(found_keys), "missing": missing, "values": values}
+
+    def _preview_field_value(self, page: Page, field: dict) -> str | None:
+        selector = str(field.get("selector") or "").strip()
+        transform = field.get("transform") or "strip"
+        if selector:
+            try:
+                if field.get("multiple"):
+                    reads = [
+                        self._read_preview_element(element, field) or ""
+                        for element in page.query_selector_all(selector)
+                    ]
+                    values = [_apply_preview_transform(item, transform) for item in reads if item]
+                    values = [item for item in values if item]
+                    if values:
+                        preview = ", ".join(item[:50] for item in values[:5])
+                        return f"{len(values)}개 · {preview}"[:100]
+                else:
+                    element = page.query_selector(selector)
+                    if element:
+                        return _apply_preview_transform(self._read_preview_element(element, field), transform)
+            except Exception:
+                pass
+        if field.get("fallback_from") == "url":
+            value = extract_url_value(
+                page.url,
+                SimpleNamespace(url_param=field.get("url_param"), url_pattern=field.get("url_pattern")),
+            )
+            return _apply_preview_transform(value, transform)
+        fallback = field.get("fallback")
+        return _apply_preview_transform(str(fallback), transform) if fallback else None
+
+    def _read_preview_element(self, element, field: dict) -> str | None:
+        if field.get("html"):
+            return element.inner_html()
+        attribute = field.get("attribute")
+        if attribute:
+            value = element.get_attribute(attribute)
+            fallback_attribute = field.get("fallback_attribute")
+            return value or (element.get_attribute(fallback_attribute) if fallback_attribute else None)
+        return element.inner_text()
 
     def close(self) -> None:
         """Close page, browser, playwright, and clean up the temp profile."""

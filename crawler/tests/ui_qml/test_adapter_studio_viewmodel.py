@@ -191,6 +191,21 @@ def test_validation_products_exposes_image_counts_and_preview_urls(vm) -> None:
     assert extra["ok"] is False
 
 
+def test_validation_products_include_option_results(vm) -> None:
+    vm.acceptGeneratedYaml(VALID_YAML)
+    raw = {
+        **successful_results(),
+        "option_values": [{"url": "https://s/1", "value": "2개 · 브라운, 아이보리", "ok": True}],
+        "option_prices": [{"url": "https://s/1", "value": "2개 · 0, 1000", "ok": True}],
+    }
+
+    vm.acceptValidation(raw, vm.beginValidation())
+
+    fields = vm.validationProducts[0]["fields"]
+    assert next(f for f in fields if f["key"] == "option_values")["value"] == "2개 · 브라운, 아이보리"
+    assert next(f for f in fields if f["key"] == "option_prices")["value"] == "2개 · 0, 1000"
+
+
 def test_validation_products_empty_without_results(vm) -> None:
     assert vm.validationProducts == []
 
@@ -332,6 +347,108 @@ def test_single_field_test_dispatches_field_and_updates_mapping(vm) -> None:
     assert vm.validationStale is False
     assert vm.canSave is True
     assert app.activeTask.state == "completed"
+
+
+def _row_by_key(vm, key: str) -> dict:
+    return next(row for row in vm.mappingRows._rows if row["key"] == key)
+
+
+def test_preview_mapping_completion_updates_mapping_rows(monkeypatch) -> None:
+    from app.ui_qml.viewmodels import adapter_studio
+
+    made = []
+
+    class PreviewWorker(QObject):
+        finished = Signal(object)
+        error = Signal(str)
+        progress = Signal(str)
+        cancelled = Signal()
+
+        def __init__(self, request):
+            super().__init__()
+            self.request = request
+            made.append(self)
+
+        def start(self):
+            pass
+
+        def requestInterruption(self):
+            pass
+
+        def isRunning(self):
+            return False
+
+    monkeypatch.setattr(adapter_studio, "MappingPreviewJob", PreviewWorker)
+    vm = adapter_studio.AdapterStudioViewModel(app_view_model=AppViewModel())
+    vm.setConnectionInputs({
+        "supplierName": "Test Shop",
+        "mainUrl": "https://shop.example",
+        "detailUrl": "https://shop.example/p/1",
+    })
+    vm.acceptGeneratedYaml(VALID_YAML)
+
+    assert vm.previewMapping() is True
+    assert made[0].request.fields[0]["key"] == "supplier_product_code"
+
+    made[0].finished.emit({
+        "found": ["raw_product_name"],
+        "missing": ["supply_price"],
+        "values": {"raw_product_name": "Preview Product"},
+    })
+
+    assert _row_by_key(vm, "raw_product_name")["testValue"] == "Preview Product"
+    assert _row_by_key(vm, "raw_product_name")["testOk"] is True
+    assert _row_by_key(vm, "supply_price")["testValue"] == ""
+
+
+def test_detail_url_change_clears_then_auto_refreshes_preview(monkeypatch, qt_app) -> None:
+    from PySide6.QtTest import QTest
+
+    from app.ui_qml.viewmodels import adapter_studio
+
+    made = []
+
+    class PreviewWorker(QObject):
+        finished = Signal(object)
+        error = Signal(str)
+        progress = Signal(str)
+        cancelled = Signal()
+
+        def __init__(self, request):
+            super().__init__()
+            self.request = request
+            made.append(self)
+
+        def start(self):
+            self.finished.emit({
+                "found": ["raw_product_name"],
+                "missing": [],
+                "values": {"raw_product_name": "New Product"},
+            })
+
+        def requestInterruption(self):
+            pass
+
+        def isRunning(self):
+            return False
+
+    monkeypatch.setattr(adapter_studio, "MappingPreviewJob", PreviewWorker)
+    vm = adapter_studio.AdapterStudioViewModel(app_view_model=AppViewModel())
+    vm.setConnectionInputs({
+        "supplierName": "Test Shop",
+        "mainUrl": "https://shop.example",
+        "detailUrl": "https://shop.example/p/1",
+    })
+    vm.acceptGeneratedYaml(VALID_YAML)
+    vm._apply_preview_result({"found": ["raw_product_name"], "values": {"raw_product_name": "Old Product"}})
+
+    vm.setDetailUrl("https://shop.example/p/2")
+
+    assert _row_by_key(vm, "raw_product_name")["testValue"] == ""
+    QTest.qWait(550)
+
+    assert made[-1].request.target_url == "https://shop.example/p/2"
+    assert _row_by_key(vm, "raw_product_name")["testValue"] == "New Product"
 
 
 def test_adapter_studio_uses_shared_worker_implementations_without_legacy_builder() -> None:

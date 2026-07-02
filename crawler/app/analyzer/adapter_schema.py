@@ -260,7 +260,7 @@ def get_product_field_mappings(adapter: "Adapter") -> list[dict[str, Any]]:
         "status": "ok" if option_group and option_group.values_selector.strip() else "missing",
         "urlPattern": "", "urlParam": "",
         "urlAllowed": False,
-        "testable": False,
+        "testable": True,
         "extraEnabled": True,
     })
     option_price = adapter.adapter.options.option_price_delta
@@ -274,7 +274,7 @@ def get_product_field_mappings(adapter: "Adapter") -> list[dict[str, Any]]:
         "status": "ok" if option_price and option_price.selector.strip() else "missing",
         "urlPattern": "", "urlParam": "",
         "urlAllowed": False,
-        "testable": False,
+        "testable": True,
         "extraEnabled": True,
     })
     return rows
