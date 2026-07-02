@@ -258,6 +258,73 @@ def test_session_is_not_open_when_context_pages_are_closed():
     assert session.is_open is False
 
 
+def test_preview_mapping_extracts_sample_values(monkeypatch):
+    import app.analyzer.picker_session as picker_session
+
+    class FakeElement:
+        def __init__(self, text="", html="", attrs=None):
+            self.text = text
+            self.html = html
+            self.attrs = attrs or {}
+
+        def inner_text(self):
+            return self.text
+
+        def inner_html(self):
+            return self.html
+
+        def get_attribute(self, name):
+            return self.attrs.get(name)
+
+    class FakePage:
+        url = "https://shop.example/p/1?goodsno=12345&cate=001"
+
+        def __init__(self):
+            self.elements = {
+                ".name": [FakeElement("상품명")],
+                ".main": [FakeElement(attrs={"src": "https://img.example/main.jpg"})],
+                ".lazy": [FakeElement(attrs={"data-src": "https://img.example/lazy.jpg"})],
+                ".thumb": [FakeElement("A"), FakeElement("B")],
+            }
+            self.overlay_fields = None
+
+        def query_selector(self, selector):
+            items = self.elements.get(selector, [])
+            return items[0] if items else None
+
+        def query_selector_all(self, selector):
+            return list(self.elements.get(selector, []))
+
+        def evaluate(self, script, fields):
+            self.overlay_fields = fields
+
+    monkeypatch.setattr(picker_session, "_safe_goto", lambda page, url: True)
+    session = PickerSession()
+    page = FakePage()
+    session._ensure_page = lambda: page
+
+    result = session.preview_mapping("https://shop.example/p/1", [
+        {"key": "name", "label": "상품명", "selector": ".name", "transform": "strip"},
+        {"key": "image", "label": "대표 이미지", "selector": ".main", "attribute": "src"},
+        {"key": "lazy", "label": "지연 이미지", "selector": ".lazy", "attribute": "src", "fallback_attribute": "data-src"},
+        {"key": "multi", "label": "여러 값", "selector": ".thumb", "multiple": True},
+        {"key": "param", "label": "상품코드", "fallback_from": "url", "url_param": "goodsno"},
+        {"key": "pattern", "label": "카테고리", "fallback_from": "url", "url_pattern": r"cate=(\d+)"},
+    ])
+
+    assert result["values"] == {
+        "name": "상품명",
+        "image": "https://img.example/main.jpg",
+        "lazy": "https://img.example/lazy.jpg",
+        "multi": "2개 · A, B",
+        "param": "12345",
+        "pattern": "001",
+    }
+    assert set(result["found"]) == set(result["values"])
+    assert result["missing"] == []
+    assert page.overlay_fields is not None
+
+
 def test_picker_install_script_cancels_on_overlay_click_and_ignores_non_elements():
     """PICKER_INSTALL_SCRIPT must cancel when the overlay is clicked and ignore non-element targets."""
     src = PICKER_INSTALL_SCRIPT

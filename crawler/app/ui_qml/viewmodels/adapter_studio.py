@@ -13,7 +13,9 @@ from PySide6.QtCore import QObject, Property, QTimer, Signal, Slot
 from app.analyzer.adapter_schema import (
     FIELD_LABELS_KO,
     OPTION_PRICES_FIELD_PATH,
+    OPTION_PRICES_ROW_KEY,
     OPTION_VALUES_FIELD_PATH,
+    OPTION_VALUES_ROW_KEY,
     get_product_field_mappings,
 )
 from app.analyzer.element_picker import suggest_defaults_for_field
@@ -125,6 +127,7 @@ class AdapterStudioViewModel(BaseViewModel):
         self._needs_mapping_login = False
         self._manual_login_pending = False
         self._preview_active = False
+        self._auto_preview_token = 0
         self._inputs = {
             "supplierName": "", "mainUrl": "", "listingUrl": "", "detailUrl": "",
             "needsLogin": False, "loginUrl": "", "username": "", "password": "",
@@ -288,7 +291,15 @@ class AdapterStudioViewModel(BaseViewModel):
 
     @Slot(str)
     def setDetailUrl(self, url: str) -> None:
-        self._inputs["detailUrl"] = str(url or "").strip()
+        next_url = str(url or "").strip()
+        if next_url == self._inputs.get("detailUrl"):
+            return
+        self._inputs["detailUrl"] = next_url
+        self._clear_mapping_preview_values()
+        if self._current_stage == 2 and self._yaml_text:
+            self._schedule_mapping_preview()
+        else:
+            self._auto_preview_token += 1
         self._emit()
 
     @Slot("QVariantMap")
@@ -652,6 +663,30 @@ class AdapterStudioViewModel(BaseViewModel):
             rows = []
         self._mapping_rows.resetRows([{**row, "testValue": "", "testOk": False} for row in rows])
 
+    def _clear_mapping_preview_values(self) -> None:
+        if self._yaml_text:
+            self._refresh_mapping_rows()
+
+    def _schedule_mapping_preview(self) -> None:
+        self._auto_preview_token += 1
+        token = self._auto_preview_token
+        QTimer.singleShot(450, lambda: self._run_scheduled_mapping_preview(token))
+
+    def _run_scheduled_mapping_preview(self, token: int) -> None:
+        if token != self._auto_preview_token:
+            return
+        if self._current_stage != 2 or self._busy or not self._yaml_text:
+            return
+        target = self._picker_target_url()
+        if not target.startswith(("http://", "https://")):
+            return
+        try:
+            if not self._extract_preview_fields():
+                return
+        except Exception:
+            return
+        self.previewMapping()
+
     @Slot(result=str)
     def beginValidation(self) -> str:
         return yaml_content_hash(self._yaml_text)
@@ -679,14 +714,53 @@ class AdapterStudioViewModel(BaseViewModel):
             updated.append({**row, "testValue": str(hits[0])[:100] if hits else "", "testOk": bool(hits)})
         self._mapping_rows.resetRows(updated)
 
+    def _preview_field(self, key: str, label: str, extractor) -> dict:
+        return {
+            "key": key,
+            "label": label,
+            "selector": extractor.selector or "",
+            "attribute": extractor.attribute or "",
+            "fallback_attribute": extractor.fallback_attribute or "",
+            "html": bool(extractor.html),
+            "multiple": bool(extractor.multiple),
+            "transform": extractor.transform or "strip",
+            "fallback": extractor.fallback or "",
+            "fallback_from": extractor.fallback_from or "none",
+            "url_param": extractor.url_param or "",
+            "url_pattern": extractor.url_pattern or "",
+        }
+
     def _extract_preview_fields(self) -> list[dict]:
         adapter = load_adapter_from_text(self._yaml_text)
         product = adapter.adapter.product
-        return [
-            {"key": k, "label": FIELD_LABELS_KO[k], "selector": getattr(product, k).selector}
-            for k in FIELD_LABELS_KO
-            if getattr(product, k, None) is not None and getattr(product, k).selector.strip()
-        ]
+        fields = []
+        for key, label in FIELD_LABELS_KO.items():
+            extractor = getattr(product, key, None)
+            if extractor and (extractor.selector.strip() or extractor.url_param or extractor.url_pattern):
+                fields.append(self._preview_field(key, label, extractor))
+        option_group = adapter.adapter.options.groups[0] if adapter.adapter.options.groups else None
+        if option_group and option_group.values_selector.strip():
+            attribute = option_group.value_attribute if option_group.value_text == "attribute" else (
+                "value" if option_group.value_text == "value" else ""
+            )
+            fields.append({
+                "key": OPTION_VALUES_ROW_KEY,
+                "label": "옵션값",
+                "selector": option_group.values_selector,
+                "attribute": attribute or "",
+                "fallback_attribute": "",
+                "html": False,
+                "multiple": True,
+                "transform": "strip",
+                "fallback": "",
+                "fallback_from": "none",
+                "url_param": "",
+                "url_pattern": "",
+            })
+        option_price = adapter.adapter.options.option_price_delta
+        if option_price and option_price.selector.strip():
+            fields.append(self._preview_field(OPTION_PRICES_ROW_KEY, "옵션가격", option_price))
+        return fields
 
     @Slot()
     def previewMapping(self) -> bool:
@@ -724,7 +798,24 @@ class AdapterStudioViewModel(BaseViewModel):
         )
 
     def _preview_finished(self, result: dict) -> None:
+        self._apply_preview_result(result)
         self._operation_done()
+
+    def _apply_preview_result(self, result: Mapping[str, Any]) -> None:
+        values = dict(result.get("values") or {})
+        found = set(result.get("found") or [])
+        try:
+            rows = get_product_field_mappings(load_adapter_from_text(self._yaml_text))
+        except Exception:
+            return
+        self._mapping_rows.resetRows([
+            {
+                **row,
+                "testValue": str(values.get(row["key"], ""))[:100],
+                "testOk": row["key"] in found and bool(values.get(row["key"])),
+            }
+            for row in rows
+        ])
 
     @Slot()
     def closePreview(self) -> None:
