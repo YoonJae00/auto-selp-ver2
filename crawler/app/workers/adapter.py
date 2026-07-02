@@ -11,7 +11,7 @@ from urllib.parse import urljoin
 
 from PySide6.QtCore import QObject, QThread, Signal, Slot
 
-from app.analyzer.adapter_generator import generate_adapter_yaml
+from app.analyzer.adapter_generator import generate_adapter_yaml, repair_adapter_fields
 from app.analyzer.adapter_schema import extract_url_value
 from app.analyzer.option_text_parser import parse_option_text
 from app.analyzer.picker_session import PickerSession
@@ -36,6 +36,15 @@ class GenerateRequest:
     provider: str = "gemini"
     auto_fallback: bool = True
     mapping_hints: list[Any] = field(default_factory=list)
+
+
+@dataclass
+class AdapterRepairRequest:
+    yaml_text: str
+    failed_fields: list[str]
+    probe_result: Any
+    provider: str = "gemini"
+    auto_fallback: bool = True
 
 
 @dataclass
@@ -681,6 +690,21 @@ class GenerateWorker(_AsyncWorker):
             llm_provider=self.request.provider, auto_fallback=self.request.auto_fallback,
             on_progress=self.progress.emit, mapping_hints=self.request.mapping_hints,
         ), lambda result: self.finished.emit(result.yaml_text, result.provider_used, result.retries))
+
+
+class AdapterRepairWorker(_AsyncWorker):
+    finished = Signal(str)
+
+    def __init__(self, request: AdapterRepairRequest) -> None:
+        super().__init__()
+        self.request = request
+
+    def run(self) -> None:
+        self._run_async(repair_adapter_fields(
+            self.request.yaml_text, self.request.failed_fields, self.request.probe_result,
+            llm_provider=self.request.provider, auto_fallback=self.request.auto_fallback,
+            on_progress=self.progress.emit,
+        ), self.finished.emit)
 
 
 def _strip_json_response(response: str) -> str:

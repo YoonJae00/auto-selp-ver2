@@ -18,6 +18,7 @@ from app.analyzer.adapter_schema import (
     OPTION_VALUES_ROW_KEY,
     get_product_field_mappings,
 )
+from app.analyzer.adapter_generator import REPAIRABLE_PRODUCT_FIELDS
 from app.analyzer.element_picker import suggest_defaults_for_field
 from app.analyzer.mapping_hints import MappingHint, apply_locked_hints_to_yaml_dict
 from app.analyzer.validation_summary import (
@@ -32,10 +33,11 @@ from app.credentials.store import (
     load_supplier_credentials,
     save_supplier_credentials,
 )
-from app.crawlers.registry import load_adapter_from_text, save_adapter
+from app.crawlers.registry import adapter_exists, load_adapter, load_adapter_from_text, save_adapter
 from app.ui_qml.models.list_model import ListModel
 from app.ui_qml.viewmodels.base import BaseViewModel, sanitize_diagnostic
 from app.workers.adapter import (
+    AdapterRepairRequest, AdapterRepairWorker,
     AdapterTestRequest, AdapterTestWorker, CategoryMenuProbeRequest, CategoryMenuProbeWorker,
     GenerateRequest, GenerateWorker,
     MappingPreviewJob, MappingPreviewRequest,
@@ -79,7 +81,7 @@ class AdapterStudioViewModel(BaseViewModel):
         super().__init__(parent)
         self._app = app_view_model
         self._factories = {
-            "probe": ProbeWorker, "generate": GenerateWorker,
+            "probe": ProbeWorker, "generate": GenerateWorker, "repair": AdapterRepairWorker,
             "picker": PickerJob, "test": AdapterTestWorker,
             "picker_validate": PickerValidateWorker,
             "category_probe": CategoryMenuProbeWorker,
@@ -135,6 +137,7 @@ class AdapterStudioViewModel(BaseViewModel):
         self._manual_login_pending = False
         self._preview_active = False
         self._auto_preview_token = 0
+        self._repair_attempted = False
         self._soldout_url = ""
         self._soldout_suggestion: dict[str, Any] = {}
         self._soldout_compare_open = False
@@ -622,6 +625,7 @@ class AdapterStudioViewModel(BaseViewModel):
             self.set_field_errors({"form": "카테고리 메뉴를 수동 지정하고 Yes로 확인하세요."})
             return False
         config = load_config()
+        self._seed_hints_from_saved_adapter()
         worker = self._factories["generate"](GenerateRequest(
             self._probe_result, str(self._inputs["supplierName"]), config.llm_provider,
             config.auto_fallback_enabled, list(self._mapping_hints),
@@ -630,6 +634,37 @@ class AdapterStudioViewModel(BaseViewModel):
             worker, finished=lambda text, *_: self._generated(text),
             key="adapter-generate", label="수집 설정 생성", stage="generate",
         )
+
+    def _seed_hints_from_saved_adapter(self) -> None:
+        """Reuse product-field selectors from a previously saved adapter for this
+        supplier as *soft* hints (locked=False) so regeneration doesn't throw away
+        the user's earlier manual corrections. Site may have changed, so these only
+        advise the LLM — they are not deterministically merged."""
+        slug = _slugify(str(self._inputs["supplierName"]).strip())
+        if not slug or not adapter_exists(slug):
+            return
+        try:
+            product = load_adapter(slug).adapter.product
+        except Exception:
+            return
+        seeded = {h.field_path for h in self._mapping_hints}
+        for field in REPAIRABLE_PRODUCT_FIELDS:
+            field_path = f"adapter.product.{field}"
+            if field_path in seeded:
+                continue
+            extractor = getattr(product, field, None)
+            if not extractor or not str(getattr(extractor, "selector", "") or "").strip():
+                continue
+            try:
+                self._mapping_hints.append(MappingHint(
+                    page_kind="detail", field_path=field_path,
+                    chosen_selector=extractor.selector,
+                    attribute=extractor.attribute or None,
+                    transform=extractor.transform or None,
+                    locked=False,
+                ))
+            except ValueError:
+                continue
 
     def _generated(self, text: str) -> None:
         self.acceptGeneratedYaml(text)
@@ -677,6 +712,7 @@ class AdapterStudioViewModel(BaseViewModel):
         self._validation_stale = True
         self._clear_save_warning()
         self._current_stage = 2
+        self._repair_attempted = False
         self._refresh_mapping_rows()
         self._schedule_mapping_preview()
         self._emit()
@@ -902,6 +938,38 @@ class AdapterStudioViewModel(BaseViewModel):
 
     def _preview_finished(self, result: dict) -> None:
         self._apply_preview_result(result)
+        self._operation_done()
+        self._maybe_repair_mapping(result)
+
+    def _maybe_repair_mapping(self, result: Mapping[str, Any]) -> None:
+        """After the first post-generation preview, re-map product fields that
+        extracted empty values via a one-shot LLM repair. Runs at most once per
+        generated adapter (guarded by _repair_attempted)."""
+        if self._repair_attempted or self._current_stage != 2 or self._probe_result is None:
+            return
+        values = dict(result.get("values") or {})
+        failed = [f for f in REPAIRABLE_PRODUCT_FIELDS if not str(values.get(f, "")).strip()]
+        if not failed:
+            return
+        self._repair_attempted = True
+        config = load_config()
+        worker = self._factories["repair"](AdapterRepairRequest(
+            self._yaml_text, failed, self._probe_result,
+            config.llm_provider, config.auto_fallback_enabled,
+        ))
+        self._connect_worker(
+            worker, finished=lambda text, *_: self._repair_finished(text),
+            key="adapter-repair", label="빈 필드 자동 재매핑", stage="generate",
+        )
+
+    def _repair_finished(self, text: str) -> None:
+        text = str(text or "")
+        if text and text != self._yaml_text:
+            self._yaml_text = text
+            self._yaml_dirty = True
+            self._validation_stale = True
+            self._refresh_mapping_rows()
+            self._schedule_mapping_preview()
         self._operation_done()
 
     def _apply_preview_result(self, result: Mapping[str, Any]) -> None:

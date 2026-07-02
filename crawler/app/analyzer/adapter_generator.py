@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from typing import Callable
@@ -9,7 +10,7 @@ from pydantic import ValidationError
 
 from app.analyzer.adapter_schema import Adapter
 from app.analyzer.llm_client import get_llm_client, QuotaExceededError
-from app.analyzer.mapping_hints import MappingHint, apply_locked_hints_to_yaml_dict, format_mapping_hints_for_prompt
+from app.analyzer.mapping_hints import MappingHint, PRODUCT_DEFAULTS, apply_locked_hints_to_yaml_dict, format_mapping_hints_for_prompt
 from app.analyzer.site_probe import ProbeResult
 
 
@@ -380,3 +381,141 @@ async def generate_adapter_yaml(
         "Adapter generation failed with both providers. "
         f"Last error: {last_error}"
     )
+
+
+# Fields the LLM auto-maps and that a repair pass may re-select. Image/detail/option
+# fields are excluded — those are picked manually in stage 3.
+REPAIRABLE_PRODUCT_FIELDS = (
+    "supplier_product_code",
+    "raw_product_name",
+    "supplier_status",
+    "supply_price",
+    "origin",
+    "main_image_url",
+)
+
+_REPAIR_FIELD_HINTS = {
+    "supplier_product_code": "상품 고유 코드/상품번호 텍스트",
+    "raw_product_name": "상품명 제목 텍스트",
+    "supplier_status": "판매 상태 표시 (품절/판매중 텍스트나 이미지)",
+    "supply_price": "공급가/가격 숫자 (attribute 비우고 transform: extract_number)",
+    "origin": "원산지 텍스트",
+    "main_image_url": "대표 상품 이미지 img 태그 (attribute: src, 없으면 data-src)",
+}
+
+REPAIR_SYSTEM_PROMPT = """당신은 웹 스크래핑 CSS 선택자 교정 전문가입니다.
+아래 필드들은 기존 어댑터의 CSS 선택자가 **실제 페이지에서 빈 값을 추출**했습니다.
+주어진 상품 DOM을 다시 분석해 각 필드의 **더 정확한 CSS 선택자**를 찾으세요.
+
+반드시 다음 JSON 형식으로만 응답하세요 (설명·코드블록 없이):
+{"field_name": {"selector": "CSS선택자", "attribute": "src|data-src|value 또는 빈문자열", "transform": "extract_number 또는 빈문자열"}, ...}
+
+규칙:
+1. 값을 찾을 수 없는 필드는 결과에서 완전히 생략하세요 (빈 선택자 금지).
+2. 가격(supply_price)은 attribute를 비우고 transform을 "extract_number"로 설정하세요.
+3. 대표 이미지(main_image_url)는 attribute를 "src"로 하되 URL이 data-src에만 있으면 "data-src"로 하세요.
+4. 선택자는 구체적이고 고유하게(id/class/속성 활용). nth-of-type 남발 금지.
+5. JSON 외 텍스트 출력 금지.
+"""
+
+
+def _repair_dom_context(probe_result: ProbeResult) -> str:
+    parts: list[str] = []
+    detail = getattr(probe_result, "detail_html", "") or ""
+    listing = getattr(probe_result, "listing_html", "") or ""
+    if detail:
+        parts.append(f"## 상품 상세 페이지 DOM\n{detail[:12000]}")
+    if listing:
+        parts.append(f"## 상품 목록 페이지 DOM\n{listing[:8000]}")
+    return "\n\n".join(parts)
+
+
+def _apply_repaired_fields(yaml_text: str, repaired: dict) -> str:
+    """Merge repaired field selectors into the YAML, replacing only those fields.
+
+    Returns the re-dumped YAML if it still validates, else the original text.
+    """
+    raw = yaml.safe_load(yaml_text)
+    if not isinstance(raw, dict):
+        return yaml_text
+    product = raw.setdefault("adapter", {}).setdefault("product", {})
+    if not isinstance(product, dict):
+        return yaml_text
+    changed = False
+    for field, spec in (repaired or {}).items():
+        if field not in REPAIRABLE_PRODUCT_FIELDS or not isinstance(spec, dict):
+            continue
+        selector = str(spec.get("selector") or "").strip()
+        if not selector:
+            continue
+        entry: dict = {**PRODUCT_DEFAULTS.get(field, {}), "selector": selector}
+        attribute = str(spec.get("attribute") or "").strip()
+        if attribute:
+            entry["attribute"] = attribute
+        transform = str(spec.get("transform") or "").strip()
+        if transform:
+            entry["transform"] = transform
+        product[field] = entry
+        changed = True
+    if not changed:
+        return yaml_text
+    _strip_empty_selectors(raw)
+    try:
+        adapter = Adapter.model_validate(raw)
+    except ValidationError:
+        return yaml_text
+    return yaml.safe_dump(adapter.model_dump(mode="json", exclude_none=True), allow_unicode=True, sort_keys=False)
+
+
+async def repair_adapter_fields(
+    yaml_text: str,
+    failed_fields: list[str],
+    probe_result: ProbeResult,
+    llm_provider: str = "gemini",
+    auto_fallback: bool = True,
+    on_progress: Callable[[str], None] | None = None,
+) -> str:
+    """One-shot LLM repair of product fields whose selectors extracted empty values.
+
+    Returns updated YAML (or the original text unchanged if repair fails/yields nothing).
+    # ponytail: single repair pass; add iteration only if one pass measurably falls short.
+    """
+    targets = [f for f in failed_fields if f in REPAIRABLE_PRODUCT_FIELDS]
+    dom = _repair_dom_context(probe_result)
+    if not targets or not dom:
+        return yaml_text
+
+    def _log(msg: str) -> None:
+        if on_progress:
+            on_progress(msg)
+
+    field_lines = "\n".join(f"- {f}: {_REPAIR_FIELD_HINTS.get(f, '')}" for f in targets)
+    user_prompt = f"## 다시 선택자를 찾을 필드\n{field_lines}\n\n{dom}"
+
+    _log(f"빈 값 필드 {len(targets)}개 자동 재매핑 중...")
+    provider = llm_provider
+    try:
+        response = await get_llm_client(provider).generate(REPAIR_SYSTEM_PROMPT, user_prompt)
+    except QuotaExceededError:
+        if not auto_fallback:
+            return yaml_text
+        provider = "openai" if provider == "gemini" else "gemini"
+        _log(f"할당량 초과, {provider}로 재매핑 전환...")
+        response = await get_llm_client(provider).generate(REPAIR_SYSTEM_PROMPT, user_prompt)
+
+    text = response.strip()
+    if text.startswith("```"):
+        lines = text.split("\n")
+        end = len(lines) - 1 if lines[-1].strip() == "```" else len(lines)
+        text = "\n".join(lines[1:end]).strip()
+    match = re.search(r"\{.*\}", text, re.DOTALL)
+    if match:
+        text = match.group()
+    try:
+        repaired = json.loads(text)
+    except json.JSONDecodeError:
+        _log("자동 재매핑 응답을 해석하지 못했습니다.")
+        return yaml_text
+    if not isinstance(repaired, dict):
+        return yaml_text
+    return _apply_repaired_fields(yaml_text, repaired)

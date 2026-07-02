@@ -1803,3 +1803,49 @@ def test_accept_picked_hint_with_empty_selector_and_no_candidates_is_safe() -> N
     assert "선택자" in vm.fieldErrors.get("form", "")
     # Pending hint is preserved so the user can re-pick.
     assert vm._pending_hint is not None
+
+
+def test_empty_fields_trigger_one_repair_pass(vm) -> None:
+    """After the first post-generation preview, product fields that extracted
+    empty values trigger exactly one LLM repair pass that updates the YAML."""
+    import types
+
+    from PySide6.QtCore import QObject, Signal
+
+    IMPROVED_YAML = VALID_YAML.replace("selector: .price", "selector: .real-price")
+    calls: list = []
+
+    class FakeRepair(QObject):
+        finished = Signal(str)
+        error = Signal(str)
+        progress = Signal(str)
+        cancelled = Signal()
+
+        def __init__(self, request):
+            super().__init__()
+            self.request = request
+            calls.append(request)
+
+        def start(self):
+            self.finished.emit(IMPROVED_YAML)
+
+    vm._factories["repair"] = FakeRepair
+    vm._probe_result = types.SimpleNamespace(detail_html="<html><body>dom</body></html>", listing_html="")
+    vm.acceptGeneratedYaml(VALID_YAML)
+
+    url = "https://shop.example/p/1"
+    empty_price = {
+        "values": {"supplier_product_code": "P1", "raw_product_name": "Product",
+                   "main_image_url": "/p.jpg", "supply_price": ""},
+        "found": ["supplier_product_code", "raw_product_name", "main_image_url"],
+    }
+    vm._preview_finished(empty_price)
+
+    assert len(calls) == 1
+    # Fields with values are excluded; empty/absent repairable fields are targeted.
+    assert set(calls[0].failed_fields) == {"supply_price", "supplier_status", "origin"}
+    assert vm._yaml_text == IMPROVED_YAML
+
+    # A second preview must NOT trigger another repair pass.
+    vm._preview_finished(empty_price)
+    assert len(calls) == 1
