@@ -77,7 +77,6 @@ class SettingsViewModel(BaseViewModel):
     globalDelaySeconds = Property(int, lambda self: int(self._config.global_delay_seconds), notify=settingsChanged)
     checkUpdatesOnStart = Property(bool, lambda self: bool(self._config.check_updates_on_start), notify=settingsChanged)
     autoFallbackEnabled = Property(bool, lambda self: bool(self._config.auto_fallback_enabled), notify=settingsChanged)
-    pickerAiValidation = Property(bool, lambda self: bool(self._config.picker_ai_validation), notify=settingsChanged)
     appVersion = Property(str, lambda self: self._config.app_version, notify=settingsChanged)
     sections = Property("QVariantList", lambda self: [dict(section) for section in self._SECTIONS], constant=True)
 
@@ -127,7 +126,7 @@ class SettingsViewModel(BaseViewModel):
         self.changed.emit()
         return True
 
-    @Slot(str, str, int, bool, bool, bool, str, str, result=bool)
+    @Slot(str, str, int, bool, bool, str, str, result=bool)
     def save(
         self,
         llm_provider: str,
@@ -135,7 +134,6 @@ class SettingsViewModel(BaseViewModel):
         global_delay_seconds: int,
         check_updates_on_start: bool,
         auto_fallback_enabled: bool,
-        picker_ai_validation: bool,
         gemini_api_key: str,
         openai_api_key: str,
     ) -> bool:
@@ -159,7 +157,6 @@ class SettingsViewModel(BaseViewModel):
             check_updates_on_start=bool(check_updates_on_start),
             app_version=self._config.app_version,
             auto_fallback_enabled=bool(auto_fallback_enabled),
-            picker_ai_validation=bool(picker_ai_validation),
         )
         try:
             self._config_saver(next_config)

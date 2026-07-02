@@ -15,7 +15,6 @@ class AppConfig:
     check_updates_on_start: bool = True
     app_version: str = "0.1.0"
     auto_fallback_enabled: bool = True
-    picker_ai_validation: bool = False
 
 
 def _config_file() -> Path:
