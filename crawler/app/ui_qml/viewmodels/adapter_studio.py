@@ -37,7 +37,7 @@ from app.workers.adapter import (
     AdapterTestRequest, AdapterTestWorker, CategoryMenuProbeRequest, CategoryMenuProbeWorker,
     GenerateRequest, GenerateWorker,
     MappingPreviewJob, MappingPreviewRequest,
-    PickerJob, PickerRequest, PickerValidateRequest, PickerValidateWorker,
+    PickerJob, PickerRequest,
     PickerWorker, ProbeRequest, ProbeWorker,
     close_picker_session, stop_picker_thread,
 )
@@ -74,7 +74,6 @@ class AdapterStudioViewModel(BaseViewModel):
         self._factories = {
             "probe": ProbeWorker, "generate": GenerateWorker,
             "picker": PickerJob, "test": AdapterTestWorker,
-            "picker_validate": PickerValidateWorker,
             "category_probe": CategoryMenuProbeWorker,
             **dict(worker_factories or {}),
         }
@@ -339,6 +338,12 @@ class AdapterStudioViewModel(BaseViewModel):
 
     def _task_start(self, key: str, label: str, stage: str, owner: object) -> bool:
         self._busy = True
+        # Seed the in-screen busy banner with the task name so the user sees e.g.
+        # "카테고리 메뉴 분석 중..." the moment the picker browser closes — not a
+        # generic "처리 중...". A later progress signal overrides this.
+        if label:
+            self._current_progress = -1.0
+            self._current_progress_label = f"{label} 중..."
         if self._app:
             if not self._app.acquire_task(key, label, owner):
                 self._busy = False
@@ -1196,34 +1201,6 @@ class AdapterStudioViewModel(BaseViewModel):
         if self.acceptPickedHint():
             self._category_analysis_ready = True
             self._category_analysis_message = f"카테고리 {len(categories)}개 발견"
-        self._operation_done()
-
-    def _start_picker_validation(self, picked, field_path: str) -> bool:
-        label = self._field_label_for_path(field_path)
-        request = PickerValidateRequest(
-            picked_element=picked,
-            field_path=field_path,
-            field_label=label,
-        )
-        worker = self._factories["picker_validate"](request)
-        self._picker_validation_active = True
-        self._picker_validation_confidence = ""
-        self._picker_validation_note = ""
-        self._picker_validation_selector = ""
-        ok = self._connect_worker(
-            worker, finished=self._picker_validation_finished,
-            key="adapter-pick-validate", label="AI 선택자 검증", stage="map",
-        )
-        if not ok:
-            self._picker_validation_active = False
-        return ok
-
-    def _picker_validation_finished(self, result: dict) -> None:
-        self._pending_validation = result
-        self._picker_validation_active = False
-        self._picker_validation_selector = str(result.get("validated_selector", ""))
-        self._picker_validation_confidence = str(result.get("confidence", ""))
-        self._picker_validation_note = str(result.get("note", ""))
         self._operation_done()
 
     @Slot()

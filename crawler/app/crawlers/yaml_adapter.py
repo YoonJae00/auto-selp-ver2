@@ -97,14 +97,32 @@ def _map_supplier_status(status_value: Any, mapping: dict[str, str], default: st
     return default if default == "available" else "unknown"
 
 
+# Placeholder/decorative image markers — lazy-load spacers, blank pixels, icons.
+_JUNK_IMAGE_RE = re.compile(r"blank|spacer|1x1|no_?image|noimg|transparent|/icon", re.IGNORECASE)
+_IMAGE_EXT = (".jpg", ".jpeg", ".png", ".webp", ".gif")
+
+
+def _is_placeholder_src(value: Any) -> bool:
+    """True for empty / data-URI / spacer-style img src used by lazy loaders."""
+    if not isinstance(value, str):
+        return True
+    url = value.strip()
+    return not url or url.lower().startswith("data:") or bool(_JUNK_IMAGE_RE.search(url))
+
+
 def _supported_image_url(value: Any) -> str | None:
     if not isinstance(value, str):
         return None
     url = value.strip()
-    if not url:
+    if not url or url.lower().startswith("data:"):
+        return None
+    if _JUNK_IMAGE_RE.search(url):
         return None
     path = url.split("?", 1)[0].split("#", 1)[0].lower()
-    return url if path.endswith((".jpg", ".jpeg", ".png", ".webp")) else None
+    last_segment = path.rsplit("/", 1)[-1]
+    # Accept known image extensions, or extensionless CDN/resizer URLs (no "." in the
+    # filename part) — collected values already come from <img> src, so they are images.
+    return url if path.endswith(_IMAGE_EXT) or "." not in last_segment else None
 
 
 def _image_csv(value: Any) -> str | None:
@@ -504,11 +522,37 @@ class YAMLAdapter(BaseAdapter):
         if extractor.html:
             return await element.inner_html()
         if extractor.attribute:
+            if extractor.attribute in ("src", "data-src"):
+                return await self._read_image_attribute(element, extractor)
             value = await element.get_attribute(extractor.attribute)
             if not value and extractor.fallback_attribute:
                 value = await element.get_attribute(extractor.fallback_attribute)
             return value
         return await element.inner_text()
+
+    async def _read_image_attribute(self, element, extractor: FieldExtractor) -> str | None:
+        """Resolve a lazy-loaded image URL: skip placeholder src, try common lazy attrs."""
+        attrs = [extractor.attribute, extractor.fallback_attribute,
+                 "data-src", "data-original", "data-lazy", "data-echo"]
+        first_non_placeholder = None
+        for attr in attrs:
+            if not attr:
+                continue
+            value = await element.get_attribute(attr)
+            if not value:
+                continue
+            if _is_placeholder_src(value):
+                continue
+            first_non_placeholder = first_non_placeholder or value.strip()
+        if first_non_placeholder:
+            return first_non_placeholder
+        srcset = await element.get_attribute("srcset")
+        if srcset:
+            first = srcset.strip().split(",", 1)[0].split()[0] if srcset.strip() else ""
+            if first and not _is_placeholder_src(first):
+                return first
+        # Everything was a placeholder — fall back to raw src so extraction isn't empty.
+        return await element.get_attribute(extractor.attribute)
 
     async def _extract_options(self, page, product_code: str, base_price: int | None) -> list[StandardOption]:
         config = self.adapter.adapter.options

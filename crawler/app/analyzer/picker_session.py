@@ -645,16 +645,29 @@ class PickerSession:
               function selectorFor(el) {
                 const tag = el.tagName.toLowerCase();
                 if (el.id) return `#${cssEscape(el.id)}`;
-                const classes = Array.prototype.slice.call(el.classList || []).slice(0, 2).filter(Boolean);
+                const classes = Array.prototype.slice.call(el.classList || []).slice(0, 3).filter(Boolean);
                 if (classes.length) {
                   const sel = `${tag}.${classes.map(cssEscape).join('.')}`;
                   try { if (document.querySelectorAll(sel).length === 1) return sel; } catch (_) {}
                 }
                 return nthPath(el);
               }
+              // A "stable" selector generalises across products: an id, or a class combo
+              // that matches at least one element. Positional nth-of-type paths do not.
+              function stableSelector(el) {
+                if (el.id) return `#${cssEscape(el.id)}`;
+                const tag = el.tagName.toLowerCase();
+                const classes = Array.prototype.slice.call(el.classList || []).slice(0, 3).filter(Boolean);
+                if (classes.length) {
+                  const sel = `${tag}.${classes.map(cssEscape).join('.')}`;
+                  try { if (document.querySelectorAll(sel).length >= 1) return sel; } catch (_) {}
+                }
+                return '';
+              }
               function imgCount(el) {
                 return el.querySelectorAll('img[src],img[data-src]').length;
               }
+              const DETAIL_RE = /detail|desc|prod|goods|view|content|info|cont/i;
               let picked = null;
               for (const sel of candidates || []) {
                 try { picked = document.querySelector(sel); } catch (_) {}
@@ -665,11 +678,22 @@ class PickerSession:
                 ? picked
                 : picked.querySelector('img[src],img[data-src]');
               if (!img) return '';
-              let container = img.parentElement || img;
-              for (let node = container; node && node !== document.body; node = node.parentElement) {
-                if (imgCount(node) >= 2) { container = node; break; }
+              // Collect img→body ancestors that (a) hold >=2 images and (b) have a stable
+              // selector. Prefer one whose id/class names read like a detail block; else
+              // the stable ancestor with the most images.
+              let keyword = null;
+              let best = null;
+              for (let node = img.parentElement; node && node !== document.body; node = node.parentElement) {
+                if (imgCount(node) < 2) continue;
+                const sel = stableSelector(node);
+                if (!sel) continue;
+                if (!best || imgCount(node) > imgCount(best.node)) best = { node, sel };
+                if (!keyword && DETAIL_RE.test(`${node.id} ${node.className}`)) keyword = { node, sel };
               }
-              return imgCount(container) >= 2 ? `${selectorFor(container)} img` : selectorFor(img);
+              const chosen = keyword || best;
+              if (chosen) return `${chosen.sel} img`;
+              // No stable multi-image ancestor — fall back to the single image selector.
+              return selectorFor(img);
             }
             """,
             candidates,

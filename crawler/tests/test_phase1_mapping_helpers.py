@@ -68,14 +68,14 @@ def test_supported_image_url_allows_selected_formats_with_query() -> None:
     assert _supported_image_url("/img/a.jpeg#v") == "/img/a.jpeg#v"
     assert _supported_image_url("/img/a.png") == "/img/a.png"
     assert _supported_image_url("/img/a.webp") == "/img/a.webp"
-    assert _supported_image_url("/img/a.gif") is None
-    assert _supported_image_url("/img/no-extension") is None
+    assert _supported_image_url("/img/a.gif") == "/img/a.gif"  # gif now accepted
+    assert _supported_image_url("/img/no-extension") == "/img/no-extension"  # CDN/resizer now accepted
 
 
 def test_image_csv_filters_and_joins_supported_images() -> None:
-    assert _image_csv(["/d/1.jpg", "/d/2.webp?x=1", "/d/3.gif", None]) == "/d/1.jpg,/d/2.webp?x=1"
+    assert _image_csv(["/d/1.jpg", "/d/2.webp?x=1", "/d/3.gif", None]) == "/d/1.jpg,/d/2.webp?x=1,/d/3.gif"
     assert _image_csv("/d/one.png") == "/d/one.png"
-    assert _image_csv(["/d/no-extension"]) is None
+    assert _image_csv(["/d/no-extension"]) == "/d/no-extension"
 
 
 def test_split_option_text_price_only_reads_trailing_parenthesized_price() -> None:

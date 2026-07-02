@@ -958,6 +958,16 @@ def test_category_gate_blocks_generation_until_category_probe_succeeds() -> None
     assert generated
 
 
+def test_task_start_seeds_progress_label_so_banner_names_the_work() -> None:
+    from app.ui_qml.viewmodels.adapter_studio import AdapterStudioViewModel
+
+    vm = AdapterStudioViewModel(app_view_model=AppViewModel(), worker_factories={})
+    assert vm._task_start("adapter-category-probe", "카테고리 메뉴 분석", "probe", object()) is True
+    # Busy banner should name the running task, not show a generic "처리 중...".
+    assert vm.currentProgressLabel == "카테고리 메뉴 분석 중..."
+    assert vm.currentProgress < 0  # indeterminate
+
+
 def test_category_probe_failure_keeps_generation_blocked() -> None:
     from app.analyzer.element_picker import PickedElement
     from app.ui_qml.viewmodels.adapter_studio import AdapterStudioViewModel
