@@ -109,6 +109,14 @@ ListView {
                     }
                 }
                 AppButton {
+                    visible: mappingRow.key === "supplier_status"
+                    size: "compact"
+                    text: mappingRow.vm.soldoutCompareOpen ? "닫기" : "품절 비교"
+                    enabled: !mappingRow.vm.busy
+                    ToolTip.text: "품절 상품 URL을 입력해 판매 상태 매핑을 AI가 비교합니다"
+                    onClicked: mappingRow.vm.setSoldoutCompareOpen(!mappingRow.vm.soldoutCompareOpen)
+                }
+                AppButton {
                     visible: mappingRow.testable
                     size: "compact"
                     text: "테스트"
@@ -161,6 +169,72 @@ ListView {
                     font.family: "monospace"
                     font.pixelSize: 11
                     onEditingFinished: mappingRow.vm.setFieldUrlPattern(mappingRow.key, text)
+                }
+            }
+            ColumnLayout {
+                id: soldoutArea
+                visible: mappingRow.key === "supplier_status" && mappingRow.vm.soldoutCompareOpen
+                Layout.fillWidth: true
+                spacing: 6
+                Text {
+                    Layout.fillWidth: true
+                    text: "품절 상품 URL을 입력하면 현재 매핑 대상 상품 URL과 비교해 판매 상태 매핑을 제안합니다."
+                    color: Ui.Theme.textMuted
+                    wrapMode: Text.WordWrap
+                    font.pixelSize: 11
+                }
+                AppTextField {
+                    id: soldoutUrlField
+                    Layout.fillWidth: true
+                    text: mappingRow.vm.soldoutUrl || ""
+                    placeholderText: "품절 상품 상세 페이지 URL"
+                    Accessible.name: "품절 상품 URL"
+                    size: "compact"
+                    onEditingFinished: mappingRow.vm.setSoldoutUrl(text)
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    AppButton {
+                        size: "compact"
+                        text: "AI 분석"
+                        highlighted: true
+                        enabled: !mappingRow.vm.busy && soldoutUrlField.text.length > 0
+                        onClicked: {
+                            mappingRow.vm.setSoldoutUrl(soldoutUrlField.text)
+                            mappingRow.vm.compareSoldoutStatus()
+                        }
+                    }
+                    Item { Layout.fillWidth: true }
+                }
+                InlineBanner {
+                    Layout.fillWidth: true
+                    visible: Boolean(mappingRow.vm.soldoutSuggestion.confidence)
+                    text: "신뢰도 " + (mappingRow.vm.soldoutSuggestion.confidence || "-") + " · " + (mappingRow.vm.soldoutSuggestion.note || "")
+                    severity: mappingRow.vm.soldoutSuggestion.confidence === "low" ? "warning" : "info"
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    visible: Boolean(mappingRow.vm.soldoutSuggestion.confidence)
+                    Text {
+                        Layout.fillWidth: true
+                        text: (mappingRow.vm.soldoutSuggestion.selector || mappingRow.vm.soldoutSuggestion.fallback_from || "")
+                        color: Ui.Theme.textMuted
+                        font.family: "monospace"
+                        font.pixelSize: 11
+                        elide: Text.ElideRight
+                    }
+                    AppButton {
+                        size: "compact"
+                        text: "적용"
+                        enabled: !mappingRow.vm.busy && mappingRow.vm.soldoutSuggestion.confidence !== "low"
+                        onClicked: mappingRow.vm.acceptSoldoutSuggestion()
+                    }
+                    AppButton {
+                        size: "compact"
+                        text: "무시"
+                        enabled: !mappingRow.vm.busy
+                        onClicked: mappingRow.vm.rejectSoldoutSuggestion()
+                    }
                 }
             }
         }

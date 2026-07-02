@@ -84,7 +84,14 @@ def _map_supplier_status(status_value: Any, mapping: dict[str, str], default: st
         cleaned = str(status_value).strip()
         if cleaned in {"available", "sold_out", "stopped", "unknown"}:
             return cleaned
-        return mapping.get(cleaned, default)
+        if cleaned in mapping:
+            return mapping[cleaned]
+        lowered = cleaned.lower()
+        for key, value in mapping.items():
+            needle = str(key).strip().lower()
+            if len(needle) >= 2 and needle in lowered:
+                return value
+        return default
     return default if default == "available" else "unknown"
 
 

@@ -169,6 +169,21 @@ def test_mapping_row_url_param_marks_ok() -> None:
     assert row["urlParam"] == "goodsno"
 
 
+def test_mapping_row_fallback_from_marks_ok() -> None:
+    adapter = Adapter.model_validate({
+        "adapter": {
+            "name": "Shop",
+            "base_url": "https://shop.example",
+            "product": {
+                "supplier_status": {"fallback_from": "maxq"},
+            },
+        }
+    })
+    row = next(r for r in get_product_field_mappings(adapter) if r["key"] == "supplier_status")
+    assert row["status"] == "ok"
+    assert row["selector"] == "자동 판정: maxq"
+
+
 def test_extract_url_value_prefers_query_param() -> None:
     url = "https://shop.example/goods/view?goodsno=12345&cate=001"
     assert extract_url_value(url, FieldExtractor(url_param="goodsno")) == "12345"

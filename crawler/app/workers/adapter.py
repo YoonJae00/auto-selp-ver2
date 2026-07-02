@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import queue
 import re
 import threading
@@ -89,6 +90,18 @@ class MappingPreviewRequest:
 class OptionTextParserAnalyzeRequest:
     yaml_text: str
     target_url: str
+    login_url: str | None = None
+    username: str | None = None
+    password: str | None = None
+    storage_state: dict | None = None
+    supplier_key: str | None = None
+
+
+@dataclass
+class SoldoutCompareRequest:
+    adapter_yaml: str
+    available_url: str
+    soldout_url: str
     login_url: str | None = None
     username: str | None = None
     password: str | None = None
@@ -308,7 +321,7 @@ class PickerJob(QObject):
         """Use LLM to analyze the login page HTML and extract form selectors."""
         import asyncio
         import json
-        from app.analyzer.llm_client import get_llm_client
+        from app.analyzer.llm_client import QuotaExceededError, get_llm_client
         from app.config import load_config
 
         html = session.get_login_page_html()
@@ -668,6 +681,210 @@ class GenerateWorker(_AsyncWorker):
             llm_provider=self.request.provider, auto_fallback=self.request.auto_fallback,
             on_progress=self.progress.emit, mapping_hints=self.request.mapping_hints,
         ), lambda result: self.finished.emit(result.yaml_text, result.provider_used, result.retries))
+
+
+def _strip_json_response(response: str) -> str:
+    text_resp = response.strip()
+    if text_resp.startswith("```"):
+        lines = text_resp.split("\n")
+        end = len(lines) - 1 if lines[-1].strip() == "```" else len(lines)
+        text_resp = "\n".join(lines[1:end])
+    return text_resp.strip()
+
+
+def _status_suggestion_from_snapshots(available: dict, soldout: dict) -> dict | None:
+    available_maxq = str(available.get("maxq_value") or "").strip()
+    soldout_maxq = str(soldout.get("maxq_value") or "").strip()
+    if soldout_maxq == "0" and available_maxq and available_maxq != "0":
+        return {
+            "selector": "",
+            "fallback_from": "maxq",
+            "mapping": {"available": "available", "sold_out": "sold_out"},
+            "default": "available",
+            "confidence": "high",
+            "note": "품절 상품의 maxq 값이 0이고 판매중 상품은 0이 아닙니다.",
+        }
+    if available.get("has_buy_button") and not soldout.get("has_buy_button"):
+        return {
+            "selector": "",
+            "fallback_from": "cart_button",
+            "mapping": {"available": "available", "sold_out": "sold_out"},
+            "default": "available",
+            "confidence": "medium",
+            "note": "판매중 상품에만 구매/장바구니 버튼이 있습니다.",
+        }
+    return None
+
+
+class SoldoutCompareWorker(_AsyncWorker):
+    finished = Signal(dict)
+
+    def __init__(self, request: SoldoutCompareRequest) -> None:
+        super().__init__()
+        self.request = request
+
+    def run(self) -> None:
+        try:
+            self._run_async(self._compare(), self.finished.emit)
+        finally:
+            self.request.password = None
+
+    async def _compare(self) -> dict:
+        from app.analyzer.html_reducer import reduce_html
+        from app.analyzer.llm_client import get_llm_client
+        from app.analyzer.login_helper import perform_login as _login_shared
+        from app.config import load_config
+        from app.crawlers.engine import create_engine
+        from app.crawlers.registry import load_adapter_from_text
+
+        load_adapter_from_text(self.request.adapter_yaml)
+        state = self.request.storage_state
+        if state is None and self.request.supplier_key:
+            try:
+                from app.analyzer.session_store import load_session_state
+                state = load_session_state(self.request.supplier_key)
+            except Exception:
+                pass
+
+        self.progress.emit("[progress:0.00] 판매중/품절 상품 비교 시작")
+        async with create_engine(headless=True, storage_state=state) as engine:
+            page = await engine.new_page()
+            if self.request.login_url and self.request.username and self.request.password and state is None:
+                self.progress.emit("로그인 중...")
+                await _login_shared(
+                    page,
+                    self.request.login_url,
+                    self.request.username,
+                    self.request.password,
+                    on_progress=self.progress.emit,
+                )
+            available = await self._snapshot(page, self.request.available_url, reduce_html)
+            self.progress.emit("[progress:0.45] 판매중 상품 분석 완료")
+            soldout = await self._snapshot(page, self.request.soldout_url, reduce_html)
+            self.progress.emit("[progress:0.70] 품절 상품 분석 완료")
+            await page.close()
+
+        suggestion = _status_suggestion_from_snapshots(available, soldout)
+        if suggestion:
+            self.progress.emit("[progress:1.00] 판매 상태 비교 완료")
+            return {**suggestion, "available_url": self.request.available_url, "soldout_url": self.request.soldout_url}
+
+        config = load_config()
+        provider = config.llm_provider
+        client = get_llm_client(provider)
+        system_prompt = (
+            "당신은 쇼핑몰 상세 페이지에서 품절을 나타내는 DOM 요소를 찾는 전문가입니다. "
+            "판매중 상품과 품절 상품의 축약 DOM과 상태 후보를 비교해 YAML 어댑터에 넣을 값을 JSON으로만 응답하세요.\n\n"
+            "응답 형식:\n"
+            '{"selector":"CSS선택자 또는 빈 문자열","fallback_from":"none|cart_button|maxq",'
+            '"mapping":{"품절":"sold_out","판매중":"available"},"default":"available|unknown",'
+            '"confidence":"high|medium|low","note":"간단한 설명"}\n\n'
+            "규칙:\n"
+            "1. 품절 상품에만 있는 텍스트/이미지/disabled 버튼 선택자가 있으면 selector를 제안하세요.\n"
+            "2. 판매중에만 구매/장바구니 버튼이 있으면 fallback_from은 cart_button입니다.\n"
+            "3. maxq가 품절 0, 판매중 0 아님이면 fallback_from은 maxq입니다.\n"
+            "4. 확신이 없으면 confidence를 low로 주세요."
+        )
+        user_prompt = (
+            f"판매중 URL: {self.request.available_url}\n"
+            f"품절 URL: {self.request.soldout_url}\n\n"
+            f"판매중 상태 후보:\n{json.dumps(available, ensure_ascii=False)[:8000]}\n\n"
+            f"품절 상태 후보:\n{json.dumps(soldout, ensure_ascii=False)[:8000]}"
+        )
+        try:
+            response = await client.generate(system_prompt, user_prompt)
+        except QuotaExceededError:
+            if not config.auto_fallback_enabled:
+                raise
+            provider = "openai" if provider == "gemini" else "gemini"
+            self.progress.emit(f"할당량 초과, {provider}로 전환합니다...")
+            response = await get_llm_client(provider).generate(system_prompt, user_prompt)
+        try:
+            raw = json.loads(_strip_json_response(response))
+        except json.JSONDecodeError:
+            raw = {"confidence": "low", "note": "AI 응답 파싱 실패"}
+        result = self._normalize_result(raw)
+        self.progress.emit("[progress:1.00] 판매 상태 비교 완료")
+        return {**result, "available_url": self.request.available_url, "soldout_url": self.request.soldout_url}
+
+    async def _snapshot(self, page, url: str, reduce_html) -> dict:
+        await page.goto(url, wait_until="domcontentloaded", timeout=15000)
+        await page.wait_for_timeout(1200)
+        html = ""
+        try:
+            html = reduce_html(await page.content())[:12000]
+        except Exception:
+            pass
+        maxq_value = ""
+        maxq = await page.query_selector("input[name='maxq']")
+        if maxq:
+            maxq_value = await maxq.get_attribute("value") or ""
+        explicit = await self._collect_matches(
+            page,
+            "img[src*='soldout'], img[src*='sold_out'], img[alt*='품절'], img[alt*='soldout'], "
+            ":text('품절'), :text('soldout'), :text('완판')",
+        )
+        buy_buttons = await self._collect_matches(
+            page,
+            "button:has-text('장바구니'), button:has-text('구매'), button:has-text('주문'), "
+            "input[type='button'][value*='구매'], input[type='submit'][value*='구매'], "
+            "input[type='image'][src*='cart'], input[type='image'][src*='buy'], "
+            "img[src*='cart'], img[src*='buy'], img[src*='order'], img[src*='purchase']",
+        )
+        disabled = await self._collect_matches(
+            page,
+            "button[disabled], input[disabled], .disabled, .soldout, .sold_out, [class*='soldout'], [class*='sold_out']",
+        )
+        return {
+            "url": url,
+            "maxq_value": maxq_value,
+            "has_buy_button": bool(buy_buttons),
+            "buy_buttons": buy_buttons[:8],
+            "explicit_soldout": explicit[:8],
+            "disabled_candidates": disabled[:8],
+            "html": html,
+        }
+
+    async def _collect_matches(self, page, selector: str) -> list[dict[str, str]]:
+        try:
+            elements = await page.query_selector_all(selector)
+        except Exception:
+            return []
+        rows: list[dict[str, str]] = []
+        for el in elements[:12]:
+            try:
+                rows.append({
+                    "text": (await el.inner_text() or "").strip()[:120],
+                    "html": (await el.evaluate("el => el.outerHTML") or "")[:400],
+                })
+            except Exception:
+                continue
+        return rows
+
+    def _normalize_result(self, raw: dict) -> dict:
+        selector = str(raw.get("selector") or "").strip()
+        fallback_from = str(raw.get("fallback_from") or "none").strip()
+        if fallback_from not in {"none", "cart_button", "maxq"}:
+            fallback_from = "none"
+        confidence = str(raw.get("confidence") or "low").strip().lower()
+        if confidence not in {"high", "medium", "low"}:
+            confidence = "low"
+        mapping = raw.get("mapping")
+        if not isinstance(mapping, dict):
+            mapping = {}
+        default = str(raw.get("default") or "available").strip()
+        if default not in {"available", "unknown", "sold_out", "stopped"}:
+            default = "available"
+        if not selector and fallback_from == "none":
+            confidence = "low"
+        return {
+            "selector": selector,
+            "fallback_from": fallback_from,
+            "mapping": {str(k): str(v) for k, v in mapping.items()},
+            "default": default,
+            "confidence": confidence,
+            "note": str(raw.get("note") or "").strip()[:200],
+        }
 
 
 class AdapterTestWorker(_AsyncWorker):

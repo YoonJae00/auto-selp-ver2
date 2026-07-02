@@ -320,6 +320,78 @@ class FakeWorker(QObject):
         return False
 
 
+def test_soldout_compare_dispatches_urls_and_applies_yaml() -> None:
+    import yaml
+
+    from app.ui_qml.viewmodels.adapter_studio import AdapterStudioViewModel
+
+    app = AppViewModel()
+    made = []
+
+    def factory(*args, **kwargs):
+        worker = FakeWorker(*args, **kwargs)
+        made.append(worker)
+        return worker
+
+    vm = AdapterStudioViewModel(app_view_model=app, worker_factories={"soldout_compare": factory})
+    vm.setConnectionInputs({
+        "supplierName": "Test Shop",
+        "mainUrl": "https://shop.example",
+        "detailUrl": "https://shop.example/p/available",
+    })
+    vm.acceptGeneratedYaml(VALID_YAML)
+    vm.setSoldoutUrl("https://shop.example/p/soldout")
+
+    assert vm.compareSoldoutStatus() is True
+    request = made[0].args[0]
+    assert request.available_url == "https://shop.example/p/available"
+    assert request.soldout_url == "https://shop.example/p/soldout"
+
+    made[0].finished.emit({
+        "selector": ".soldout",
+        "fallback_from": "none",
+        "mapping": {"품절": "sold_out"},
+        "default": "available",
+        "confidence": "high",
+        "note": "품절 페이지에만 표시됨",
+    })
+
+    assert vm.soldoutSuggestion["confidence"] == "high"
+    vm.setSoldoutCompareOpen(True)
+    assert vm.acceptSoldoutSuggestion() is True
+    assert vm.soldoutCompareOpen is False
+    product = yaml.safe_load(vm.yamlText)["adapter"]["product"]
+    assert product["supplier_status"]["selector"] == ".soldout"
+    assert product["status_mapping"]["mapping"]["품절"] == "sold_out"
+    assert product["status_mapping"]["mapping"]["판매중"] == "available"
+
+
+def test_soldout_compare_rejects_invalid_and_same_url(vm) -> None:
+    vm.acceptGeneratedYaml(VALID_YAML)
+    vm.setSoldoutUrl("not-a-url")
+    assert vm.compareSoldoutStatus() is False
+    assert "soldoutUrl" in vm.fieldErrors
+
+    vm.setSoldoutUrl("https://shop.example/p/1")
+    assert vm.compareSoldoutStatus() is False
+    assert "다른 품절 상품" in vm.fieldErrors["soldoutUrl"]
+
+
+def test_soldout_low_confidence_does_not_apply(vm) -> None:
+    vm.acceptGeneratedYaml(VALID_YAML)
+    before = vm.yamlText
+    vm._soldout_suggestion = {
+        "selector": ".maybe",
+        "fallback_from": "none",
+        "confidence": "low",
+        "mapping": {"품절": "sold_out"},
+    }
+
+    assert vm.acceptSoldoutSuggestion() is False
+    assert vm.yamlText == before
+    assert "soldoutUrl" in vm.fieldErrors
+
+
 def test_probe_maps_to_shared_task_and_cancels_without_navigation_side_effect(monkeypatch) -> None:
     from app.ui_qml.viewmodels.adapter_studio import AdapterStudioViewModel
 
