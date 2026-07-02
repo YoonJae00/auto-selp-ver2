@@ -401,6 +401,52 @@ def test_preview_mapping_completion_updates_mapping_rows(monkeypatch) -> None:
     assert _row_by_key(vm, "supply_price")["testValue"] == ""
 
 
+def test_generated_yaml_auto_previews_sample_detail_url(monkeypatch, qt_app) -> None:
+    from PySide6.QtTest import QTest
+
+    from app.ui_qml.viewmodels import adapter_studio
+
+    made = []
+
+    class PreviewWorker(QObject):
+        finished = Signal(object)
+        error = Signal(str)
+        progress = Signal(str)
+        cancelled = Signal()
+
+        def __init__(self, request):
+            super().__init__()
+            self.request = request
+            made.append(self)
+
+        def start(self):
+            self.finished.emit({
+                "found": ["raw_product_name"],
+                "missing": [],
+                "values": {"raw_product_name": "Sample Product"},
+            })
+
+        def requestInterruption(self):
+            pass
+
+        def isRunning(self):
+            return False
+
+    monkeypatch.setattr(adapter_studio, "MappingPreviewJob", PreviewWorker)
+    vm = adapter_studio.AdapterStudioViewModel(app_view_model=AppViewModel())
+    vm.setConnectionInputs({
+        "supplierName": "Test Shop",
+        "mainUrl": "https://shop.example",
+        "detailUrl": "https://shop.example/p/1",
+    })
+
+    vm.acceptGeneratedYaml(VALID_YAML)
+    QTest.qWait(550)
+
+    assert made[-1].request.target_url == "https://shop.example/p/1"
+    assert _row_by_key(vm, "raw_product_name")["testValue"] == "Sample Product"
+
+
 def test_detail_url_change_clears_then_auto_refreshes_preview(monkeypatch, qt_app) -> None:
     from PySide6.QtTest import QTest
 

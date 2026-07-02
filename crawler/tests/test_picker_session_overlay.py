@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from app.analyzer.element_picker import INSTRUCTION_OVERLAY_SCRIPT, PICKER_INSTALL_SCRIPT
+from app.analyzer.element_picker import INSTRUCTION_OVERLAY_SCRIPT, MAPPING_PREVIEW_SCRIPT, PICKER_INSTALL_SCRIPT
 from app.analyzer.picker_session import PickerSession
 
 
@@ -58,6 +58,14 @@ def test_picker_install_script_avoids_pollutable_globals():
     code = "\n".join(line for line in src.splitlines() if "//" not in line)
     assert "Array.from" not in code
     assert "new Set(" not in code
+
+
+def test_mapping_preview_script_avoids_page_pollutable_for_each():
+    src = MAPPING_PREVIEW_SCRIPT
+    code = "\n".join(line for line in src.splitlines() if "//" not in line)
+    assert ".forEach" not in code
+    assert "for (let i = 0;" in code
+    assert "continue;" in code
 
 
 def test_picker_confirm_clicks_are_not_captured_before_button_handlers():

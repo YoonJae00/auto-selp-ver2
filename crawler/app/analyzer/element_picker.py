@@ -319,11 +319,15 @@ PICKER_INSTALL_SCRIPT = r"""
 
 MAPPING_PREVIEW_SCRIPT = r"""
 (fields) => {
-  document.querySelectorAll('[data-__preview]').forEach(el => el.remove());
-  fields.forEach(({label, selector}) => {
+  const old = document.querySelectorAll('[data-__preview]');
+  for (let i = 0; i < old.length; i++) old[i].remove();
+  for (let i = 0; i < fields.length; i++) {
+    const label = fields[i].label;
+    const selector = fields[i].selector;
+    if (!selector) continue;
     let el;
-    try { el = document.querySelector(selector); } catch (_) { return; }
-    if (!el) return;
+    try { el = document.querySelector(selector); } catch (_) { continue; }
+    if (!el) continue;
     const r = el.getBoundingClientRect();
     const sx = window.scrollX, sy = window.scrollY;
     const box = document.createElement('div');
@@ -342,7 +346,7 @@ MAPPING_PREVIEW_SCRIPT = r"""
     tag.textContent = label;
     box.appendChild(tag);
     document.body.appendChild(box);
-  });
+  }
 }
 """
 

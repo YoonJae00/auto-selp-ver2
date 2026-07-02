@@ -646,6 +646,7 @@ class AdapterStudioViewModel(BaseViewModel):
         self._clear_save_warning()
         self._current_stage = 2
         self._refresh_mapping_rows()
+        self._schedule_mapping_preview()
         self._emit()
 
     @Slot(str)
