@@ -23,7 +23,7 @@ Item {
         Components.InlineBanner {
             Layout.fillWidth: true
             visible: text.length > 0
-            text: root.viewModel.fieldErrors.form || root.viewModel.fieldErrors.yamlText || root.viewModel.fieldErrors.detailUrl || ""
+            text: root.viewModel.fieldErrors.form || root.viewModel.fieldErrors.yamlText || root.viewModel.fieldErrors.detailUrl || root.viewModel.fieldErrors.soldoutUrl || ""
             severity: "danger"
         }
         Components.GlassPanel {

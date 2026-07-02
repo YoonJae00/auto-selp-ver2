@@ -218,7 +218,12 @@ def get_product_field_mappings(adapter: "Adapter") -> list[dict[str, Any]]:
                 "selector": "", "attribute": "", "transform": "",
                 "status": "missing", "urlPattern": "", "urlParam": "",
             })
-        elif not extractor.selector.strip() and not extractor.url_pattern and not extractor.url_param:
+        elif (
+            not extractor.selector.strip()
+            and not extractor.url_pattern
+            and not extractor.url_param
+            and extractor.fallback_from in (None, "", "none")
+        ):
             rows.append({
                 **base,
                 "selector": "", "attribute": "", "transform": "",
@@ -229,6 +234,9 @@ def get_product_field_mappings(adapter: "Adapter") -> list[dict[str, Any]]:
             url_param = extractor.url_param or ""
             if url_param or url_pat:
                 desc = ""
+                status = "ok"
+            elif extractor.fallback_from not in (None, "", "none") and not extractor.selector.strip():
+                desc = f"자동 판정: {extractor.fallback_from}"
                 status = "ok"
             else:
                 desc = extractor.selector

@@ -41,6 +41,7 @@ from app.workers.adapter import (
     MappingPreviewJob, MappingPreviewRequest,
     PickerJob, PickerRequest, PickerValidateRequest, PickerValidateWorker,
     PickerWorker, ProbeRequest, ProbeWorker,
+    SoldoutCompareRequest, SoldoutCompareWorker,
     close_picker_session, stop_picker_thread,
 )
 from app.workers.lifecycle import stop_workers
@@ -81,6 +82,7 @@ class AdapterStudioViewModel(BaseViewModel):
             "picker": PickerJob, "test": AdapterTestWorker,
             "picker_validate": PickerValidateWorker,
             "category_probe": CategoryMenuProbeWorker,
+            "soldout_compare": SoldoutCompareWorker,
             **dict(worker_factories or {}),
         }
         self._current_stage = 0
@@ -131,6 +133,9 @@ class AdapterStudioViewModel(BaseViewModel):
         self._manual_login_pending = False
         self._preview_active = False
         self._auto_preview_token = 0
+        self._soldout_url = ""
+        self._soldout_suggestion: dict[str, Any] = {}
+        self._soldout_compare_open = False
         self._inputs = {
             "supplierName": "", "mainUrl": "", "listingUrl": "", "detailUrl": "",
             "needsLogin": False, "loginUrl": "", "username": "", "password": "",
@@ -171,6 +176,9 @@ class AdapterStudioViewModel(BaseViewModel):
     categoryAnalysisReady = Property(bool, lambda self: self._category_analysis_ready, notify=stateChanged)
     categoryAnalysisMessage = Property(str, lambda self: self._category_analysis_message, notify=stateChanged)
     canAcceptPickedHint = Property(bool, lambda self: bool(self._pending_hint) and not self._picker_validation_active, notify=stateChanged)
+    soldoutUrl = Property(str, lambda self: self._soldout_url, notify=stateChanged)
+    soldoutSuggestion = Property("QVariantMap", lambda self: dict(self._soldout_suggestion), notify=stateChanged)
+    soldoutCompareOpen = Property(bool, lambda self: self._soldout_compare_open, notify=stateChanged)
 
     def _probe_summary_with_checks(self) -> dict:
         result = dict(self._probe_summary)
@@ -303,6 +311,22 @@ class AdapterStudioViewModel(BaseViewModel):
             self._schedule_mapping_preview()
         else:
             self._auto_preview_token += 1
+        self._emit()
+
+    @Slot(str)
+    def setSoldoutUrl(self, url: str) -> None:
+        next_url = str(url or "").strip()
+        if next_url == self._soldout_url:
+            return
+        self._soldout_url = next_url
+        self._soldout_suggestion = {}
+        self._emit()
+
+    @Slot(bool)
+    def setSoldoutCompareOpen(self, open_: bool) -> None:
+        self._soldout_compare_open = bool(open_)
+        if not self._soldout_compare_open:
+            self._soldout_suggestion = {}
         self._emit()
 
     @Slot("QVariantMap")
@@ -740,7 +764,12 @@ class AdapterStudioViewModel(BaseViewModel):
         fields = []
         for key, label in FIELD_LABELS_KO.items():
             extractor = getattr(product, key, None)
-            if extractor and (extractor.selector.strip() or extractor.url_param or extractor.url_pattern):
+            if extractor and (
+                extractor.selector.strip()
+                or extractor.url_param
+                or extractor.url_pattern
+                or extractor.fallback_from not in (None, "", "none")
+            ):
                 fields.append(self._preview_field(key, label, extractor))
         option_group = adapter.adapter.options.groups[0] if adapter.adapter.options.groups else None
         if option_group and option_group.values_selector.strip():
@@ -915,6 +944,115 @@ class AdapterStudioViewModel(BaseViewModel):
         if url in self._extra_test_urls:
             self._extra_test_urls.remove(url)
             self._emit()
+
+    @Slot(result=bool)
+    def compareSoldoutStatus(self) -> bool:
+        if not self._guard_operation("adapter-soldout-compare"):
+            return False
+        try:
+            load_adapter_from_text(self._yaml_text)
+        except Exception as exc:
+            self.set_field_errors({"yamlText": f"YAML 오류: {exc}"})
+            return False
+        available_url = self._picker_target_url()
+        soldout_url = str(self._soldout_url or "").strip()
+        if not available_url.startswith(("http://", "https://")):
+            self.set_field_errors({"detailUrl": "판매중 상품 URL을 먼저 입력하세요."})
+            return False
+        if not soldout_url.startswith(("http://", "https://")):
+            self.set_field_errors({"soldoutUrl": "품절 상품 URL은 http:// 또는 https://로 시작해야 합니다."})
+            return False
+        if soldout_url == available_url:
+            self.set_field_errors({"soldoutUrl": "판매중 상품과 다른 품절 상품 URL을 입력하세요."})
+            return False
+        username = password = None
+        if self._inputs["needsLogin"]:
+            loaded = self._load_transient_credentials()
+            if loaded:
+                username, password = loaded
+        login_url = str(self._inputs["loginUrl"] or "").strip() or str(self._inputs["mainUrl"] or "").strip() or None
+        request = SoldoutCompareRequest(
+            self._yaml_text,
+            available_url,
+            soldout_url,
+            login_url,
+            username,
+            password,
+            supplier_key=self._credential_key() if self._inputs["needsLogin"] else None,
+        )
+        worker = self._factories["soldout_compare"](request)
+        self._inputs["username"] = self._inputs["password"] = ""
+        self._soldout_suggestion = {}
+        self.set_field_errors({})
+        return self._connect_worker(
+            worker,
+            finished=self._soldout_compare_finished,
+            key="adapter-soldout-compare",
+            label="품절 상태 비교",
+            stage="map",
+        )
+
+    def _soldout_compare_finished(self, result: dict) -> None:
+        self._soldout_suggestion = dict(result or {})
+        if self._soldout_suggestion.get("confidence") == "low":
+            self.set_field_errors({"soldoutUrl": "품절 요소를 확신하지 못했습니다. 판매 상태 행에서 수동으로 선택하세요."})
+        self._operation_done()
+
+    @Slot(result=bool)
+    def acceptSoldoutSuggestion(self) -> bool:
+        suggestion = dict(self._soldout_suggestion or {})
+        if not suggestion:
+            return False
+        if suggestion.get("confidence") == "low":
+            self.set_field_errors({"soldoutUrl": "신뢰도가 낮은 제안은 자동 적용하지 않습니다."})
+            return False
+        selector = str(suggestion.get("selector") or "").strip()
+        fallback_from = str(suggestion.get("fallback_from") or "none").strip()
+        if fallback_from not in {"none", "cart_button", "maxq"}:
+            fallback_from = "none"
+        if not selector and fallback_from == "none":
+            self.set_field_errors({"soldoutUrl": "적용할 선택자나 fallback 규칙이 없습니다."})
+            return False
+        try:
+            raw = yaml.safe_load(self._yaml_text) or {}
+            product = raw.setdefault("adapter", {}).setdefault("product", {})
+            field: dict[str, Any] = {}
+            if selector:
+                field["selector"] = selector
+                if "img" in selector.lower():
+                    field["attribute"] = "alt"
+                    field["fallback_attribute"] = "src"
+            if fallback_from != "none":
+                field["fallback_from"] = fallback_from
+            product["supplier_status"] = field
+            mapping = dict(suggestion.get("mapping") or {})
+            if fallback_from in {"cart_button", "maxq"}:
+                mapping.update({"available": "available", "sold_out": "sold_out"})
+            else:
+                mapping.setdefault("품절", "sold_out")
+                mapping.setdefault("완판", "sold_out")
+                mapping.setdefault("soldout", "sold_out")
+                mapping.setdefault("sold out", "sold_out")
+                mapping.setdefault("판매중", "available")
+            product["status_mapping"] = {
+                "mapping": mapping,
+                "default": suggestion.get("default") or "available",
+            }
+            self._soldout_suggestion = {}
+            self._soldout_compare_open = False
+            self.set_field_errors({})
+            self.setYamlText(yaml.safe_dump(raw, allow_unicode=True, sort_keys=False))
+            self._emit()
+            return True
+        except Exception as exc:
+            self.set_field_errors({"yamlText": f"YAML 오류: {exc}"})
+            return False
+
+    @Slot()
+    def rejectSoldoutSuggestion(self) -> None:
+        self._soldout_suggestion = {}
+        self._soldout_compare_open = False
+        self._emit()
 
     def _build_validation_products(self) -> list[dict[str, Any]]:
         """검증 raw 결과를 상품별로 피벗: [{index, url, name, imageUrl, fields:[{key,label,value,ok}]}]."""

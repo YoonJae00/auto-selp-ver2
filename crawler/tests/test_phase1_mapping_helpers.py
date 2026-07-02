@@ -14,7 +14,7 @@ from app.crawlers.yaml_adapter import (
     _supported_image_url,
     _without_images,
 )
-from app.workers.adapter import AdapterTestWorker
+from app.workers.adapter import AdapterTestWorker, _status_suggestion_from_snapshots
 
 
 class _FakeElement:
@@ -64,6 +64,10 @@ def test_canonical_status_passes_through_before_mapping_or_default() -> None:
     assert _map_supplier_status("available", {}, "sold_out") == "available"
     assert _map_supplier_status("unknown", {"unknown": "available"}, "sold_out") == "unknown"
     assert _map_supplier_status(" stopped ", {}, "available") == "stopped"
+
+
+def test_status_mapping_allows_keyword_inside_image_src() -> None:
+    assert _map_supplier_status("/images/btn_soldout.gif", {"soldout": "sold_out"}, "available") == "sold_out"
 
 
 def test_supported_image_url_allows_selected_formats_with_query() -> None:
@@ -193,3 +197,32 @@ def test_normalize_sample_products_deduplicates_and_prefers_quality() -> None:
     ]
     assert normalized[0]["name"] == "좋은상품"
     assert normalized[0]["image_url"] == "https://example.com/img.jpg"
+
+
+def test_status_snapshot_suggestion_prefers_maxq_difference() -> None:
+    suggestion = _status_suggestion_from_snapshots(
+        {"maxq_value": "12", "has_buy_button": True},
+        {"maxq_value": "0", "has_buy_button": False},
+    )
+
+    assert suggestion is not None
+    assert suggestion["fallback_from"] == "maxq"
+    assert suggestion["confidence"] == "high"
+
+
+def test_status_snapshot_suggestion_uses_cart_button_difference() -> None:
+    suggestion = _status_suggestion_from_snapshots(
+        {"maxq_value": "", "has_buy_button": True},
+        {"maxq_value": "", "has_buy_button": False},
+    )
+
+    assert suggestion is not None
+    assert suggestion["fallback_from"] == "cart_button"
+    assert suggestion["confidence"] == "medium"
+
+
+def test_status_snapshot_suggestion_returns_none_when_unclear() -> None:
+    assert _status_suggestion_from_snapshots(
+        {"maxq_value": "", "has_buy_button": False},
+        {"maxq_value": "", "has_buy_button": False},
+    ) is None
