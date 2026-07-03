@@ -136,7 +136,6 @@ class AdapterStudioViewModel(BaseViewModel):
         self._needs_mapping_login = False
         self._manual_login_pending = False
         self._preview_active = False
-        self._auto_preview_token = 0
         self._repair_attempted = False
         self._soldout_url = ""
         self._soldout_suggestion: dict[str, Any] = {}
@@ -312,10 +311,6 @@ class AdapterStudioViewModel(BaseViewModel):
             return
         self._inputs["detailUrl"] = next_url
         self._clear_mapping_preview_values()
-        if self._current_stage == 2 and self._yaml_text:
-            self._schedule_mapping_preview()
-        else:
-            self._auto_preview_token += 1
         self._emit()
 
     @Slot(str)
@@ -669,6 +664,7 @@ class AdapterStudioViewModel(BaseViewModel):
     def _generated(self, text: str) -> None:
         self.acceptGeneratedYaml(text)
         self._operation_done()
+        self._load_sample_mapping_values()
 
     @Slot()
     def cancelGenerate(self) -> None:
@@ -714,7 +710,6 @@ class AdapterStudioViewModel(BaseViewModel):
         self._current_stage = 2
         self._repair_attempted = False
         self._refresh_mapping_rows()
-        self._schedule_mapping_preview()
         self._emit()
 
     @Slot(str)
@@ -738,26 +733,6 @@ class AdapterStudioViewModel(BaseViewModel):
     def _clear_mapping_preview_values(self) -> None:
         if self._yaml_text:
             self._refresh_mapping_rows()
-
-    def _schedule_mapping_preview(self) -> None:
-        self._auto_preview_token += 1
-        token = self._auto_preview_token
-        QTimer.singleShot(450, lambda: self._run_scheduled_mapping_preview(token))
-
-    def _run_scheduled_mapping_preview(self, token: int) -> None:
-        if token != self._auto_preview_token:
-            return
-        if self._current_stage != 2 or self._busy or not self._yaml_text:
-            return
-        target = self._picker_target_url()
-        if not target.startswith(("http://", "https://")):
-            return
-        try:
-            if not self._extract_preview_fields():
-                return
-        except Exception:
-            return
-        self.previewMapping()
 
     @Slot(result=str)
     def beginValidation(self) -> str:
@@ -783,7 +758,8 @@ class AdapterStudioViewModel(BaseViewModel):
         for row in rows:
             entries = raw_results.get(row["key"], [])
             hits = [entry.get("value") for entry in entries if entry.get("value")]
-            updated.append({**row, "testValue": str(hits[0])[:100] if hits else "", "testOk": bool(hits)})
+            ok = any(is_field_value_ok(row["key"], entry) for entry in entries if isinstance(entry, dict))
+            updated.append({**row, "testValue": str(hits[0])[:100] if hits else "", "testOk": ok})
         self._mapping_rows.resetRows(updated)
 
     def _preview_field(self, key: str, label: str, extractor) -> dict:
@@ -941,14 +917,61 @@ class AdapterStudioViewModel(BaseViewModel):
         self._operation_done()
         self._maybe_repair_mapping(result)
 
+    def _load_sample_mapping_values(self) -> bool:
+        if not self._can_start_operation("adapter-sample-values"):
+            return False
+        target = self._picker_target_url()
+        if not target.startswith(("http://", "https://")):
+            return False
+        try:
+            fields = [field["key"] for field in self._extract_preview_fields()]
+            load_adapter_from_text(self._yaml_text)
+        except Exception:
+            return False
+        if not fields:
+            return False
+        username = password = None
+        if self._inputs["needsLogin"]:
+            loaded = self._load_transient_credentials()
+            if loaded:
+                username, password = loaded
+        login_url = str(self._inputs["loginUrl"] or "").strip() or str(self._inputs["mainUrl"] or "").strip() or None
+        request = AdapterTestRequest(
+            self._yaml_text, [target], yaml_content_hash(self._yaml_text), login_url,
+            username, password, tuple(fields),
+            supplier_key=self._credential_key() if self._inputs["needsLogin"] else None,
+        )
+        worker = self._factories["test"](request)
+        self._inputs["username"] = self._inputs["password"] = ""
+        return self._connect_worker(
+            worker,
+            finished=self._sample_mapping_values_finished,
+            key="adapter-sample-values",
+            label="샘플 값 확인",
+            stage="map",
+        )
+
+    def _sample_mapping_values_finished(self, result: dict) -> None:
+        raw = dict(result).get("__raw_results__", {})
+        self._apply_test_results(raw)
+        self._operation_done()
+
     def _maybe_repair_mapping(self, result: Mapping[str, Any]) -> None:
         """After the first post-generation preview, re-map product fields that
-        extracted empty values via a one-shot LLM repair. Runs at most once per
-        generated adapter (guarded by _repair_attempted)."""
+        extracted empty or invalid values via a one-shot LLM repair. Runs at
+        most once per generated adapter (guarded by _repair_attempted)."""
         if self._repair_attempted or self._current_stage != 2 or self._probe_result is None:
             return
         values = dict(result.get("values") or {})
-        failed = [f for f in REPAIRABLE_PRODUCT_FIELDS if not str(values.get(f, "")).strip()]
+        found = set(result.get("found") or [])
+        target_url = self._picker_target_url()
+        failed = []
+        for field in REPAIRABLE_PRODUCT_FIELDS:
+            value = str(values.get(field, "")).strip()
+            if not value or not is_field_value_ok(
+                field, {"url": target_url, "value": value, "ok": field in found}
+            ):
+                failed.append(field)
         if not failed:
             return
         self._repair_attempted = True
@@ -969,7 +992,6 @@ class AdapterStudioViewModel(BaseViewModel):
             self._yaml_dirty = True
             self._validation_stale = True
             self._refresh_mapping_rows()
-            self._schedule_mapping_preview()
         self._operation_done()
 
     def _apply_preview_result(self, result: Mapping[str, Any]) -> None:
@@ -983,7 +1005,14 @@ class AdapterStudioViewModel(BaseViewModel):
             {
                 **row,
                 "testValue": str(values.get(row["key"], ""))[:100],
-                "testOk": row["key"] in found and bool(values.get(row["key"])),
+                "testOk": bool(values.get(row["key"])) and is_field_value_ok(
+                    row["key"],
+                    {
+                        "url": self._picker_target_url(),
+                        "value": str(values.get(row["key"], "")).strip(),
+                        "ok": row["key"] in found,
+                    },
+                ),
             }
             for row in rows
         ])
