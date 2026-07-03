@@ -68,13 +68,6 @@ adapter:
       selector: CSS_selector
     raw_product_name:
       selector: CSS_selector
-    supplier_status:
-      selector: CSS_selector
-    status_mapping:
-      mapping:
-        "판매중": available
-        "품절": sold_out
-      default: available
     supply_price:
       selector: CSS_selector
       transform: extract_number
@@ -97,19 +90,11 @@ adapter:
 
 중요 규칙:
 1. 위 DOM에서 각 필드에 대한 CSS 선택자를 추출하세요.
-2. status 값은 한국어 → available/sold_out/stopped 매핑을 포함하세요.
-3. 대표 이미지는 src 또는 data-src 속성을 사용하고 jpg/jpeg/png/webp 형식만 대상으로 하세요 (lazy loading 대응).
-   상세 이미지(detail_content), 추가 이미지(extra_image_urls), 옵션값(groups), 옵션가격(option_price_delta)은 자동 생성하지 마세요.
+2. 대표 이미지는 src 또는 data-src 속성을 사용하고 jpg/jpeg/png/webp 형식만 대상으로 하세요 (lazy loading 대응).
+   판매 상태(supplier_status), 상세 이미지(detail_content), 추가 이미지(extra_image_urls), 옵션값(groups), 옵션가격(option_price_delta)은 자동 생성하지 마세요.
    이 필드들과 옵션 텍스트 파서(option_text_parser)는 사용자가 3단계 매핑 화면에서 직접 선택/분석합니다.
-4. 선택자를 찾을 수 없는 필드는 해당 필드를 YAML에서 완전히 생략하세요. 빈 문자열("")을 선택자로 사용하지 마세요.
-5. YAML만 출력하세요. 코드 블록이나 설명 없이 바로 YAML.
-6. 판매 상태(supplier_status) 감지 규칙:
-   a. "품절", "soldout", "sold out", "완판" 텍스트나 이미지가 있으면 해당 선택자를 사용하세요.
-   b. 명시적인 상태 표시가 없으면, 장바구니/구매 버튼(img[src*='cart'], img[src*='buy']) 존재 여부로 판단하세요.
-      이 경우 fallback_from: cart_button 을 설정하세요.
-   c. hidden input의 maxq 값이 0이면 품절입니다.
-      이 경우 fallback_from: maxq 를 설정하세요.
-   d. 판매 상태를 전혀 알 수 없는 경우 supplier_status 필드를 생략하세요.
+3. 선택자를 찾을 수 없는 필드는 해당 필드를 YAML에서 완전히 생략하세요. 빈 문자열("")을 선택자로 사용하지 마세요.
+4. YAML만 출력하세요. 코드 블록이나 설명 없이 바로 YAML.
 """
 
 
@@ -149,7 +134,7 @@ def _finalize_generated_yaml(raw_response: str, mapping_hints: list[MappingHint]
     return dumped, adapter
 
 
-MANUAL_ONLY_PRODUCT_FIELDS = {"detail_content", "extra_image_urls"}
+MANUAL_ONLY_PRODUCT_FIELDS = {"supplier_status", "detail_content", "extra_image_urls"}
 MANUAL_ONLY_OPTION_FIELDS = {"groups", "option_price_delta", "option_text_parser"}
 
 
@@ -388,7 +373,6 @@ async def generate_adapter_yaml(
 REPAIRABLE_PRODUCT_FIELDS = (
     "supplier_product_code",
     "raw_product_name",
-    "supplier_status",
     "supply_price",
     "origin",
     "main_image_url",
@@ -397,7 +381,6 @@ REPAIRABLE_PRODUCT_FIELDS = (
 _REPAIR_FIELD_HINTS = {
     "supplier_product_code": "상품 고유 코드/상품번호 텍스트",
     "raw_product_name": "상품명 제목 텍스트",
-    "supplier_status": "판매 상태 표시 (품절/판매중 텍스트나 이미지)",
     "supply_price": "공급가/가격 숫자 (attribute 비우고 transform: extract_number)",
     "origin": "원산지 텍스트",
     "main_image_url": "대표 상품 이미지 img 태그 (attribute: src, 없으면 data-src)",

@@ -1894,7 +1894,7 @@ def test_invalid_fields_trigger_one_repair_pass(vm) -> None:
 
     assert len(calls) == 1
     # Valid values are excluded; invalid/absent repairable fields are targeted.
-    assert set(calls[0].failed_fields) == {"supply_price", "supplier_status", "origin"}
+    assert set(calls[0].failed_fields) == {"supply_price", "origin"}
     assert vm._yaml_text == IMPROVED_YAML
 
     # A second preview must NOT trigger another repair pass.
