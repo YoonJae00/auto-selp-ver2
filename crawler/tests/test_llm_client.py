@@ -8,7 +8,7 @@ from app.analyzer.llm_client import OpenAIClient
 
 
 @pytest.mark.asyncio
-async def test_openai_client_sets_medium_reasoning_effort() -> None:
+async def test_openai_client_omits_reasoning_effort_for_sdk_compatibility() -> None:
     response = MagicMock()
     response.choices = [MagicMock()]
     response.choices[0].message.content = "ok"
@@ -26,4 +26,4 @@ async def test_openai_client_sets_medium_reasoning_effort() -> None:
         result = await OpenAIClient("openai").generate("system", "user")
 
     assert result == "ok"
-    assert api.chat.completions.create.await_args.kwargs["reasoning_effort"] == "medium"
+    assert "reasoning_effort" not in api.chat.completions.create.await_args.kwargs
