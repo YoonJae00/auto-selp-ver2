@@ -13,7 +13,7 @@ from PySide6.QtCore import QObject, QThread, Signal, Slot
 
 from app.analyzer.adapter_generator import generate_adapter_yaml, repair_adapter_fields
 from app.analyzer.adapter_schema import extract_url_value
-from app.analyzer.option_text_parser import parse_option_text
+from app.analyzer.option_text_parser import is_option_placeholder, parse_option_text
 from app.analyzer.picker_session import PickerSession
 from app.analyzer.site_probe import probe_site
 from app.crawlers.yaml_adapter import _status_from_maxq_value
@@ -917,7 +917,7 @@ class AdapterTestWorker(_AsyncWorker):
     FIELD_NAMES = (
         "supplier_product_code", "raw_product_name",
         "supplier_status", "supply_price", "origin", "main_image_url",
-        "detail_content", "extra_image_urls", "option_values", "option_prices",
+        "detail_content", "extra_image_urls", "option_values",
     )
 
     def __init__(self, request: AdapterTestRequest) -> None:
@@ -1153,7 +1153,7 @@ class OptionTextParserAnalyzeWorker(_AsyncWorker):
                 else:
                     text = await el.inner_text()
                 text = " ".join(str(text or "").split())
-                if text:
+                if text and not is_option_placeholder(text):
                     examples.append(text[:200])
             await page.close()
 

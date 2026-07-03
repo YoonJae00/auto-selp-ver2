@@ -209,7 +209,7 @@ class AdapterStudioViewModel(BaseViewModel):
         if field_path == "adapter.categories.navigation.menu_selector":
             return "카테고리 메뉴"
         if field_path == OPTION_VALUES_FIELD_PATH:
-            return "옵션값"
+            return "옵션값/가격"
         if field_path == OPTION_PRICES_FIELD_PATH:
             return "옵션가격"
         key = field_path.split(".")[-1]
@@ -225,7 +225,7 @@ class AdapterStudioViewModel(BaseViewModel):
             "adapter.product.raw_product_name": "상품명 텍스트를 클릭하세요.",
             "adapter.product.supply_price": "공급가격 텍스트를 클릭하세요.",
             "adapter.product.detail_content": "상세 이미지들이 들어있는 영역 박스를 클릭하세요. AI가 이미지 선택자를 분석하고, 결과는 4단계 검증에서 확인됩니다.",
-            OPTION_VALUES_FIELD_PATH: "옵션값 하나를 클릭하세요. 같은 그룹의 값을 자동으로 함께 수집합니다.",
+            OPTION_VALUES_FIELD_PATH: "옵션값과 가격이 함께 보이는 항목 하나를 클릭하세요. 같은 그룹의 값을 자동으로 함께 수집합니다.",
             OPTION_PRICES_FIELD_PATH: "옵션가격 하나를 클릭하세요. 같은 순서의 가격들을 자동으로 함께 수집합니다.",
         }
         return hints.get(field_path, "수집할 요소를 클릭하세요.")
@@ -664,7 +664,7 @@ class AdapterStudioViewModel(BaseViewModel):
     def _generated(self, text: str) -> None:
         self.acceptGeneratedYaml(text)
         self._operation_done()
-        self._load_sample_mapping_values()
+        QTimer.singleShot(0, self._load_sample_mapping_values)
 
     @Slot()
     def cancelGenerate(self) -> None:
@@ -757,7 +757,11 @@ class AdapterStudioViewModel(BaseViewModel):
         updated = []
         for row in rows:
             entries = raw_results.get(row["key"], [])
-            hits = [entry.get("value") for entry in entries if entry.get("value")]
+            hits = [
+                entry.get("value")
+                for entry in entries
+                if isinstance(entry, dict) and entry.get("value") and is_field_value_ok(row["key"], entry)
+            ]
             ok = any(is_field_value_ok(row["key"], entry) for entry in entries if isinstance(entry, dict))
             updated.append({**row, "testValue": str(hits[0])[:100] if hits else "", "testOk": ok})
         self._mapping_rows.resetRows(updated)
@@ -799,7 +803,7 @@ class AdapterStudioViewModel(BaseViewModel):
             option_text_parser = adapter.adapter.options.option_text_parser.model_dump(mode="json")
             fields.append({
                 "key": OPTION_VALUES_ROW_KEY,
-                "label": "옵션값",
+                "label": "옵션값/가격",
                 "selector": option_group.values_selector,
                 "attribute": attribute or "",
                 "fallback_attribute": "",
@@ -815,26 +819,13 @@ class AdapterStudioViewModel(BaseViewModel):
         option_price = adapter.adapter.options.option_price_delta
         if option_price and option_price.selector.strip():
             fields.append(self._preview_field(OPTION_PRICES_ROW_KEY, "옵션가격", option_price))
-        elif option_group and option_group.values_selector.strip() and adapter.adapter.options.option_text_parser.enabled:
-            fields.append({
-                "key": OPTION_PRICES_ROW_KEY,
-                "label": "옵션가격",
-                "selector": option_group.values_selector,
-                "attribute": "",
-                "fallback_attribute": "",
-                "html": False,
-                "multiple": True,
-                "transform": "strip",
-                "fallback": "",
-                "fallback_from": "none",
-                "url_param": "",
-                "url_pattern": "",
-                "option_text_parser": adapter.adapter.options.option_text_parser.model_dump(mode="json"),
-            })
         return fields
 
     @Slot(result=bool)
     def analyzeOptionTextParser(self) -> bool:
+        return self._start_option_text_parser_analysis()
+
+    def _start_option_text_parser_analysis(self) -> bool:
         if not self._guard_operation("adapter-option-parser"):
             return False
         try:
@@ -915,7 +906,6 @@ class AdapterStudioViewModel(BaseViewModel):
     def _preview_finished(self, result: dict) -> None:
         self._apply_preview_result(result)
         self._operation_done()
-        self._maybe_repair_mapping(result)
 
     def _load_sample_mapping_values(self) -> bool:
         if not self._can_start_operation("adapter-sample-values"):
@@ -953,8 +943,57 @@ class AdapterStudioViewModel(BaseViewModel):
 
     def _sample_mapping_values_finished(self, result: dict) -> None:
         raw = dict(result).get("__raw_results__", {})
+        self._drop_failed_sample_selectors(raw)
         self._apply_test_results(raw)
         self._operation_done()
+        self._maybe_repair_mapping(self._preview_result_from_raw(raw))
+
+    def _drop_failed_sample_selectors(self, raw: Mapping[str, Any]) -> None:
+        failed: list[str] = []
+        for field in REPAIRABLE_PRODUCT_FIELDS:
+            entries = raw.get(field)
+            if not isinstance(entries, list) or not entries:
+                failed.append(field)
+                continue
+            if not any(isinstance(entry, dict) and is_field_value_ok(field, entry) for entry in entries):
+                failed.append(field)
+        if not failed:
+            return
+        try:
+            data = yaml.safe_load(self._yaml_text) or {}
+            product = data.get("adapter", {}).get("product", {})
+            if not isinstance(product, dict):
+                return
+            protected = {
+                hint.field_path.rsplit(".", 1)[-1]
+                for hint in self._mapping_hints
+                if hint.locked and hint.field_path.startswith("adapter.product.")
+            }
+            changed = False
+            for field in failed:
+                if field in protected or field not in product:
+                    continue
+                product.pop(field, None)
+                changed = True
+            if changed:
+                self._yaml_text = yaml.safe_dump(data, allow_unicode=True, sort_keys=False)
+                self._yaml_dirty = True
+                self._validation_stale = True
+        except Exception:
+            return
+
+    @staticmethod
+    def _preview_result_from_raw(raw: Mapping[str, Any]) -> dict[str, Any]:
+        values: dict[str, str] = {}
+        found: list[str] = []
+        for field, entries in raw.items():
+            if not isinstance(entries, list):
+                continue
+            value = next((str(entry.get("value") or "") for entry in entries if isinstance(entry, dict) and entry.get("value")), "")
+            if value:
+                values[str(field)] = value
+                found.append(str(field))
+        return {"values": values, "found": found}
 
     def _maybe_repair_mapping(self, result: Mapping[str, Any]) -> None:
         """After the first post-generation preview, re-map product fields that
@@ -987,12 +1026,16 @@ class AdapterStudioViewModel(BaseViewModel):
 
     def _repair_finished(self, text: str) -> None:
         text = str(text or "")
+        changed = False
         if text and text != self._yaml_text:
             self._yaml_text = text
             self._yaml_dirty = True
             self._validation_stale = True
             self._refresh_mapping_rows()
+            changed = True
         self._operation_done()
+        if changed:
+            QTimer.singleShot(0, self._load_sample_mapping_values)
 
     def _apply_preview_result(self, result: Mapping[str, Any]) -> None:
         values = dict(result.get("values") or {})
@@ -1227,7 +1270,7 @@ class AdapterStudioViewModel(BaseViewModel):
         if not raw:
             return []
         count = max((len(entries) for entries in raw.values() if isinstance(entries, list)), default=0)
-        labels = {**FIELD_LABELS_KO, "option_values": "옵션값", "option_prices": "옵션가격"}
+        labels = {**FIELD_LABELS_KO, "option_values": "옵션값/가격", "option_prices": "옵션가격"}
         products: list[dict[str, Any]] = []
         for i in range(count):
             fields: list[dict[str, Any]] = []
@@ -1721,6 +1764,7 @@ class AdapterStudioViewModel(BaseViewModel):
         }:
             self._category_analysis_ready = True
             self._category_analysis_message = "카테고리 메뉴 수동 분석 완료"
+        should_analyze_options = field_path == OPTION_VALUES_FIELD_PATH
         self._pending_hint = None
         self._picker_field_label = ""
         self._picker_field_hint = ""
@@ -1736,6 +1780,8 @@ class AdapterStudioViewModel(BaseViewModel):
         close_picker_session()
         self._picker_session_open = False
         self._emit()
+        if should_analyze_options:
+            self._start_option_text_parser_analysis()
         return True
 
     @Slot(result=bool)

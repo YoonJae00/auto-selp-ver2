@@ -101,9 +101,10 @@ adapter:
 3. 대표 이미지는 src 또는 data-src 속성을 사용하고 jpg/jpeg/png/webp 형식만 대상으로 하세요 (lazy loading 대응).
    상세 이미지(detail_content), 추가 이미지(extra_image_urls), 옵션값(groups), 옵션가격(option_price_delta)은 자동 생성하지 마세요.
    이 필드들과 옵션 텍스트 파서(option_text_parser)는 사용자가 3단계 매핑 화면에서 직접 선택/분석합니다.
-4. 선택자를 찾을 수 없는 필드는 해당 필드를 YAML에서 완전히 생략하세요. 빈 문자열("")을 선택자로 사용하지 마세요.
-5. YAML만 출력하세요. 코드 블록이나 설명 없이 바로 YAML.
-6. 판매 상태(supplier_status) 감지 규칙:
+4. 원산지(origin)는 "대한민국", "중국", "국산" 같은 값 텍스트만 추출하세요. 판매가/배송비/상품코드가 함께 나오는 상품정보 전체 컨테이너를 선택하지 마세요.
+5. 선택자를 찾을 수 없는 필드는 해당 필드를 YAML에서 완전히 생략하세요. 빈 문자열("")을 선택자로 사용하지 마세요.
+6. YAML만 출력하세요. 코드 블록이나 설명 없이 바로 YAML.
+7. 판매 상태(supplier_status) 감지 규칙:
    a. "품절", "soldout", "sold out", "완판" 텍스트나 이미지가 있으면 해당 선택자를 사용하세요.
    b. 명시적인 상태 표시가 없으면, 장바구니/구매 버튼(img[src*='cart'], img[src*='buy']) 존재 여부로 판단하세요.
       이 경우 fallback_from: cart_button 을 설정하세요.
@@ -414,8 +415,9 @@ REPAIR_SYSTEM_PROMPT = """당신은 웹 스크래핑 CSS 선택자 교정 전문
 1. 값을 찾을 수 없는 필드는 결과에서 완전히 생략하세요 (빈 선택자 금지).
 2. 가격(supply_price)은 attribute를 비우고 transform을 "extract_number"로 설정하세요.
 3. 대표 이미지(main_image_url)는 attribute를 "src"로 하되 URL이 data-src에만 있으면 "data-src"로 하세요.
-4. 선택자는 구체적이고 고유하게(id/class/속성 활용). nth-of-type 남발 금지.
-5. JSON 외 텍스트 출력 금지.
+4. 원산지(origin)는 "대한민국", "중국", "국산" 같은 값 텍스트만 선택하세요. 판매가/배송비/상품코드가 같이 잡히는 컨테이너 선택자는 금지입니다.
+5. 선택자는 구체적이고 고유하게(id/class/속성 활용). nth-of-type 남발 금지.
+6. JSON 외 텍스트 출력 금지.
 """
 
 
