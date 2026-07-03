@@ -49,6 +49,15 @@ def _value(entry: dict[str, Any]) -> str:
     return str(entry.get("value") or "").strip()
 
 
+def _origin_value_ok(value: str) -> bool:
+    if not value:
+        return False
+    compact = re.sub(r"\s+", " ", value).strip()
+    if len(compact) > 30:
+        return False
+    return not re.search(r"판매가|공급가|배송비|상품코드|상품명|대표\s*이미지|옵션", compact)
+
+
 def is_field_value_ok(field: str, entry: dict[str, Any]) -> bool:
     value = _value(entry)
     if field == "raw_product_name":
@@ -59,6 +68,8 @@ def is_field_value_ok(field: str, entry: dict[str, Any]) -> bool:
         return bool(value) and ("/" in value or "." in value or value.startswith("data:"))
     if field in ("detail_content", "extra_image_urls") and "imageCount" in entry:
         return int(entry.get("imageCount") or 0) > 0
+    if field == "origin":
+        return _origin_value_ok(value)
     if field in ("supplier_product_code", "supplier_product_id"):
         url = str(entry.get("url") or "").strip()
         return bool(value) and value != url and not value.startswith("http://") and not value.startswith("https://")

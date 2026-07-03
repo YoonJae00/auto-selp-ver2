@@ -12,6 +12,13 @@ class ParsedOptionText:
     supply_price: int | None = None
 
 
+def is_option_placeholder(text: str | None) -> bool:
+    cleaned = re.sub(r"[\s\-\[\]\(\)<>]+", "", text or "").casefold()
+    if not cleaned:
+        return True
+    return "선택" in cleaned and any(token in cleaned for token in ("필수", "옵션", "선택해주세요", "선택해 주세요"))
+
+
 def _int_amount(value: str | None, sign: str | None = None) -> int | None:
     if not value:
         return None
@@ -57,7 +64,7 @@ def parse_option_text(
     use_legacy: bool = True,
 ) -> ParsedOptionText:
     cleaned = re.sub(r"\s+", " ", text or "").strip()
-    if not cleaned:
+    if not cleaned or is_option_placeholder(cleaned):
         return ParsedOptionText(None)
 
     if (

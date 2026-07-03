@@ -151,7 +151,7 @@ def test_option_text_parser_low_confidence_falls_back_to_legacy() -> None:
     assert parsed.supply_price == 17000
 
 
-def test_mapping_rows_mark_option_price_ok_when_option_text_parser_enabled() -> None:
+def test_mapping_rows_show_combined_option_row_when_option_text_parser_enabled() -> None:
     adapter = type("Adapter", (), {
         "adapter": type("AdapterData", (), {
             "product": type("Product", (), {
@@ -176,10 +176,19 @@ def test_mapping_rows_mark_option_price_ok_when_option_text_parser_enabled() -> 
         })()
     })()
 
-    price_row = next(row for row in get_product_field_mappings(adapter) if row["key"] == "option_prices")
+    rows = get_product_field_mappings(adapter)
+    option_row = next(row for row in rows if row["key"] == "option_values")
 
-    assert price_row["status"] == "ok"
-    assert price_row["selector"] == "AI 옵션 파서"
+    assert "option_prices" not in [row["key"] for row in rows]
+    assert option_row["label"] == "옵션값/가격"
+    assert option_row["status"] == "ok"
+    assert option_row["selector"] == ".option (AI 옵션 파서)"
+
+
+def test_option_text_parser_skips_placeholder_options() -> None:
+    assert parse_option_text("-[필수] 옵션을 선택해주세요-").value is None
+    assert parse_option_text("옵션을 선택해 주세요").value is None
+    assert parse_option_text("M (+5000원)").value == "M"
 
 
 @pytest.mark.asyncio
@@ -221,6 +230,29 @@ async def test_extract_options_matches_option_prices_by_index() -> None:
     assert [opt.option_value_1 for opt in options] == ["블랙", "화이트", "그레이"]
     assert [opt.option_supply_price for opt in options] == [12900, 13900, 14900]
     assert [opt.option_price_delta for opt in options] == [900, 1900, 2900]
+
+
+@pytest.mark.asyncio
+async def test_extract_options_skips_placeholder_and_keeps_price_index_aligned() -> None:
+    adapter = YAMLAdapter.__new__(YAMLAdapter)
+    adapter.adapter = type("Adapter", (), {
+        "adapter": type("AdapterData", (), {
+            "options": OptionsConfig(
+                groups=[OptionGroupConfig(name="색상", values_selector=".option")],
+                option_price_delta=FieldExtractor(selector=".price", multiple=True, transform="extract_number"),
+            )
+        })()
+    })()
+    page = _FakePage({
+        ".option": [_FakeElement("-[필수] 옵션을 선택해주세요-"), _FakeElement("블랙"), _FakeElement("화이트")],
+        ".price": [_FakeElement("12900"), _FakeElement("13900")],
+    })
+
+    options = await adapter._extract_options(page, "P1", 12000)
+
+    assert [opt.option_value_1 for opt in options] == ["블랙", "화이트"]
+    assert [opt.option_supply_price for opt in options] == [12900, 13900]
+    assert [opt.option_position for opt in options] == [1, 2]
 
 
 @pytest.mark.asyncio
@@ -279,7 +311,7 @@ async def test_adapter_test_worker_previews_embedded_option_prices() -> None:
         })()
     })()
     page = _FakePage({
-        ".option": [_FakeElement("브라운 + 0원"), _FakeElement("아이보리 + 1000원")],
+        ".option": [_FakeElement("옵션을 선택해 주세요"), _FakeElement("브라운 + 0원"), _FakeElement("아이보리 + 1000원")],
     })
 
     assert await worker._extract_test_option(page, adapter, "option_values") == "2개 · 브라운, 아이보리"

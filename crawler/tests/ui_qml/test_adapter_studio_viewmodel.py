@@ -131,6 +131,66 @@ def test_option_parser_finished_updates_yaml(vm) -> None:
     assert "?P<value>" in parser["pattern"]
 
 
+def test_option_value_pick_starts_option_parser_analysis() -> None:
+    import yaml as _yaml
+    from app.analyzer.adapter_schema import OPTION_VALUES_FIELD_PATH
+    from app.analyzer.element_picker import PickedElement
+    from app.ui_qml.viewmodels.adapter_studio import AdapterStudioViewModel
+
+    workers = []
+
+    def option_parser_factory(request):
+        worker = FakeWorker(request)
+        workers.append(worker)
+        return worker
+
+    vm = AdapterStudioViewModel(
+        app_view_model=AppViewModel(),
+        worker_factories={"option_parser": option_parser_factory},
+    )
+    vm.setConnectionInputs({"supplierName": "Shop", "mainUrl": "https://shop.example", "detailUrl": "https://shop.example/p/1"})
+    vm.acceptGeneratedYaml(VALID_YAML)
+
+    vm._picked(PickedElement(
+        url="https://shop.example/p/1",
+        selector=".option option",
+        selector_candidates=[".option option"],
+        text="블랙 / 13,900원",
+        attribute_values={},
+    ), OPTION_VALUES_FIELD_PATH)
+
+    assert workers
+    assert "values_selector: .option option" in workers[-1].args[0].yaml_text
+    workers[-1].finished.emit({
+        "parser": {
+            "enabled": True,
+            "pattern": r"^(?P<value>.*?) / (?P<price>[\d,]+)원?$",
+            "price_kind": "supply",
+            "confidence": "high",
+            "examples": ["블랙 / 13,900원"],
+        }
+    })
+    parser = _yaml.safe_load(vm.yamlText)["adapter"]["options"]["option_text_parser"]
+    assert parser["enabled"] is True
+
+
+def test_mapping_rows_expose_single_combined_option_row(vm) -> None:
+    vm.acceptGeneratedYaml(VALID_YAML + """
+  options:
+    detection: dom
+    groups:
+    - name: 색상
+      values_selector: .option
+    option_price_delta:
+      selector: .price
+      multiple: true
+      transform: extract_number
+""")
+
+    option_rows = [row for row in vm._mapping_rows._rows if row["key"].startswith("option_")]
+    assert [(row["key"], row["label"]) for row in option_rows] == [("option_values", "옵션값/가격")]
+
+
 def test_set_url_param_writes_yaml_and_drops_selector(vm) -> None:
     vm.acceptGeneratedYaml(VALID_YAML)
 
@@ -546,7 +606,9 @@ def test_generated_yaml_does_not_auto_preview_sample_detail_url(monkeypatch, qt_
     assert _row_by_key(vm, "raw_product_name")["testValue"] == ""
 
 
-def test_generated_yaml_loads_sample_values_without_preview_browser() -> None:
+def test_generated_yaml_loads_sample_values_without_preview_browser(qt_app) -> None:
+    from PySide6.QtTest import QTest
+
     from app.ui_qml.viewmodels import adapter_studio
 
     made = []
@@ -590,6 +652,7 @@ def test_generated_yaml_loads_sample_values_without_preview_browser() -> None:
     })
 
     vm._generated(VALID_YAML)
+    QTest.qWait(50)
 
     assert made[0].request.test_urls == ["https://shop.example/p/1"]
     assert "raw_product_name" in made[0].request.fields
@@ -1857,8 +1920,8 @@ def test_accept_picked_hint_with_empty_selector_and_no_candidates_is_safe() -> N
     assert vm._pending_hint is not None
 
 
-def test_invalid_fields_trigger_one_repair_pass(vm) -> None:
-    """After the first manual preview, empty or invalid product values trigger
+def test_invalid_sample_values_trigger_one_repair_pass(vm) -> None:
+    """After the generated YAML sample check, empty or invalid product values trigger
     exactly one LLM repair pass that updates the YAML."""
     import types
 
@@ -1886,17 +1949,72 @@ def test_invalid_fields_trigger_one_repair_pass(vm) -> None:
     vm.acceptGeneratedYaml(VALID_YAML)
 
     bad_price = {
-        "values": {"supplier_product_code": "P1", "raw_product_name": "Product",
-                   "main_image_url": "/p.jpg", "supply_price": "무료배송"},
-        "found": ["supplier_product_code", "raw_product_name", "main_image_url", "supply_price"],
+        "__raw_results__": {
+            "supplier_product_code": [{"url": "https://shop.example/p/1", "value": "P1", "ok": True}],
+            "raw_product_name": [{"url": "https://shop.example/p/1", "value": "Product", "ok": True}],
+            "main_image_url": [{"url": "https://shop.example/p/1", "value": "/p.jpg", "ok": True}],
+            "supply_price": [{"url": "https://shop.example/p/1", "value": "무료배송", "ok": True}],
+            "origin": [{
+                "url": "https://shop.example/p/1",
+                "value": "판매가 59,000 KRW 배송비 3,000 KRW 원산지 대한민국 상품코드 K001",
+                "ok": True,
+            }],
+        }
     }
-    vm._preview_finished(bad_price)
+    vm._sample_mapping_values_finished(bad_price)
 
     assert len(calls) == 1
     # Valid values are excluded; invalid/absent repairable fields are targeted.
     assert set(calls[0].failed_fields) == {"supply_price", "origin"}
     assert vm._yaml_text == IMPROVED_YAML
 
-    # A second preview must NOT trigger another repair pass.
-    vm._preview_finished(bad_price)
+    # A second sample check must NOT trigger another repair pass.
+    vm._sample_mapping_values_finished(bad_price)
     assert len(calls) == 1
+
+
+def test_failed_sample_values_drop_generated_selectors_and_values(vm) -> None:
+    import yaml as _yaml
+
+    vm.acceptGeneratedYaml(VALID_YAML + """
+    origin:
+      selector: .product-info
+""")
+
+    vm._sample_mapping_values_finished({
+        "__raw_results__": {
+            "supplier_product_code": [{"url": "https://shop.example/p/1", "value": "P1", "ok": True}],
+            "raw_product_name": [{"url": "https://shop.example/p/1", "value": "Product", "ok": True}],
+            "main_image_url": [{"url": "https://shop.example/p/1", "value": "/p.jpg", "ok": True}],
+            "supply_price": [{"url": "https://shop.example/p/1", "value": "무료배송", "ok": True}],
+            "origin": [{
+                "url": "https://shop.example/p/1",
+                "value": "판매가 59,000 KRW 배송비 3,000 KRW 원산지 대한민국 상품코드 K001",
+                "ok": True,
+            }],
+        }
+    })
+
+    product = _yaml.safe_load(vm.yamlText)["adapter"]["product"]
+    assert "supply_price" not in product
+    assert "origin" not in product
+    assert _row_by_key(vm, "supply_price")["selector"] == ""
+    assert _row_by_key(vm, "supply_price")["testValue"] == ""
+    assert _row_by_key(vm, "origin")["selector"] == ""
+    assert _row_by_key(vm, "origin")["testValue"] == ""
+
+
+def test_preview_mapping_does_not_trigger_repair(vm) -> None:
+    import types
+
+    calls: list = []
+    vm._factories["repair"] = lambda request: calls.append(request) or FakeWorker(request)
+    vm._probe_result = types.SimpleNamespace(detail_html="<html><body>dom</body></html>", listing_html="")
+    vm.acceptGeneratedYaml(VALID_YAML)
+
+    vm._preview_finished({
+        "values": {"supplier_product_code": "P1", "raw_product_name": "Product", "main_image_url": "/p.jpg", "supply_price": "무료배송"},
+        "found": ["supplier_product_code", "raw_product_name", "main_image_url", "supply_price"],
+    })
+
+    assert calls == []

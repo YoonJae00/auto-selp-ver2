@@ -127,15 +127,14 @@ def test_mapping_rows_hide_unused_fields_and_include_option_row() -> None:
     assert "brand_name" not in keys
     assert "manufacturer" not in keys
     assert "model_name" not in keys
-    assert rows[-2]["key"] == "option_values"
-    assert rows[-2]["fieldPath"] == "adapter.options.groups.0.values_selector"
-    assert rows[-2]["selector"] == ".opt option"
-    assert rows[-2]["testable"] is True
-    assert rows[-1]["key"] == "option_prices"
+    assert rows[-1]["key"] == "option_values"
+    assert rows[-1]["label"] == "옵션값/가격"
+    assert rows[-1]["fieldPath"] == "adapter.options.groups.0.values_selector"
+    assert rows[-1]["selector"] == ".opt option"
     assert rows[-1]["testable"] is True
 
 
-def test_mapping_rows_include_option_price_row() -> None:
+def test_mapping_rows_hide_option_price_row_but_keep_option_value_row() -> None:
     adapter = Adapter.model_validate({
         "adapter": {
             "name": "Shop",
@@ -148,10 +147,11 @@ def test_mapping_rows_include_option_price_row() -> None:
     })
 
     rows = get_product_field_mappings(adapter)
-    price = rows[-1]
-    assert price["key"] == "option_prices"
-    assert price["fieldPath"] == "adapter.options.option_price_delta"
-    assert price["selector"] == ".price"
+    keys = [row["key"] for row in rows]
+    option = rows[-1]
+    assert "option_prices" not in keys
+    assert option["key"] == "option_values"
+    assert option["selector"] == ".opt"
 
 
 def test_mapping_row_url_param_marks_ok() -> None:
