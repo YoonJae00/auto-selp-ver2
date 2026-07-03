@@ -3,7 +3,7 @@ from __future__ import annotations
 from bs4 import BeautifulSoup, Comment, NavigableString, Tag
 
 
-_STRIP_TAGS = {"script", "style", "svg", "noscript", "iframe", "link", "meta", "input", "button"}
+_STRIP_TAGS = {"script", "style", "svg", "noscript", "iframe", "link", "meta"}
 _MAX_TEXT_CHARS = 80
 _MAX_REPEATED = 2
 
@@ -26,12 +26,25 @@ def reduce_html(html: str, max_text_chars: int = _MAX_TEXT_CHARS, max_repeated: 
         for attr in list(tag.attrs):
             if attr not in ("class", "id", "href", "src", "data-src", "name", "type", "value", "selected", "checked", "action", "method"):
                 del tag[attr]
+        if tag.name == "input" and tag.has_attr("value") and _is_sensitive_input(tag):
+            del tag["value"]
 
     _truncate_text(soup, max_text_chars)
     _collapse_empty(soup)
     _compress_repeated(soup, max_repeated)
 
     return str(soup)
+
+
+def _is_sensitive_input(tag: Tag) -> bool:
+    input_type = str(tag.get("type") or "").strip().lower()
+    identity = " ".join(
+        str(tag.get(attr) or "") for attr in ("name", "id", "class")
+    ).lower()
+    return input_type == "password" or any(
+        marker in identity
+        for marker in ("token", "csrf", "auth", "pass", "pwd", "secret", "session")
+    )
 
 
 def _truncate_text(soup: BeautifulSoup, max_chars: int) -> None:

@@ -500,7 +500,7 @@ def test_preview_mapping_completion_updates_mapping_rows(monkeypatch) -> None:
     assert _row_by_key(vm, "supply_price")["testValue"] == ""
 
 
-def test_generated_yaml_auto_previews_sample_detail_url(monkeypatch, qt_app) -> None:
+def test_generated_yaml_does_not_auto_preview_sample_detail_url(monkeypatch, qt_app) -> None:
     from PySide6.QtTest import QTest
 
     from app.ui_qml.viewmodels import adapter_studio
@@ -542,11 +542,63 @@ def test_generated_yaml_auto_previews_sample_detail_url(monkeypatch, qt_app) -> 
     vm.acceptGeneratedYaml(VALID_YAML)
     QTest.qWait(550)
 
-    assert made[-1].request.target_url == "https://shop.example/p/1"
+    assert made == []
+    assert _row_by_key(vm, "raw_product_name")["testValue"] == ""
+
+
+def test_generated_yaml_loads_sample_values_without_preview_browser() -> None:
+    from app.ui_qml.viewmodels import adapter_studio
+
+    made = []
+
+    class SampleValueWorker(QObject):
+        finished = Signal(object)
+        error = Signal(str)
+        progress = Signal(str)
+        cancelled = Signal()
+
+        def __init__(self, request):
+            super().__init__()
+            self.request = request
+            made.append(self)
+
+        def start(self):
+            self.finished.emit({
+                "__raw_results__": {
+                    "raw_product_name": [{
+                        "url": "https://shop.example/p/1",
+                        "value": "Sample Product",
+                        "ok": True,
+                    }],
+                }
+            })
+
+        def requestInterruption(self):
+            pass
+
+        def isRunning(self):
+            return False
+
+    vm = adapter_studio.AdapterStudioViewModel(
+        app_view_model=AppViewModel(),
+        worker_factories={"test": SampleValueWorker},
+    )
+    vm.setConnectionInputs({
+        "supplierName": "Test Shop",
+        "mainUrl": "https://shop.example",
+        "detailUrl": "https://shop.example/p/1",
+    })
+
+    vm._generated(VALID_YAML)
+
+    assert made[0].request.test_urls == ["https://shop.example/p/1"]
+    assert "raw_product_name" in made[0].request.fields
     assert _row_by_key(vm, "raw_product_name")["testValue"] == "Sample Product"
+    assert _row_by_key(vm, "raw_product_name")["testOk"] is True
+    assert vm.currentStage == 2
 
 
-def test_detail_url_change_clears_then_auto_refreshes_preview(monkeypatch, qt_app) -> None:
+def test_detail_url_change_clears_without_auto_refreshing_preview(monkeypatch, qt_app) -> None:
     from PySide6.QtTest import QTest
 
     from app.ui_qml.viewmodels import adapter_studio
@@ -592,8 +644,8 @@ def test_detail_url_change_clears_then_auto_refreshes_preview(monkeypatch, qt_ap
     assert _row_by_key(vm, "raw_product_name")["testValue"] == ""
     QTest.qWait(550)
 
-    assert made[-1].request.target_url == "https://shop.example/p/2"
-    assert _row_by_key(vm, "raw_product_name")["testValue"] == "New Product"
+    assert made == []
+    assert _row_by_key(vm, "raw_product_name")["testValue"] == ""
 
 
 def test_adapter_studio_uses_shared_worker_implementations_without_legacy_builder() -> None:
@@ -1805,9 +1857,9 @@ def test_accept_picked_hint_with_empty_selector_and_no_candidates_is_safe() -> N
     assert vm._pending_hint is not None
 
 
-def test_empty_fields_trigger_one_repair_pass(vm) -> None:
-    """After the first post-generation preview, product fields that extracted
-    empty values trigger exactly one LLM repair pass that updates the YAML."""
+def test_invalid_fields_trigger_one_repair_pass(vm) -> None:
+    """After the first manual preview, empty or invalid product values trigger
+    exactly one LLM repair pass that updates the YAML."""
     import types
 
     from PySide6.QtCore import QObject, Signal
@@ -1833,19 +1885,18 @@ def test_empty_fields_trigger_one_repair_pass(vm) -> None:
     vm._probe_result = types.SimpleNamespace(detail_html="<html><body>dom</body></html>", listing_html="")
     vm.acceptGeneratedYaml(VALID_YAML)
 
-    url = "https://shop.example/p/1"
-    empty_price = {
+    bad_price = {
         "values": {"supplier_product_code": "P1", "raw_product_name": "Product",
-                   "main_image_url": "/p.jpg", "supply_price": ""},
-        "found": ["supplier_product_code", "raw_product_name", "main_image_url"],
+                   "main_image_url": "/p.jpg", "supply_price": "무료배송"},
+        "found": ["supplier_product_code", "raw_product_name", "main_image_url", "supply_price"],
     }
-    vm._preview_finished(empty_price)
+    vm._preview_finished(bad_price)
 
     assert len(calls) == 1
-    # Fields with values are excluded; empty/absent repairable fields are targeted.
+    # Valid values are excluded; invalid/absent repairable fields are targeted.
     assert set(calls[0].failed_fields) == {"supply_price", "supplier_status", "origin"}
     assert vm._yaml_text == IMPROVED_YAML
 
     # A second preview must NOT trigger another repair pass.
-    vm._preview_finished(empty_price)
+    vm._preview_finished(bad_price)
     assert len(calls) == 1

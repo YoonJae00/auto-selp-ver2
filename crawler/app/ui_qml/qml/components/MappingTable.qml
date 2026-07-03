@@ -32,6 +32,7 @@ ListView {
         readonly property var vm: ListView.view.viewModel
         readonly property real contentImplicitHeight: content.implicitHeight
         property bool urlMode: urlPattern !== "" || urlParam !== ""
+        readonly property bool hasTestValue: testValue !== ""
         function publishGeometry() {
             if (index === 0) {
                 root.firstRowHeight = height
@@ -79,8 +80,8 @@ ListView {
                 }
                 Text {
                     Layout.fillWidth: true
-                    text: mappingRow.urlMode ? ("URL: " + (mappingRow.urlParam ? ("파라미터 " + mappingRow.urlParam) : (mappingRow.urlPattern || "미설정"))) : (mappingRow.testValue || mappingRow.selector || "선택자 없음")
-                    color: mappingRow.urlMode ? Ui.Theme.accent : (mappingRow.testValue ? (mappingRow.testOk ? Ui.Theme.success : Ui.Theme.danger) : Ui.Theme.textMuted)
+                    text: mappingRow.urlMode ? ("URL: " + (mappingRow.urlParam ? ("파라미터 " + mappingRow.urlParam) : (mappingRow.urlPattern || "미설정"))) : (mappingRow.hasTestValue ? ("값: " + mappingRow.testValue) : (mappingRow.selector ? ("선택자: " + mappingRow.selector) : "선택자 없음"))
+                    color: mappingRow.urlMode ? Ui.Theme.accent : (mappingRow.hasTestValue ? (mappingRow.testOk ? Ui.Theme.success : Ui.Theme.danger) : Ui.Theme.textMuted)
                     elide: Text.ElideRight
                     font.family: "monospace"
                     font.pixelSize: 11

@@ -60,3 +60,20 @@ def test_reduce_html_preserves_classes_and_ids() -> None:
     assert 'class="container"' in result
     assert 'id="main"' in result
     assert "data-custom" not in result
+
+
+def test_reduce_html_keeps_mapping_inputs_and_buttons() -> None:
+    html = '<input type="hidden" name="maxq" value="0"><button class="buy">구매</button>'
+    result = reduce_html(html)
+    assert 'name="maxq"' in result
+    assert 'value="0"' in result
+    assert '<button class="buy"' in result
+    assert "구매" in result
+
+
+def test_reduce_html_strips_sensitive_input_values() -> None:
+    html = '<input type="hidden" name="csrf_token" value="secret"><input type="password" name="pw" value="1234">'
+    result = reduce_html(html)
+    assert "csrf_token" in result
+    assert "secret" not in result
+    assert "1234" not in result
