@@ -65,6 +65,7 @@ class OpenAIClient(LLMClient):
             async with AsyncOpenAI(api_key=self.api_key, max_retries=3, timeout=60.0) as client:
                 response = await client.chat.completions.create(
                     model="gpt-5.4-mini",
+                    reasoning_effort="medium",
                     messages=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt},
