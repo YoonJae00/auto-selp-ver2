@@ -123,14 +123,15 @@ Item {
                             width: parent.width
                             spacing: 8
                             Text { text: "사이트 연결"; color: Ui.Theme.text; font.pixelSize: 20; font.weight: Font.Bold }
-                            Components.AppTextField { id: supplierName; Layout.fillWidth: true; placeholderText: "도매처명"; Accessible.name: "도매처명"; size: "compact" }
-                            Components.AppTextField { id: mainUrl; Layout.fillWidth: true; placeholderText: "https://example.com"; Accessible.name: "메인 URL"; size: "compact" }
+                            // ponytail: 테스트용 기본값 프리필 — 배포 전 아래 text 값들 지우면 됨
+                            Components.AppTextField { id: supplierName; Layout.fillWidth: true; text: "테스트몰"; placeholderText: "도매처명"; Accessible.name: "도매처명"; size: "compact" }
+                            Components.AppTextField { id: mainUrl; Layout.fillWidth: true; text: "http://localhost:9000/index.html"; placeholderText: "https://example.com"; Accessible.name: "메인 URL"; size: "compact" }
                             Components.AppTextField { id: listingUrl; Layout.fillWidth: true; placeholderText: "상품 목록 URL (선택)"; Accessible.name: "상품 목록 URL"; size: "compact" }
-                            Components.AppTextField { id: detailUrl; Layout.fillWidth: true; placeholderText: "샘플 상품 URL (필드 매핑에 사용)"; Accessible.name: "샘플 상품 URL"; size: "compact" }
-                            CheckBox { id: needsLogin; text: "로그인 필요"; Accessible.name: text }
-                            Components.AppTextField { id: loginUrl; visible: needsLogin.checked; Layout.fillWidth: true; placeholderText: "로그인 URL"; Accessible.name: "로그인 URL"; size: "compact" }
-                            Components.AppTextField { id: username; visible: needsLogin.checked; Layout.fillWidth: true; placeholderText: "아이디"; Accessible.name: "로그인 아이디"; size: "compact" }
-                            Components.AppTextField { id: password; visible: needsLogin.checked; Layout.fillWidth: true; placeholderText: "비밀번호"; echoMode: TextInput.Password; Accessible.name: "로그인 비밀번호" }
+                            Components.AppTextField { id: detailUrl; Layout.fillWidth: true; text: "http://localhost:9000/detail.html?product_no=101"; placeholderText: "샘플 상품 URL (필드 매핑에 사용)"; Accessible.name: "샘플 상품 URL"; size: "compact" }
+                            CheckBox { id: needsLogin; text: "로그인 필요"; checked: true; Accessible.name: text }
+                            Components.AppTextField { id: loginUrl; visible: needsLogin.checked; Layout.fillWidth: true; text: "http://localhost:9000/login.html"; placeholderText: "로그인 URL"; Accessible.name: "로그인 URL"; size: "compact" }
+                            Components.AppTextField { id: username; visible: needsLogin.checked; Layout.fillWidth: true; text: "test"; placeholderText: "아이디"; Accessible.name: "로그인 아이디"; size: "compact" }
+                            Components.AppTextField { id: password; visible: needsLogin.checked; Layout.fillWidth: true; text: "test"; placeholderText: "비밀번호"; echoMode: TextInput.Password; Accessible.name: "로그인 비밀번호" }
                             RowLayout {
                                 Components.AppButton {
                                     text: "사이트 분석"
@@ -311,31 +312,23 @@ Item {
                         }
 
                         Components.MappingTable { Layout.fillWidth: true; Layout.fillHeight: true; model: root.viewModel.mappingRows; viewModel: root.viewModel }
-                        Components.GlassPanel {
+                        RowLayout {
                             Layout.fillWidth: true
-                            implicitHeight: mappingUrlCol.implicitHeight + 28
-                            ColumnLayout {
-                                id: mappingUrlCol
-                                anchors.fill: parent
-                                anchors.margins: 14
-                                spacing: 8
-                                Text { text: "매핑 대상 상품 URL"; color: Ui.Theme.text; font.pixelSize: 13; font.weight: Font.DemiBold }
-                                Text {
-                                    Layout.fillWidth: true
-                                    text: "요소 선택 시 이 상품 페이지로 이동합니다. 다른 상품으로 바꾸려면 URL을 수정하세요."
-                                    color: Ui.Theme.textMuted
-                                    font.pixelSize: 11
-                                    wrapMode: Text.Wrap
-                                }
-                                Components.AppTextField {
-                                    id: manualTestUrl
-                                    Layout.fillWidth: true
-                                    text: root.viewModel.connectionInputs.detailUrl || ""
-                                    placeholderText: "상품 상세 페이지 URL"
-                                    Accessible.name: "매핑 대상 상품 URL"
-                                    size: "compact"
-                                    onEditingFinished: root.viewModel.setDetailUrl(text)
-                                }
+                            spacing: 8
+                            Text {
+                                text: "대상 URL"
+                                color: Ui.Theme.textMuted
+                                font.pixelSize: 11
+                            }
+                            Components.AppTextField {
+                                id: manualTestUrl
+                                Layout.fillWidth: true
+                                text: root.viewModel.connectionInputs.detailUrl || ""
+                                placeholderText: "요소 선택 시 이동할 상품 상세 URL"
+                                Accessible.name: "매핑 대상 상품 URL"
+                                ToolTip.text: "요소 선택 시 이 상품 페이지로 이동합니다. 다른 상품으로 바꾸려면 URL을 수정하세요."
+                                size: "compact"
+                                onEditingFinished: root.viewModel.setDetailUrl(text)
                             }
                         }
                         Components.InlineBanner {
@@ -354,10 +347,18 @@ Item {
                             }
                             Components.AppButton {
                                 text: root.viewModel.previewActive ? "미리보기 닫기" : "매핑 미리보기"
-                                selected: true
                                 // 미리보기가 열린 동안에는 busy여도 닫을 수 있어야 함.
                                 enabled: root.viewModel.previewActive || !root.viewModel.busy
                                 onClicked: root.viewModel.previewActive ? root.viewModel.closePreview() : root.viewModel.previewMapping()
+                                ToolTip.text: "브라우저에서 매핑된 필드를 파란 박스로 표시만 합니다 (값은 채우지 않음)."
+                                Accessible.name: text
+                            }
+                            Components.AppButton {
+                                text: "값 가져오기"
+                                selected: true
+                                enabled: !root.viewModel.busy
+                                onClicked: root.viewModel.fetchFieldValues()
+                                ToolTip.text: "브라우저 없이 각 필드의 실제 값을 추출해 아래 목록에 채웁니다."
                                 Accessible.name: text
                             }
                             Item { Layout.fillWidth: true }
@@ -445,10 +446,21 @@ Item {
                         }
                     }
                 }
-                CheckBox {
-                    text: "Advanced YAML 편집"
-                    checked: root.viewModel.advancedEditorOpen
-                    onToggled: root.viewModel.setAdvancedEditorOpen(checked)
+                RowLayout {
+                    Layout.fillWidth: true
+                    Item { Layout.fillWidth: true }
+                    Text {
+                        text: (root.viewModel.advancedEditorOpen ? "▾ " : "▸ ") + "고급 YAML 편집"
+                        color: yamlToggleHover.containsMouse ? Ui.Theme.text : Ui.Theme.textMuted
+                        font.pixelSize: 11
+                        MouseArea {
+                            id: yamlToggleHover
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: root.viewModel.setAdvancedEditorOpen(!root.viewModel.advancedEditorOpen)
+                        }
+                    }
                 }
                 Components.YamlEditor {
                     visible: root.viewModel.advancedEditorOpen

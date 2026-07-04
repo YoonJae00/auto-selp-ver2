@@ -11,7 +11,7 @@ ListView {
     property real firstRowHeight: 0
     property real firstRowContentHeight: 0
     clip: true
-    spacing: 4
+    spacing: 8
     Accessible.name: "필드 매핑 목록"
     delegate: Rectangle {
         id: mappingRow
@@ -33,6 +33,9 @@ ListView {
         readonly property real contentImplicitHeight: content.implicitHeight
         property bool urlMode: urlPattern !== "" || urlParam !== ""
         readonly property bool hasTestValue: testValue !== ""
+        // 상태 칩: "매핑됨"은 실제 값이 들어왔을 때만. 선택자만 있으면 "미검증".
+        readonly property string statusVariant: hasTestValue ? (testOk ? "success" : "danger") : (status === "ok" ? "neutral" : "warning")
+        readonly property string statusLabel: hasTestValue ? (testOk ? "매핑됨" : "값 오류") : (status === "ok" ? "미검증" : "비어있음")
         function publishGeometry() {
             if (index === 0) {
                 root.firstRowHeight = height
@@ -42,8 +45,8 @@ ListView {
         Component.onCompleted: publishGeometry()
         onHeightChanged: publishGeometry()
         width: ListView.view.width
-        height: Math.max(40, contentImplicitHeight + 16)
-        radius: 6
+        height: Math.max(52, contentImplicitHeight + 22)
+        radius: 8
         readonly property bool pickingActive: mappingRow.vm.pickerActive && mappingRow.vm.pickerFieldLabel === mappingRow.label
         color: pickingActive ? Qt.alpha(Ui.Theme.accent, 0.10) : Ui.Theme.surfaceRaised
         border.color: pickingActive ? Ui.Theme.accent : Ui.Theme.border
@@ -51,37 +54,30 @@ ListView {
             id: content
             onImplicitHeightChanged: mappingRow.publishGeometry()
             anchors.fill: parent
-            anchors.margins: 8
-            spacing: 4
+            anchors.margins: 12
+            spacing: 6
+            // ─── 기본 행: 상태칩 · 필드명 · 현재 값 · [선택] · [⋯] ───
             RowLayout {
                 Layout.fillWidth: true
-                spacing: 8
+                spacing: 12
+                StatusBadge {
+                    variant: mappingRow.statusVariant
+                    text: mappingRow.statusLabel
+                }
                 Text {
                     text: mappingRow.label
                     color: Ui.Theme.text
                     font.pixelSize: 12
                     font.weight: Font.DemiBold
-                    Layout.preferredWidth: 88
+                    Layout.preferredWidth: 76
                     elide: Text.ElideRight
-                }
-                CheckBox {
-                    visible: mappingRow.key === "extra_image_urls"
-                    checked: mappingRow.extraEnabled
-                    enabled: !mappingRow.vm.busy
-                    text: ""
-                    ToolTip.text: checked ? "추가 이미지 수집 사용" : "추가 이미지 수집 안 함"
-                    onToggled: mappingRow.vm.setExtraImagesEnabled(checked)
-                }
-                Text {
-                    text: mappingRow.status === "ok" ? "●" : "○"
-                    color: mappingRow.status === "ok" ? Ui.Theme.success : Ui.Theme.warning
-                    font.pixelSize: 10
-                    Layout.preferredWidth: 14
                 }
                 Text {
                     Layout.fillWidth: true
-                    text: mappingRow.urlMode ? ("URL: " + (mappingRow.urlParam ? ("파라미터 " + mappingRow.urlParam) : (mappingRow.urlPattern || "미설정"))) : (mappingRow.hasTestValue ? ("값: " + mappingRow.testValue) : (mappingRow.selector ? ("선택자: " + mappingRow.selector) : "선택자 없음"))
-                    color: mappingRow.urlMode ? Ui.Theme.accent : (mappingRow.hasTestValue ? (mappingRow.testOk ? Ui.Theme.success : Ui.Theme.danger) : Ui.Theme.textMuted)
+                    text: mappingRow.urlMode
+                          ? (mappingRow.urlParam ? ("파라미터 " + mappingRow.urlParam) : (mappingRow.urlPattern || "미설정"))
+                          : (mappingRow.hasTestValue ? mappingRow.testValue : (mappingRow.selector || "선택자 없음"))
+                    color: mappingRow.hasTestValue ? Ui.Theme.text : Ui.Theme.textMuted
                     elide: Text.ElideRight
                     font.family: "monospace"
                     font.pixelSize: 11
@@ -89,46 +85,64 @@ ListView {
                 AppButton {
                     size: "compact"
                     text: "선택"
+                    selected: true
                     enabled: !mappingRow.vm.busy && !mappingRow.urlMode && (mappingRow.key !== "extra_image_urls" || mappingRow.extraEnabled)
                     ToolTip.text: "브라우저에서 이 필드의 요소를 직접 클릭하여 선택합니다"
                     onClicked: mappingRow.vm.pickElement(mappingRow.fieldPath)
                 }
                 AppButton {
-                    visible: mappingRow.urlAllowed
+                    id: moreButton
                     size: "compact"
-                    text: mappingRow.urlMode ? "URL ✓" : "URL"
-                    highlighted: mappingRow.urlMode
-                    ToolTip.text: mappingRow.urlMode ? "URL 패턴 모드 해제" : "URL에서 값 추출 (상품코드 등)"
-                    onClicked: {
-                        if (mappingRow.urlMode) {
-                            mappingRow.urlMode = false
-                            mappingRow.vm.setFieldUrlParam(mappingRow.key, "")
-                            mappingRow.vm.setFieldUrlPattern(mappingRow.key, "")
-                        } else {
-                            mappingRow.urlMode = true
+                    text: "⋯"
+                    ToolTip.text: "추가 동작"
+                    onClicked: moreMenu.open()
+                    Menu {
+                        id: moreMenu
+                        y: moreButton.height
+                        MenuItem {
+                            text: mappingRow.urlMode ? "✓ URL에서 값 추출" : "URL에서 값 추출"
+                            visible: mappingRow.urlAllowed
+                            height: visible ? implicitHeight : 0
+                            onTriggered: {
+                                if (mappingRow.urlMode) {
+                                    mappingRow.urlMode = false
+                                    mappingRow.vm.setFieldUrlParam(mappingRow.key, "")
+                                    mappingRow.vm.setFieldUrlPattern(mappingRow.key, "")
+                                } else {
+                                    mappingRow.urlMode = true
+                                }
+                            }
+                        }
+                        MenuItem {
+                            text: "테스트"
+                            visible: mappingRow.testable
+                            height: visible ? implicitHeight : 0
+                            enabled: !mappingRow.vm.busy
+                            onTriggered: mappingRow.vm.testSingle(mappingRow.key)
+                        }
+                        MenuItem {
+                            text: mappingRow.vm.soldoutCompareOpen ? "품절 비교 닫기" : "품절 비교"
+                            visible: mappingRow.key === "supplier_status"
+                            height: visible ? implicitHeight : 0
+                            enabled: !mappingRow.vm.busy
+                            onTriggered: mappingRow.vm.setSoldoutCompareOpen(!mappingRow.vm.soldoutCompareOpen)
+                        }
+                        MenuItem {
+                            text: mappingRow.extraEnabled ? "✓ 추가 이미지 수집" : "추가 이미지 수집"
+                            visible: mappingRow.key === "extra_image_urls"
+                            height: visible ? implicitHeight : 0
+                            enabled: !mappingRow.vm.busy
+                            onTriggered: mappingRow.vm.setExtraImagesEnabled(!mappingRow.extraEnabled)
                         }
                     }
                 }
-                AppButton {
-                    visible: mappingRow.key === "supplier_status"
-                    size: "compact"
-                    text: mappingRow.vm.soldoutCompareOpen ? "닫기" : "품절 비교"
-                    enabled: !mappingRow.vm.busy
-                    ToolTip.text: "품절 상품 URL을 입력해 판매 상태 매핑을 AI가 비교합니다"
-                    onClicked: mappingRow.vm.setSoldoutCompareOpen(!mappingRow.vm.soldoutCompareOpen)
-                }
-                AppButton {
-                    visible: mappingRow.testable
-                    size: "compact"
-                    text: "테스트"
-                    enabled: !mappingRow.vm.busy
-                    onClicked: mappingRow.vm.testSingle(mappingRow.key)
-                }
             }
+            // ─── URL 추출 상세 (메뉴에서 켰을 때만) ───
             ColumnLayout {
                 id: urlArea
                 visible: mappingRow.urlMode
                 Layout.fillWidth: true
+                Layout.leftMargin: 86
                 spacing: 4
                 property var urlOptions: mappingRow.urlMode ? mappingRow.vm.urlParamOptions() : []
                 property bool advancedOpen: mappingRow.urlPattern !== ""
@@ -172,10 +186,12 @@ ListView {
                     onEditingFinished: mappingRow.vm.setFieldUrlPattern(mappingRow.key, text)
                 }
             }
+            // ─── 품절 비교 상세 (메뉴에서 켰을 때만) ───
             ColumnLayout {
                 id: soldoutArea
                 visible: mappingRow.key === "supplier_status" && mappingRow.vm.soldoutCompareOpen
                 Layout.fillWidth: true
+                Layout.leftMargin: 86
                 spacing: 6
                 Text {
                     Layout.fillWidth: true
@@ -187,7 +203,8 @@ ListView {
                 AppTextField {
                     id: soldoutUrlField
                     Layout.fillWidth: true
-                    text: mappingRow.vm.soldoutUrl || ""
+                    // ponytail: 테스트용 기본값 — 배포 전 뒤쪽 fallback URL 지우면 됨
+                    text: mappingRow.vm.soldoutUrl || "http://localhost:9000/detail.html?product_no=103"
                     placeholderText: "품절 상품 상세 페이지 URL"
                     Accessible.name: "품절 상품 URL"
                     size: "compact"

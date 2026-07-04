@@ -913,22 +913,30 @@ class AdapterStudioViewModel(BaseViewModel):
         )
 
     def _preview_finished(self, result: dict) -> None:
-        self._apply_preview_result(result)
+        # 미리보기는 시각 전용 — 행 값은 건드리지 않는다. 값 채우기는 fetchFieldValues() 담당.
         self._operation_done()
         self._maybe_repair_mapping(result)
+
+    @Slot(result=bool)
+    def fetchFieldValues(self) -> bool:
+        """브라우저 없이 헤드리스로 각 필드의 실제 값을 추출해 행에 채운다."""
+        return self._load_sample_mapping_values()
 
     def _load_sample_mapping_values(self) -> bool:
         if not self._can_start_operation("adapter-sample-values"):
             return False
         target = self._picker_target_url()
         if not target.startswith(("http://", "https://")):
+            self.set_field_errors({"form": "값을 가져올 상품 URL이 없습니다."})
             return False
         try:
             fields = [field["key"] for field in self._extract_preview_fields()]
             load_adapter_from_text(self._yaml_text)
-        except Exception:
+        except Exception as exc:
+            self.set_field_errors({"yamlText": f"YAML 오류: {exc}"})
             return False
         if not fields:
+            self.set_field_errors({"form": "매핑된 필드가 없습니다."})
             return False
         username = password = None
         if self._inputs["needsLogin"]:
@@ -947,7 +955,7 @@ class AdapterStudioViewModel(BaseViewModel):
             worker,
             finished=self._sample_mapping_values_finished,
             key="adapter-sample-values",
-            label="샘플 값 확인",
+            label="필드 값 가져오기",
             stage="map",
         )
 

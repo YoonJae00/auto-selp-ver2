@@ -452,7 +452,7 @@ def _row_by_key(vm, key: str) -> dict:
     return next(row for row in vm.mappingRows._rows if row["key"] == key)
 
 
-def test_preview_mapping_completion_updates_mapping_rows(monkeypatch) -> None:
+def test_preview_mapping_does_not_touch_row_values(monkeypatch) -> None:
     from app.ui_qml.viewmodels import adapter_studio
 
     made = []
@@ -495,8 +495,9 @@ def test_preview_mapping_completion_updates_mapping_rows(monkeypatch) -> None:
         "values": {"raw_product_name": "Preview Product"},
     })
 
-    assert _row_by_key(vm, "raw_product_name")["testValue"] == "Preview Product"
-    assert _row_by_key(vm, "raw_product_name")["testOk"] is True
+    # 미리보기는 시각 전용 — 행 값은 채우지 않는다 (값 채우기는 fetchFieldValues 담당).
+    assert _row_by_key(vm, "raw_product_name")["testValue"] == ""
+    assert _row_by_key(vm, "raw_product_name")["testOk"] is False
     assert _row_by_key(vm, "supply_price")["testValue"] == ""
 
 
@@ -595,6 +596,61 @@ def test_generated_yaml_loads_sample_values_without_preview_browser() -> None:
     assert "raw_product_name" in made[0].request.fields
     assert _row_by_key(vm, "raw_product_name")["testValue"] == "Sample Product"
     assert _row_by_key(vm, "raw_product_name")["testOk"] is True
+    assert vm.currentStage == 2
+
+
+def test_fetch_field_values_fills_rows_headlessly() -> None:
+    from app.ui_qml.viewmodels import adapter_studio
+
+    made = []
+
+    class SampleValueWorker(QObject):
+        finished = Signal(object)
+        error = Signal(str)
+        progress = Signal(str)
+        cancelled = Signal()
+
+        def __init__(self, request):
+            super().__init__()
+            self.request = request
+            made.append(self)
+
+        def start(self):
+            self.finished.emit({
+                "__raw_results__": {
+                    "raw_product_name": [{
+                        "url": "https://shop.example/p/1",
+                        "value": "Sample Product",
+                        "ok": True,
+                    }],
+                }
+            })
+
+        def requestInterruption(self):
+            pass
+
+        def isRunning(self):
+            return False
+
+    vm = adapter_studio.AdapterStudioViewModel(
+        app_view_model=AppViewModel(),
+        worker_factories={"test": SampleValueWorker},
+    )
+    vm.setConnectionInputs({
+        "supplierName": "Test Shop",
+        "mainUrl": "https://shop.example",
+        "detailUrl": "https://shop.example/p/1",
+    })
+    vm.acceptGeneratedYaml(VALID_YAML)
+    assert _row_by_key(vm, "raw_product_name")["testValue"] == ""
+
+    assert vm.fetchFieldValues() is True
+
+    # 값 가져오기는 브라우저 없이(테스트 워커 경유) 행에 실제 값을 채운다.
+    assert made[0].request.test_urls == ["https://shop.example/p/1"]
+    assert _row_by_key(vm, "raw_product_name")["testValue"] == "Sample Product"
+    assert _row_by_key(vm, "raw_product_name")["testOk"] is True
+    # 검증 단계로 넘어가지 않고 매핑 단계에 머문다.
     assert vm.currentStage == 2
 
 
@@ -930,7 +986,7 @@ def test_qml_exposes_validation_warning_accessibility_and_responsive_mapping() -
     assert "root.viewModel.acceptPickedHint()" in screen
     assert "root.viewModel.canAcceptPickedHint" in screen
     assert 'size: "compact"' in mapping
-    assert "Layout.preferredWidth: 88" in mapping
+    assert "Layout.preferredWidth: 76" in mapping
 
 
 def test_generate_worker_forwards_provider_and_fallback(monkeypatch) -> None:
