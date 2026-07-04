@@ -581,7 +581,8 @@ class YAMLAdapter(BaseAdapter):
                 ]
         for group_config in config.groups:
             values = await page.query_selector_all(group_config.values_selector)
-            for index, el in enumerate(values):
+            accepted_index = 0
+            for el in values:
                 raw_value_text = await self._read_option_value(el, group_config)
                 parsed_text = parse_option_text(raw_value_text, config.option_text_parser, base_price)
                 value_text = parsed_text.value
@@ -596,7 +597,7 @@ class YAMLAdapter(BaseAdapter):
                 price_delta = None
                 option_supply = None
                 if price_values:
-                    option_supply = price_values[index] if index < len(price_values) else None
+                    option_supply = price_values[accepted_index] if accepted_index < len(price_values) else None
                     price_delta = derive_option_price_delta(option_supply, base_price)
                 elif config.option_price_delta:
                     price_delta_raw = await self._extract_field(page, config.option_price_delta)
@@ -616,7 +617,7 @@ class YAMLAdapter(BaseAdapter):
 
                 options.append(StandardOption(
                     supplier_product_code=product_code,
-                    option_sku=f"{product_code}-{index + 1}" if product_code else None,
+                    option_sku=f"{product_code}-{accepted_index + 1}" if product_code else None,
                     option_type=config.type,
                     option_group_1=group_config.name,
                     option_value_1=value_text,
@@ -633,10 +634,11 @@ class YAMLAdapter(BaseAdapter):
                     option_usable=True,
                     option_main_image_url=image_url if isinstance(image_url, str) else None,
                     option_extra_image_urls=[],
-                    option_position=index + 1,
+                    option_position=accepted_index + 1,
                     raw_option_text=raw_value_text,
                     raw_option_metadata={"group": group_config.name, "value": value_text},
                 ))
+                accepted_index += 1
         return options
 
     async def _extract_dependent_options(

@@ -33,6 +33,7 @@ def test_repair_replaces_only_returned_fields():
 def test_repair_ignores_empty_and_unknown_fields():
     out = _apply_repaired_fields(BASE_YAML, {
         "supply_price": {"selector": ""},        # empty → skip, keep original
+        "supplier_status": {"selector": ".soldout"},
         "bogus_field": {"selector": ".x"},       # not repairable → skip
     })
     assert out == BASE_YAML  # nothing changed

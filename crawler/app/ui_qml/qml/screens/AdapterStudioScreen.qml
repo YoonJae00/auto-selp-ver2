@@ -124,11 +124,11 @@ Item {
                             spacing: 8
                             Text { text: "사이트 연결"; color: Ui.Theme.text; font.pixelSize: 20; font.weight: Font.Bold }
                             // ponytail: 테스트용 기본값 프리필 — 배포 전 아래 text 값들 지우면 됨
-                            Components.AppTextField { id: supplierName; Layout.fillWidth: true; text: "테스트몰"; placeholderText: "도매처명"; Accessible.name: "도매처명"; size: "compact" }
+                            Components.AppTextField { id: supplierName; Layout.fillWidth: true; text: "목업몰"; placeholderText: "도매처명"; Accessible.name: "도매처명"; size: "compact" }
                             Components.AppTextField { id: mainUrl; Layout.fillWidth: true; text: "http://localhost:9000/index.html"; placeholderText: "https://example.com"; Accessible.name: "메인 URL"; size: "compact" }
                             Components.AppTextField { id: listingUrl; Layout.fillWidth: true; placeholderText: "상품 목록 URL (선택)"; Accessible.name: "상품 목록 URL"; size: "compact" }
                             Components.AppTextField { id: detailUrl; Layout.fillWidth: true; text: "http://localhost:9000/detail.html?product_no=101"; placeholderText: "샘플 상품 URL (필드 매핑에 사용)"; Accessible.name: "샘플 상품 URL"; size: "compact" }
-                            CheckBox { id: needsLogin; text: "로그인 필요"; checked: true; Accessible.name: text }
+                            CheckBox { id: needsLogin; checked: true; text: "로그인 필요"; Accessible.name: text }
                             Components.AppTextField { id: loginUrl; visible: needsLogin.checked; Layout.fillWidth: true; text: "http://localhost:9000/login.html"; placeholderText: "로그인 URL"; Accessible.name: "로그인 URL"; size: "compact" }
                             Components.AppTextField { id: username; visible: needsLogin.checked; Layout.fillWidth: true; text: "test"; placeholderText: "아이디"; Accessible.name: "로그인 아이디"; size: "compact" }
                             Components.AppTextField { id: password; visible: needsLogin.checked; Layout.fillWidth: true; text: "test"; placeholderText: "비밀번호"; echoMode: TextInput.Password; Accessible.name: "로그인 비밀번호" }
@@ -339,12 +339,6 @@ Item {
                         }
                         RowLayout {
                             spacing: 8
-                            Components.AppButton {
-                                text: "AI 옵션 분석"
-                                enabled: !root.viewModel.busy
-                                onClicked: root.viewModel.analyzeOptionTextParser()
-                                Accessible.name: text
-                            }
                             Components.AppButton {
                                 text: root.viewModel.previewActive ? "미리보기 닫기" : "매핑 미리보기"
                                 // 미리보기가 열린 동안에는 busy여도 닫을 수 있어야 함.

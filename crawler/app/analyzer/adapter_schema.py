@@ -267,29 +267,18 @@ def get_product_field_mappings(adapter: "Adapter") -> list[dict[str, Any]]:
                 "status": status, "urlPattern": url_pat, "urlParam": url_param,
             })
     option_group = adapter.adapter.options.groups[0] if adapter.adapter.options.groups else None
+    option_text_parser = adapter.adapter.options.option_text_parser
+    option_selector = option_group.values_selector if option_group else ""
+    if option_selector and option_text_parser.enabled:
+        option_selector = f"{option_selector} (AI 옵션 파서)"
     rows.append({
         "key": OPTION_VALUES_ROW_KEY,
-        "label": "옵션값",
+        "label": "옵션값/가격",
         "fieldPath": OPTION_VALUES_FIELD_PATH,
-        "selector": option_group.values_selector if option_group else "",
+        "selector": option_selector,
         "attribute": "",
         "transform": "",
         "status": "ok" if option_group and option_group.values_selector.strip() else "missing",
-        "urlPattern": "", "urlParam": "",
-        "urlAllowed": False,
-        "testable": True,
-        "extraEnabled": True,
-    })
-    option_price = adapter.adapter.options.option_price_delta
-    option_text_parser = adapter.adapter.options.option_text_parser
-    rows.append({
-        "key": OPTION_PRICES_ROW_KEY,
-        "label": "옵션가격",
-        "fieldPath": OPTION_PRICES_FIELD_PATH,
-        "selector": option_price.selector if option_price else ("AI 옵션 파서" if option_text_parser.enabled else ""),
-        "attribute": option_price.attribute if option_price and option_price.attribute else "",
-        "transform": option_price.transform if option_price else "",
-        "status": "ok" if (option_price and option_price.selector.strip()) or option_text_parser.enabled else "missing",
         "urlPattern": "", "urlParam": "",
         "urlAllowed": False,
         "testable": True,

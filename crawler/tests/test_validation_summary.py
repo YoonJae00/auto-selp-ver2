@@ -4,7 +4,7 @@ import os
 
 import pytest
 
-from app.analyzer.validation_summary import build_validation_summary, get_save_gate_decision
+from app.analyzer.validation_summary import build_validation_summary, get_save_gate_decision, is_field_value_ok
 
 
 def _entry(value: str, url: str = "https://example.com/p/1") -> dict:
@@ -79,6 +79,14 @@ def test_failed_key_fields_warn_but_allow_continue() -> None:
     assert decision.reason == "failed"
     assert decision.allow_continue
     assert decision.failed_fields == ["raw_product_name"]
+
+
+def test_origin_rejects_product_info_container_text() -> None:
+    assert is_field_value_ok("origin", _entry("대한민국")) is True
+    assert is_field_value_ok(
+        "origin",
+        _entry("판매가 59,000 KRW 배송비 3,000 KRW 원산지 대한민국 상품코드 K001"),
+    ) is False
 
 
 def test_adapter_builder_validation_ui_smoke() -> None:
