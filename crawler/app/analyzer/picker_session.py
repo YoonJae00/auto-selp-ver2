@@ -22,7 +22,7 @@ from app.analyzer.element_picker import (
     sanitize_html_preview,
     sanitize_value,
 )
-from app.analyzer.option_text_parser import parse_option_text
+from app.analyzer.option_text_parser import parse_option_text, format_option_group
 from app.config import load_config
 
 
@@ -879,10 +879,10 @@ class PickerSession:
                                 preview = ", ".join(str(item) for item in prices[:5])
                                 return f"{len(prices)}개 · {preview}"[:100]
                         else:
-                            values = [item.value for item in parsed if item.value]
-                            if values:
-                                preview = ", ".join(item[:50] for item in values[:5])
-                                return f"{len(values)}개 · {preview}"[:100]
+                            # 병합 표시: 값 묶음 / 가격 묶음 (엑셀 2열 구조와 동일)
+                            summary = format_option_group(parsed)
+                            if summary:
+                                return summary[:200]
                     values = [_apply_preview_transform(item, transform) for item in reads if item]
                     values = [item for item in values if item]
                     if values:

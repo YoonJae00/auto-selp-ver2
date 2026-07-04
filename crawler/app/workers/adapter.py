@@ -13,7 +13,7 @@ from PySide6.QtCore import QObject, QThread, Signal, Slot
 
 from app.analyzer.adapter_generator import generate_adapter_yaml, repair_adapter_fields
 from app.analyzer.adapter_schema import extract_url_value
-from app.analyzer.option_text_parser import is_option_placeholder, parse_option_text
+from app.analyzer.option_text_parser import is_option_placeholder, parse_option_text, format_option_group
 from app.analyzer.picker_session import PickerSession
 from app.analyzer.site_probe import probe_site
 from app.crawlers.yaml_adapter import _status_from_maxq_value
@@ -1024,15 +1024,10 @@ class AdapterTestWorker(_AsyncWorker):
                 return None
             preview = ", ".join(str(price) for price in prices[:5])
             return f"{len(prices)}개 · {preview}"
-        values: list[str] = []
-        for item in reads:
-            value = (parse_option_text(item, options.option_text_parser).value or "").strip()
-            if value:
-                values.append(value)
-        if not values:
-            return None
-        preview = ", ".join(item[:50] for item in values[:5])
-        return f"{len(values)}개 · {preview}"
+        # 병합 표시: '3개 · S, M, L / +0원, +10,000원, +20,000원' (값 묶음 / 가격 묶음, 개수 항상 일치)
+        parsed = [parse_option_text(item, options.option_text_parser) for item in reads]
+        summary = format_option_group(parsed)
+        return summary[:200] if summary else None
 
     async def _login(self, page) -> None:
         from app.analyzer.login_helper import perform_login as _login_shared

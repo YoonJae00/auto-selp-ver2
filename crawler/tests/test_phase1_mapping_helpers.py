@@ -314,7 +314,8 @@ async def test_adapter_test_worker_previews_embedded_option_prices() -> None:
         ".option": [_FakeElement("옵션을 선택해 주세요"), _FakeElement("브라운 + 0원"), _FakeElement("아이보리 + 1000원")],
     })
 
-    assert await worker._extract_test_option(page, adapter, "option_values") == "2개 · 브라운, 아이보리"
+    # 병합 행: 값 묶음 / 가격 묶음, 개수 동일
+    assert await worker._extract_test_option(page, adapter, "option_values") == "2개 · 브라운, 아이보리 / +0원, +1,000원"
     assert await worker._extract_test_option(page, adapter, "option_prices") == "2개 · 0, 1000"
 
 
@@ -338,7 +339,8 @@ async def test_adapter_test_worker_previews_configured_option_text_parser() -> N
         ".option": [_FakeElement("블랙 / 13,900원"), _FakeElement("화이트 / 14,900원")],
     })
 
-    assert await worker._extract_test_option(page, adapter, "option_values") == "2개 · 블랙, 화이트"
+    # base_price 미상 → 공급가로 표시
+    assert await worker._extract_test_option(page, adapter, "option_values") == "2개 · 블랙, 화이트 / +13,900원, +14,900원"
     assert await worker._extract_test_option(page, adapter, "option_prices") == "2개 · 13900, 14900"
 
 
