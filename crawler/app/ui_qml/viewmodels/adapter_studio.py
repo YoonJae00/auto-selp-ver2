@@ -53,6 +53,7 @@ from app.workers.lifecycle import stop_workers
 MAPPING_ROLES = (
     "key", "label", "fieldPath", "selector", "attribute", "transform", "status",
     "testValue", "testOk", "urlPattern", "urlParam", "urlAllowed", "testable", "extraEnabled",
+    "imageUrls", "skipFirst",
 )
 IMAGE_PICKER_FIELD_PATHS = {"adapter.product.detail_content", "adapter.product.extra_image_urls"}
 
@@ -723,16 +724,27 @@ class AdapterStudioViewModel(BaseViewModel):
         self._refresh_mapping_rows()
         self._emit()
 
-    def _refresh_mapping_rows(self) -> None:
+    def _refresh_mapping_rows(self, preserve_values: bool = True) -> None:
         try:
             rows = get_product_field_mappings(load_adapter_from_text(self._yaml_text))
         except Exception:
             rows = []
-        self._mapping_rows.resetRows([{**row, "testValue": "", "testOk": False} for row in rows])
+        # YAML 수정(재매핑 등) 시 이미 가져온 값은 키 기준으로 보존한다.
+        prev = {row.get("key"): row for row in self._mapping_rows._rows} if preserve_values else {}
+        self._mapping_rows.resetRows([
+            {
+                **row,
+                "testValue": prev.get(row["key"], {}).get("testValue", ""),
+                "testOk": prev.get(row["key"], {}).get("testOk", False),
+                "imageUrls": prev.get(row["key"], {}).get("imageUrls", []),
+            }
+            for row in rows
+        ])
 
     def _clear_mapping_preview_values(self) -> None:
+        # 샘플 URL이 바뀌면 이전 URL 기준 값은 무효 — 비운다.
         if self._yaml_text:
-            self._refresh_mapping_rows()
+            self._refresh_mapping_rows(preserve_values=False)
 
     @Slot(result=str)
     def beginValidation(self) -> str:
@@ -754,8 +766,19 @@ class AdapterStudioViewModel(BaseViewModel):
             rows = get_product_field_mappings(load_adapter_from_text(self._yaml_text))
         except Exception:
             return
+        prev = {row.get("key"): row for row in self._mapping_rows._rows}
         updated = []
         for row in rows:
+            if row["key"] not in raw_results:
+                # 이번 테스트에 없는 필드는 기존 값 유지 (단일 필드 재테스트 시 나머지 보존)
+                kept = prev.get(row["key"], {})
+                updated.append({
+                    **row,
+                    "testValue": kept.get("testValue", ""),
+                    "testOk": kept.get("testOk", False),
+                    "imageUrls": kept.get("imageUrls", []),
+                })
+                continue
             entries = raw_results.get(row["key"], [])
             hits = [
                 entry.get("value")
@@ -763,7 +786,17 @@ class AdapterStudioViewModel(BaseViewModel):
                 if isinstance(entry, dict) and entry.get("value") and is_field_value_ok(row["key"], entry)
             ]
             ok = any(is_field_value_ok(row["key"], entry) for entry in entries if isinstance(entry, dict))
-            updated.append({**row, "testValue": str(hits[0])[:100] if hits else "", "testOk": ok})
+            image_urls = next(
+                (list(entry.get("imageUrls") or []) for entry in entries
+                 if isinstance(entry, dict) and entry.get("imageUrls")),
+                [],
+            )
+            updated.append({
+                **row,
+                "testValue": str(hits[0])[:100] if hits else "",
+                "testOk": ok,
+                "imageUrls": image_urls,
+            })
         self._mapping_rows.resetRows(updated)
 
     def _preview_field(self, key: str, label: str, extractor) -> dict:
@@ -912,7 +945,7 @@ class AdapterStudioViewModel(BaseViewModel):
         """브라우저 없이 헤드리스로 각 필드의 실제 값을 추출해 행에 채운다."""
         return self._load_sample_mapping_values()
 
-    def _load_sample_mapping_values(self) -> bool:
+    def _load_sample_mapping_values(self, only_fields: list[str] | None = None) -> bool:
         if not self._can_start_operation("adapter-sample-values"):
             return False
         target = self._picker_target_url()
@@ -920,7 +953,12 @@ class AdapterStudioViewModel(BaseViewModel):
             self.set_field_errors({"form": "값을 가져올 상품 URL이 없습니다."})
             return False
         try:
-            fields = [field["key"] for field in self._extract_preview_fields()]
+            fields = only_fields or [field["key"] for field in self._extract_preview_fields()]
+            # 이미지 필드 단독 테스트여도 대표이미지 제외가 동작하도록 main_image_url을 먼저 추출
+            if only_fields and "main_image_url" not in fields and any(
+                f in ("extra_image_urls", "detail_content") for f in fields
+            ):
+                fields = ["main_image_url", *fields]
             load_adapter_from_text(self._yaml_text)
         except Exception as exc:
             self.set_field_errors({"yamlText": f"YAML 오류: {exc}"})
@@ -943,7 +981,8 @@ class AdapterStudioViewModel(BaseViewModel):
         self._inputs["username"] = self._inputs["password"] = ""
         return self._connect_worker(
             worker,
-            finished=self._sample_mapping_values_finished,
+            # 단일 필드 갱신은 실패 선택자 정리/자동복구를 건너뛴다 (없는 필드를 실패로 오인 방지)
+            finished=self._sample_mapping_values_finished if only_fields is None else self._partial_sample_values_finished,
             key="adapter-sample-values",
             label="필드 값 가져오기",
             stage="map",
@@ -955,6 +994,10 @@ class AdapterStudioViewModel(BaseViewModel):
         self._apply_test_results(raw)
         self._operation_done()
         self._maybe_repair_mapping(self._preview_result_from_raw(raw))
+
+    def _partial_sample_values_finished(self, result: dict) -> None:
+        self._apply_test_results(dict(result).get("__raw_results__", {}))
+        self._operation_done()
 
     def _drop_failed_sample_selectors(self, raw: Mapping[str, Any]) -> None:
         failed: list[str] = []
@@ -1328,6 +1371,23 @@ class AdapterStudioViewModel(BaseViewModel):
             else:
                 product.pop("extra_image_urls", None)
             self.setYamlText(yaml.safe_dump(raw, allow_unicode=True, sort_keys=False))
+        except Exception as exc:
+            self.set_field_errors({"yamlText": f"YAML 오류: {exc}"})
+
+    @Slot(str, int)
+    def setFieldSkipFirst(self, key: str, count: int) -> None:
+        """이미지 필드 앞에서 count개 제외(대표이미지 등). 0이면 해제."""
+        try:
+            raw = yaml.safe_load(self._yaml_text) or {}
+            config = raw.get("adapter", {}).get("product", {}).get(key)
+            if not isinstance(config, dict):
+                return
+            if count > 0:
+                config["skip_first"] = int(count)
+            else:
+                config.pop("skip_first", None)
+            self.setYamlText(yaml.safe_dump(raw, allow_unicode=True, sort_keys=False))
+            self._load_sample_mapping_values([key])
         except Exception as exc:
             self.set_field_errors({"yamlText": f"YAML 오류: {exc}"})
 
@@ -1790,7 +1850,18 @@ class AdapterStudioViewModel(BaseViewModel):
         self._emit()
         if should_analyze_options:
             self._start_option_text_parser_analysis()
+        elif field_path.startswith("adapter.product.") and self._picker_target_url().startswith(("http://", "https://")):
+            # 방금 매핑한 필드만 자동으로 값 갱신 — "값 가져오기" 재클릭 불필요 (URL 없으면 조용히 생략)
+            key = field_path.split(".")[-1]
+            self._clear_row_test_value(key)
+            self._load_sample_mapping_values([key])
         return True
+
+    def _clear_row_test_value(self, key: str) -> None:
+        self._mapping_rows.resetRows([
+            {**row, "testValue": "", "testOk": False, "imageUrls": []} if row.get("key") == key else row
+            for row in self._mapping_rows._rows
+        ])
 
     @Slot(result=bool)
     def save(self) -> bool:

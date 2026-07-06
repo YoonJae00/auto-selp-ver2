@@ -16,7 +16,7 @@ from app.analyzer.adapter_schema import extract_url_value
 from app.analyzer.option_text_parser import is_option_placeholder, parse_option_text, format_option_group
 from app.analyzer.picker_session import PickerSession
 from app.analyzer.site_probe import probe_site
-from app.crawlers.yaml_adapter import _status_from_maxq_value
+from app.crawlers.yaml_adapter import _image_key, _status_from_maxq_value
 
 
 @dataclass
@@ -970,6 +970,7 @@ class AdapterTestWorker(_AsyncWorker):
                 self.progress.emit(f"테스트 페이지 접속: {url}")
                 await page.goto(url, wait_until="domcontentloaded", timeout=15000)
                 await page.wait_for_timeout(1500)
+                main_image_url: str | None = None
                 for field_name in self.fields:
                     fraction = completed_fields / total_fields if total_fields else 0.0
                     extractor = getattr(product, field_name, None)
@@ -984,11 +985,18 @@ class AdapterTestWorker(_AsyncWorker):
                         self.progress.emit(f"[progress:{fraction:.2f}] 테스트 중: {field_name}")
                         try:
                             value, image_urls = await self._extract_test_field(page, extractor, field_name)
+                            if field_name == "main_image_url" and value:
+                                main_image_url = urljoin(url, value)
+                            # 추가이미지/상세이미지에 대표이미지가 섞여 세어지는 것 방지 (크롤 시 _without_images와 동일 기준)
+                            if field_name in self.IMAGE_PREVIEW_FIELDS and image_urls and main_image_url:
+                                main_key = _image_key(main_image_url)
+                                image_urls = [u for u in image_urls if _image_key(u) != main_key]
                         except Exception as exc:
                             error = str(exc)
                     entry = {"url": url, "value": value, "ok": bool(value), "error": error}
                     if image_urls is not None:
-                        entry["imageUrls"] = image_urls[:5]
+                        # 인식 개수와 썸네일 개수가 일치하도록 전부 전달 (상한만 안전장치)
+                        entry["imageUrls"] = image_urls[:20]
                         entry["imageCount"] = len(image_urls)
                         entry["ok"] = bool(image_urls)
                     aggregate[field_name].append(entry)
@@ -1042,6 +1050,13 @@ class AdapterTestWorker(_AsyncWorker):
                 # ponytail: reads all matched elements for an accurate count; cap if a selector ever matches hundreds
                 reads = [await self._read_test_element(el, extractor) or "" for el in elements]
                 values = [item for item in reads if item]
+                if not values and extractor.attribute in ("src", "data-src"):
+                    # 컨테이너 박스 선택자 폴백 — YAMLAdapter._extract_field와 동일 기준
+                    elements = await page.query_selector_all(extractor.selector + " img")
+                    reads = [await self._read_test_element(el, extractor) or "" for el in elements]
+                    values = [item for item in reads if item]
+                if extractor.skip_first:
+                    values = values[extractor.skip_first:]
                 if field_name in self.IMAGE_PREVIEW_FIELDS:
                     urls = [urljoin(page.url, item) for item in values]
                     return f"{len(urls)}개 인식", urls

@@ -686,7 +686,9 @@ class PickerSession:
                     node.parentElement ? node.parentElement.children : [],
                     (x) => x.tagName === node.tagName
                   );
-                  parts.unshift(`${tag}:nth-of-type(${siblings.indexOf(node) + 1})`);
+                  const idx = siblings.indexOf(node) + 1;
+                  // idx=0 (parentElement 없음, 예: html) → :nth-of-type(0)은 아무것도 매칭 안 함
+                  parts.unshift(idx > 0 ? `${tag}:nth-of-type(${idx})` : tag);
                 }
                 return parts.join(' > ');
               }
@@ -757,7 +759,9 @@ class PickerSession:
                     node.parentElement ? node.parentElement.children : [],
                     (x) => x.tagName === node.tagName
                   );
-                  parts.unshift(`${tag}:nth-of-type(${siblings.indexOf(node) + 1})`);
+                  const idx = siblings.indexOf(node) + 1;
+                  // idx=0 (parentElement 없음, 예: html) → :nth-of-type(0)은 아무것도 매칭 안 함
+                  parts.unshift(idx > 0 ? `${tag}:nth-of-type(${idx})` : tag);
                 }
                 return parts.join(' > ');
               }

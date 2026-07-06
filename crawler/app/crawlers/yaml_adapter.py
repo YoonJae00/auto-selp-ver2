@@ -129,11 +129,20 @@ def _image_values(value: Any) -> list[str]:
     return [img for img in (_supported_image_url(item) for item in values) if img]
 
 
+def _image_key(url: str, base_url: str = "") -> str:
+    """크기변형 URL(big/small 폴더, 리사이저 쿼리 등)도 같은 이미지로 보도록 파일명 기준 키."""
+    absolute = urljoin(base_url, url)
+    path = absolute.split("?", 1)[0].split("#", 1)[0]
+    name = path.rsplit("/", 1)[-1].lower()
+    return name or absolute.lower()
+
+
 def _without_images(images: list[str], excluded: str | None, base_url: str = "") -> list[str]:
     if not excluded:
         return images
-    excluded_key = urljoin(base_url, excluded)
-    return [img for img in images if urljoin(base_url, img) != excluded_key]
+    excluded_key = _image_key(excluded, base_url)
+    # ponytail: 파일명 비교 — 다른 폴더에 동일 파일명인 정식 추가이미지가 드물게 같이 제외될 수 있음
+    return [img for img in images if _image_key(img, base_url) != excluded_key]
 
 
 def _image_csv(value: Any) -> str | None:
@@ -471,12 +480,12 @@ class YAMLAdapter(BaseAdapter):
         try:
             if extractor.selector:
                 if extractor.multiple:
-                    elements = await page.query_selector_all(extractor.selector)
-                    values: list[str] = []
-                    for el in elements:
-                        val = await self._read_element(el, extractor)
-                        if val:
-                            values.append(val)
+                    values = await self._read_elements(page, extractor.selector, extractor)
+                    if not values and extractor.attribute in ("src", "data-src"):
+                        # 사용자가 이미지가 아닌 컨테이너 박스를 선택한 경우: 내부 img로 폴백
+                        values = await self._read_elements(page, extractor.selector + " img", extractor)
+                    if extractor.skip_first:
+                        values = values[extractor.skip_first:]
                     if values:
                         return values
                 else:
@@ -497,6 +506,15 @@ class YAMLAdapter(BaseAdapter):
             if extractor.fallback:
                 return _apply_transform(extractor.fallback, extractor.transform)
             return None
+
+    async def _read_elements(self, page, selector: str, extractor: FieldExtractor) -> list[str]:
+        elements = await page.query_selector_all(selector)
+        values: list[str] = []
+        for el in elements:
+            val = await self._read_element(el, extractor)
+            if val:
+                values.append(val)
+        return values
 
     async def _extract_field_fallback_from(self, page, extractor: FieldExtractor) -> str | None:
         if extractor.fallback_from == "url":
