@@ -28,6 +28,10 @@ ListView {
         required property bool urlAllowed
         required property bool testable
         required property bool extraEnabled
+        required property var model
+        // model 경유 접근: 역할이 없는 모델(테스트 하네스 등)에서도 안전
+        readonly property var imageUrls: model.imageUrls || []
+        readonly property int skipFirst: model.skipFirst || 0
         objectName: "mappingRow-" + index
         readonly property var vm: ListView.view.viewModel
         readonly property real contentImplicitHeight: content.implicitHeight
@@ -82,6 +86,15 @@ ListView {
                     font.family: "monospace"
                     font.pixelSize: 11
                 }
+                CheckBox {
+                    visible: mappingRow.key === "extra_image_urls"
+                    checked: mappingRow.extraEnabled
+                    enabled: !mappingRow.vm.busy
+                    text: "수집"
+                    font.pixelSize: 11
+                    ToolTip.text: checked ? "추가 이미지 수집 사용" : "추가 이미지 수집 안 함"
+                    onToggled: mappingRow.vm.setExtraImagesEnabled(checked)
+                }
                 AppButton {
                     size: "compact"
                     text: "선택"
@@ -127,14 +140,58 @@ ListView {
                             enabled: !mappingRow.vm.busy
                             onTriggered: mappingRow.vm.setSoldoutCompareOpen(!mappingRow.vm.soldoutCompareOpen)
                         }
-                        MenuItem {
-                            text: mappingRow.extraEnabled ? "✓ 추가 이미지 수집" : "추가 이미지 수집"
-                            visible: mappingRow.key === "extra_image_urls"
-                            height: visible ? implicitHeight : 0
-                            enabled: !mappingRow.vm.busy
-                            onTriggered: mappingRow.vm.setExtraImagesEnabled(!mappingRow.extraEnabled)
+                    }
+                }
+            }
+            // ─── 추가이미지 썸네일: 대표이미지 클릭 = 그 이미지까지 앞부분 제외 ───
+            ColumnLayout {
+                visible: mappingRow.key === "extra_image_urls" && (mappingRow.imageUrls || []).length > 0
+                Layout.fillWidth: true
+                Layout.leftMargin: 86
+                spacing: 4
+                Flow {
+                    Layout.fillWidth: true
+                    spacing: 6
+                    Repeater {
+                        model: mappingRow.imageUrls
+                        Rectangle {
+                            id: thumb
+                            required property string modelData
+                            required property int index
+                            width: 40
+                            height: 40
+                            radius: 4
+                            color: Ui.Theme.surfaceRaised
+                            border.color: Ui.Theme.border
+                            Image {
+                                anchors.fill: parent
+                                anchors.margins: 1
+                                source: thumb.modelData
+                                fillMode: Image.PreserveAspectCrop
+                                asynchronous: true
+                            }
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                enabled: !mappingRow.vm.busy
+                                onClicked: mappingRow.vm.setFieldSkipFirst(mappingRow.key, mappingRow.skipFirst + thumb.index + 1)
+                            }
                         }
                     }
+                    AppButton {
+                        visible: mappingRow.skipFirst > 0
+                        size: "compact"
+                        text: "앞 " + mappingRow.skipFirst + "개 제외 해제"
+                        enabled: !mappingRow.vm.busy
+                        onClicked: mappingRow.vm.setFieldSkipFirst(mappingRow.key, 0)
+                    }
+                }
+                Text {
+                    Layout.fillWidth: true
+                    text: "대표이미지가 섞여 있으면 그 썸네일을 클릭하세요 — 그 이미지까지 앞부분이 수집에서 제외됩니다."
+                    color: Ui.Theme.textMuted
+                    wrapMode: Text.WordWrap
+                    font.pixelSize: 11
                 }
             }
             // ─── URL 추출 상세 (메뉴에서 켰을 때만) ───

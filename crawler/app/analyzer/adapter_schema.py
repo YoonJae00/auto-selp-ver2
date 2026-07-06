@@ -81,6 +81,7 @@ class FieldExtractor(BaseModel):
     transform: Literal["strip", "extract_number", "extract_signed_number", "none"] = "strip"
     html: bool = False
     multiple: bool = False
+    skip_first: int = 0  # multiple 수집 시 앞에서 N개 제외 (대표이미지가 갤러리 맨 앞에 섞이는 경우)
     optional: bool = False
     fallback: str | None = None
     fallback_from: Literal["url", "cart_button", "maxq", "none"] = "none"
@@ -220,6 +221,7 @@ def get_product_field_mappings(adapter: "Adapter") -> list[dict[str, Any]]:
             "urlAllowed": field_name == "supplier_product_code",
             "testable": True,
             "extraEnabled": field_name != "extra_image_urls" or extractor is not None,
+            "skipFirst": int(extractor.skip_first) if extractor else 0,
         }
         if extractor is None:
             rows.append({
@@ -283,6 +285,7 @@ def get_product_field_mappings(adapter: "Adapter") -> list[dict[str, Any]]:
         "urlAllowed": False,
         "testable": True,
         "extraEnabled": True,
+        "skipFirst": 0,
     })
     return rows
 

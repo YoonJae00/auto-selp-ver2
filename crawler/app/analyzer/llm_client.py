@@ -1,9 +1,23 @@
 from __future__ import annotations
 
+import logging
 from abc import ABC, abstractmethod
 from typing import Any
 
 from app.credentials.store import load_llm_api_key
+
+logger = logging.getLogger(__name__)
+
+
+def _log_llm_call(provider: str, system_prompt: str, user_prompt: str) -> None:
+    logger.info(
+        "LLM request provider=%s\n--- system ---\n%s\n--- user ---\n%s",
+        provider, system_prompt, user_prompt,
+    )
+
+
+def _log_llm_response(provider: str, response: str) -> None:
+    logger.info("LLM response provider=%s\n%s", provider, response)
 
 # Import error classes with fallbacks to avoid hard dependency on optional packages
 try:
@@ -46,8 +60,10 @@ class GeminiClient(LLMClient):
         genai.configure(api_key=self.api_key)
         model = genai.GenerativeModel("gemini-2.0-flash-lite")
         full_prompt = f"{system_prompt}\n\n{user_prompt}"
+        _log_llm_call(self.provider, system_prompt, user_prompt)
         try:
             response = await model.generate_content_async(full_prompt)
+            _log_llm_response(self.provider, response.text)
             return response.text
         except _GeminiQuotaError:
             raise QuotaExceededError(
@@ -61,6 +77,7 @@ class OpenAIClient(LLMClient):
     async def generate(self, system_prompt: str, user_prompt: str) -> str:
         from openai import AsyncOpenAI
 
+        _log_llm_call(self.provider, system_prompt, user_prompt)
         try:
             async with AsyncOpenAI(api_key=self.api_key, max_retries=3, timeout=60.0) as client:
                 response = await client.chat.completions.create(
@@ -70,7 +87,9 @@ class OpenAIClient(LLMClient):
                         {"role": "user", "content": user_prompt},
                     ],
                 )
-            return response.choices[0].message.content or ""
+            content = response.choices[0].message.content or ""
+            _log_llm_response(self.provider, content)
+            return content
         except _OpenAIRateLimitError:
             raise QuotaExceededError(
                 "OpenAI API 사용량이 초과되었습니다. 설정 탭에서 확인하세요."

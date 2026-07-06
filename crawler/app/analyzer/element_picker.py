@@ -169,7 +169,8 @@ PICKER_INSTALL_SCRIPT = r"""
       const tag = node.tagName.toLowerCase();
       const siblings = _toArr(node.parentElement ? node.parentElement.children : []).filter(x => x.tagName === node.tagName);
       const idx = siblings.indexOf(node) + 1;
-      parts.unshift(`${tag}:nth-of-type(${idx})`);
+      // idx=0 (parentElement 없음, 예: html) → :nth-of-type(0)은 아무것도 매칭 안 함
+      parts.unshift(idx > 0 ? `${tag}:nth-of-type(${idx})` : tag);
     }
     return parts.join(' > ');
   }

@@ -4,6 +4,7 @@ from app.crawlers.yaml_adapter import (
     _image_csv,
     _is_placeholder_src,
     _supported_image_url,
+    _without_images,
 )
 
 
@@ -37,6 +38,15 @@ def test_is_placeholder_src() -> None:
     assert _is_placeholder_src("data:image/gif;base64,AAAA") is True
     assert _is_placeholder_src("https://x.com/spacer.gif") is True
     assert _is_placeholder_src("https://x.com/real/photo.jpg") is False
+
+
+def test_without_images_excludes_main_size_variants() -> None:
+    # 대표이미지가 big/, 추가이미지 목록이 small/ 폴더여도 파일명이 같으면 제외
+    images = ["https://x.com/goods/small/103.jpg", "https://x.com/goods/small/104.jpg"]
+    assert _without_images(images, "https://x.com/goods/big/103.jpg") == ["https://x.com/goods/small/104.jpg"]
+    # 상대경로 + 리사이저 쿼리도 동일 취급
+    assert _without_images(["/img/103.jpg?w=200"], "https://x.com/img/103.jpg", "https://x.com/p") == []
+    assert _without_images(images, None) == images
 
 
 def test_image_csv_filters_and_joins() -> None:
