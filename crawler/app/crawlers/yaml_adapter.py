@@ -150,6 +150,64 @@ def _image_csv(value: Any) -> str | None:
     return ",".join(images) or None
 
 
+DETAIL_IMAGE_MIN_PX = 300  # ponytail: 튜닝 노브 — 작은 상품썸네일 새면 올리고, 넓은 상세띠 잘리면 내려라
+
+# selector가 가리키는(또는 그 하위) <img>를 브라우저에서 크기 측정 후, '확실히 작은' 것(버튼·화살표·
+# 아이콘·스페이서)만 제외. effW = max(naturalWidth, width속성, rect.width) — 두 변 모두 0<크기<min일 때만
+# drop. 크기 불명(lazy 미로딩: natural=0/속성없음/rect=0)은 보존.
+_COLLECT_IMAGES_JS = r"""
+([selector, minPx]) => {
+  const PLACEHOLDER = /blank|spacer|1x1|no_?image|noimg|transparent|\/icon/i;
+  const LAZY_ATTRS = ['src', 'data-src', 'data-original', 'data-lazy', 'data-echo'];
+  function realSrc(img) {
+    // _read_image_attribute와 동일 우선순위 — placeholder/data-URI 건너뛰고 lazy 속성 순회
+    for (const attr of LAZY_ATTRS) {
+      const v = (img.getAttribute(attr) || '').trim();
+      if (v && !v.toLowerCase().startsWith('data:') && !PLACEHOLDER.test(v)) return v;
+    }
+    const srcset = (img.getAttribute('srcset') || '').trim();
+    if (srcset) {
+      const first = srcset.split(',')[0].trim().split(/\s+/)[0] || '';
+      if (first && !PLACEHOLDER.test(first)) return first;
+    }
+    return (img.getAttribute('src') || '').trim();  // 전부 placeholder면 raw src로 폴백
+  }
+  const out = [];
+  const seen = {};
+  const imgs = [];
+  for (const el of document.querySelectorAll(selector)) {
+    if (el.tagName === 'IMG') imgs.push(el);
+    else for (const img of el.querySelectorAll('img')) imgs.push(img);
+  }
+  for (const img of imgs) {
+    const src = realSrc(img);
+    if (!src || seen[src]) continue;
+    const attrW = parseInt(img.getAttribute('width') || '0', 10) || 0;
+    const attrH = parseInt(img.getAttribute('height') || '0', 10) || 0;
+    const rect = img.getBoundingClientRect();
+    const effW = Math.max(img.naturalWidth || 0, attrW, Math.round(rect.width) || 0);
+    const effH = Math.max(img.naturalHeight || 0, attrH, Math.round(rect.height) || 0);
+    if (effW > 0 && effH > 0 && effW < minPx && effH < minPx) continue;  // 버튼/아이콘/스페이서
+    seen[src] = 1;
+    out.push(src);
+  }
+  return out;
+}
+"""
+
+
+async def collect_detail_images(page, selector: str, min_px: int = DETAIL_IMAGE_MIN_PX) -> list[str]:
+    """selector가 가리키는(또는 하위) <img>의 src/data-src 중 '확실히 작은' 버튼류만 제외해 반환.
+
+    크롤·테스트 경로가 공유 — page.evaluate 한 번으로 측정+수집을 원자적으로 수행한다.
+    """
+    try:
+        result = await page.evaluate(_COLLECT_IMAGES_JS, [selector, min_px])
+        return [str(item) for item in (result or [])]
+    except Exception:
+        return []
+
+
 class YAMLAdapter(BaseAdapter):
     def __init__(
         self,
@@ -480,10 +538,12 @@ class YAMLAdapter(BaseAdapter):
         try:
             if extractor.selector:
                 if extractor.multiple:
-                    values = await self._read_elements(page, extractor.selector, extractor)
-                    if not values and extractor.attribute in ("src", "data-src"):
-                        # 사용자가 이미지가 아닌 컨테이너 박스를 선택한 경우: 내부 img로 폴백
-                        values = await self._read_elements(page, extractor.selector + " img", extractor)
+                    if extractor.attribute in ("src", "data-src"):
+                        # 이미지 필드(상세/추가 이미지): 크기 측정으로 버튼·아이콘·스페이서 제외.
+                        # collect_detail_images가 selector 자신과 하위 img를 모두 커버하므로 폴백 불필요.
+                        values = await collect_detail_images(page, extractor.selector)
+                    else:
+                        values = await self._read_elements(page, extractor.selector, extractor)
                     if extractor.skip_first:
                         values = values[extractor.skip_first:]
                     if values:

@@ -16,7 +16,7 @@ from app.analyzer.adapter_schema import extract_url_value
 from app.analyzer.option_text_parser import is_option_placeholder, parse_option_text, format_option_group
 from app.analyzer.picker_session import PickerSession
 from app.analyzer.site_probe import probe_site
-from app.crawlers.yaml_adapter import _image_key, _status_from_maxq_value
+from app.crawlers.yaml_adapter import _image_key, _status_from_maxq_value, collect_detail_images
 
 
 @dataclass
@@ -1045,6 +1045,13 @@ class AdapterTestWorker(_AsyncWorker):
 
     async def _extract_test_field(self, page, extractor, field_name: str = "") -> tuple[str | None, list[str] | None]:
         if extractor.selector:
+            if field_name in self.IMAGE_PREVIEW_FIELDS:
+                # 상세/추가 이미지: 크롤과 동일 헬퍼로 크기 측정 → 버튼·아이콘 제외. 개수·내용이 크롤과 일치.
+                values = await collect_detail_images(page, extractor.selector)
+                if extractor.skip_first:
+                    values = values[extractor.skip_first:]
+                urls = [urljoin(page.url, item) for item in values]
+                return f"{len(urls)}개 인식", urls
             if extractor.multiple:
                 elements = await page.query_selector_all(extractor.selector)
                 # ponytail: reads all matched elements for an accurate count; cap if a selector ever matches hundreds
@@ -1057,9 +1064,6 @@ class AdapterTestWorker(_AsyncWorker):
                     values = [item for item in reads if item]
                 if extractor.skip_first:
                     values = values[extractor.skip_first:]
-                if field_name in self.IMAGE_PREVIEW_FIELDS:
-                    urls = [urljoin(page.url, item) for item in values]
-                    return f"{len(urls)}개 인식", urls
                 if values:
                     preview = ", ".join(item[:50] for item in values[:5])
                     return f"{len(values)}개 · {preview}", None
