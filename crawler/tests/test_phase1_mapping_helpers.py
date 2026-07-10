@@ -13,6 +13,10 @@ from app.crawlers.yaml_adapter import (
     _status_from_maxq_value,
     _supported_image_url,
     _without_images,
+    is_soldout_text,
+    option_is_soldout,
+    status_from_cart_button,
+    SOLDOUT_MARKER_SELECTOR,
 )
 from app.analyzer.option_text_parser import parse_option_text
 from app.workers.adapter import AdapterTestWorker, _status_suggestion_from_snapshots
@@ -374,17 +378,67 @@ def test_status_snapshot_suggestion_prefers_maxq_difference() -> None:
 
 def test_status_snapshot_suggestion_uses_cart_button_difference() -> None:
     suggestion = _status_suggestion_from_snapshots(
-        {"maxq_value": "", "has_buy_button": True},
-        {"maxq_value": "", "has_buy_button": False},
+        {"maxq_value": "", "buy_buttons": [{"text": "장바구니", "html": "<button>장바구니</button>"}]},
+        {"maxq_value": "", "buy_buttons": []},
     )
 
     assert suggestion is not None
     assert suggestion["fallback_from"] == "cart_button"
-    assert suggestion["confidence"] == "medium"
+
+
+def test_status_snapshot_suggestion_ignores_shared_global_nav() -> None:
+    # itopic 유형: 상단 전역 메뉴 주문/장바구니 이미지가 양쪽 페이지에 공통 존재하고,
+    # 판매중에만 상품영역 장바구니 버튼(sang_btn_06cart)이 있다. 집합 차이로 전역 네비를
+    # 상쇄하고 판별 버튼만 골라 구체 셀렉터를 만들어야 한다.
+    nav = [
+        {"text": "", "html": "<img src='/images/d2/10003/topmenu_04order.gif'>"},
+        {"text": "", "html": "<img src='/images/d2/10003/topmenu_05cart.gif'>"},
+    ]
+    suggestion = _status_suggestion_from_snapshots(
+        {"maxq_value": "", "buy_buttons": nav + [{"text": "", "html": "<img src='/images/d2/10003/sang_btn_06cart.gif' border='0'>"}]},
+        {"maxq_value": "", "buy_buttons": nav},
+    )
+
+    assert suggestion is not None
+    assert suggestion["fallback_from"] == "cart_button"
+    assert suggestion["selector"] == "img[src*='sang_btn_06cart.gif']"
+    assert suggestion["confidence"] == "high"
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("빨강 (품절)", True),
+    ("파랑 [매진]", True),
+    ("Red SOLD OUT", True),
+    ("재고 없음", True),
+    ("빨강", False),
+    ("", False),
+    (None, False),
+])
+def test_is_soldout_text(text, expected) -> None:
+    assert is_soldout_text(text) is expected
+
+
+@pytest.mark.asyncio
+async def test_option_is_soldout_from_disabled_attribute() -> None:
+    assert await option_is_soldout(_FakeElement(attrs={"disabled": ""}), "빨강") is True
+    assert await option_is_soldout(_FakeElement(attrs={"class": "opt soldout"}), "빨강") is True
+    assert await option_is_soldout(_FakeElement(), "빨강") is False
+
+
+@pytest.mark.asyncio
+async def test_status_from_cart_button_uses_specific_selector() -> None:
+    # 품절 마커 없음 + 구체 셀렉터가 있으면 그 존재/부재로만 판정(전역 네비 오탐 방지).
+    present = _FakePage({SOLDOUT_MARKER_SELECTOR: None, "img[src*='sang_btn_06cart.gif']": _FakeElement()})
+    assert await status_from_cart_button(present, "img[src*='sang_btn_06cart.gif']") == "available"
+    absent = _FakePage({SOLDOUT_MARKER_SELECTOR: None, "img[src*='sang_btn_06cart.gif']": None})
+    assert await status_from_cart_button(absent, "img[src*='sang_btn_06cart.gif']") == "sold_out"
+    marked = _FakePage({SOLDOUT_MARKER_SELECTOR: _FakeElement()})
+    assert await status_from_cart_button(marked, "img[src*='sang_btn_06cart.gif']") == "sold_out"
 
 
 def test_status_snapshot_suggestion_returns_none_when_unclear() -> None:
+    nav = [{"text": "", "html": "<img src='/topmenu_05cart.gif'>"}]
     assert _status_suggestion_from_snapshots(
-        {"maxq_value": "", "has_buy_button": False},
-        {"maxq_value": "", "has_buy_button": False},
+        {"maxq_value": "", "buy_buttons": nav},
+        {"maxq_value": "", "buy_buttons": nav},
     ) is None

@@ -1280,7 +1280,10 @@ class AdapterStudioViewModel(BaseViewModel):
             field: dict[str, Any] = {}
             if selector:
                 field["selector"] = selector
-                if "img" in selector.lower():
+                # 품절 마커 셀렉터(present=sold_out)만 alt/src로 값을 읽는다. cart_button
+                # 판별 셀렉터는 존재 여부만 쓰므로 attribute를 넣지 않아야 selector 읽기가
+                # 비고 cart_button 분기로 깔끔히 넘어간다.
+                if fallback_from == "none" and "img" in selector.lower():
                     field["attribute"] = "alt"
                     field["fallback_attribute"] = "src"
             if fallback_from != "none":
