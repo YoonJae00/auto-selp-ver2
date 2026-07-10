@@ -97,6 +97,7 @@ Item {
                     // qmllint disable unqualified
                     viewModel: AdapterStudioVM
                     // qmllint enable unqualified
+                    toastHost: appToast
                 }
                 Screens.CrawlScreen {
                     objectName: "crawlScreen"
@@ -173,6 +174,7 @@ Item {
     }
 
     ToastHost {
+        id: appToast
         anchors.fill: parent
         anchors.margins: 20
         z: 20
