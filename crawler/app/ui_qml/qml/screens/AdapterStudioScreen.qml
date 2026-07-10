@@ -9,6 +9,7 @@ import "../components" as Components
 Item {
     id: root
     required property var viewModel
+    property var toastHost: null
     focus: true
 
     ColumnLayout {
@@ -436,7 +437,7 @@ Item {
                                 text: "경고 확인 후 계속"
                                 onClicked: root.viewModel.acknowledgeSaveWarning()
                             }
-                            Components.AppButton { text: "어댑터 저장"; selected: true; enabled: !root.viewModel.busy; onClicked: root.viewModel.save() }
+                            Components.AppButton { text: "어댑터 저장"; selected: true; enabled: !root.viewModel.busy; onClicked: { if (root.viewModel.save() && root.toastHost) root.toastHost.showMessage("어댑터가 저장되었습니다", "info") } }
                         }
                     }
                 }
