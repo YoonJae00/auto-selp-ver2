@@ -100,6 +100,55 @@ _JUNK_IMAGE_RE = re.compile(r"blank|spacer|1x1|no_?image|noimg|transparent|/icon
 # gif is excluded: on these sites gifs are almost always banners/spacers, not product images.
 _IMAGE_EXT = (".jpg", ".jpeg", ".png", ".webp")
 
+# ===== Shared sale-status detection (품절 판정) =====
+# 페이지에 붙는 품절 마커: 이미지/텍스트.
+SOLDOUT_MARKER_SELECTOR = (
+    "img[src*='soldout'], img[src*='sold_out'], img[alt*='품절'], img[alt*='soldout'], "
+    ":text('품절'), :text('soldout'), :text('완판')"
+)
+# 장바구니/구매 버튼 광범위 패턴. 주의: 상단 전역 네비의 주문/장바구니 이미지까지 잡을 수 있어
+# 구체 셀렉터가 있으면 그쪽을 우선한다(status_from_cart_button 참고).
+CART_BUTTON_SELECTOR = (
+    "button:has-text('장바구니'), button:has-text('구매'), button:has-text('주문'), "
+    "button:has-text('Buy'), button:has-text('Cart'), "
+    "input[type='button'][value*='구매'], input[type='submit'][value*='구매'], "
+    "input[type='image'][src*='cart'], input[type='image'][src*='buy'], "
+    "img[src*='cart'], img[src*='buy'], img[src*='order'], img[src*='purchase']"
+)
+SOLDOUT_TEXT_RE = re.compile(r"품절|매진|완판|sold\s*out|재고\s*없", re.IGNORECASE)
+
+
+def is_soldout_text(text: str | None) -> bool:
+    return bool(text) and bool(SOLDOUT_TEXT_RE.search(str(text)))
+
+
+async def status_from_cart_button(page, specific_selector: str | None) -> str | None:
+    """cart_button fallback 판정. 3곳(런타임/미리보기)에서 공유한다.
+
+    품절 마커가 보이면 sold_out. 구체 셀렉터가 지정되면 그 존재 여부로만 판정한다
+    (광범위 패턴은 전역 네비를 오탐하므로). 셀렉터가 없으면 광범위 패턴으로 폴백.
+    """
+    if await page.query_selector(SOLDOUT_MARKER_SELECTOR):
+        return "sold_out"
+    if specific_selector:
+        return "available" if await page.query_selector(specific_selector) else "sold_out"
+    return "available" if await page.query_selector(CART_BUTTON_SELECTOR) else None
+
+
+async def option_is_soldout(element, raw_text: str | None) -> bool:
+    """옵션 요소 단위 품절 판정: disabled 속성 / 텍스트 키워드 / class 마커."""
+    if is_soldout_text(raw_text):
+        return True
+    try:
+        if await element.get_attribute("disabled") is not None:
+            return True
+        cls = (await element.get_attribute("class") or "").lower()
+        if "soldout" in cls or "sold_out" in cls or "품절" in cls:
+            return True
+    except Exception:
+        pass
+    return False
+
 
 def _is_placeholder_src(value: Any) -> bool:
     """True for empty / data-URI / spacer-style img src used by lazy loaders."""
@@ -587,20 +636,7 @@ class YAMLAdapter(BaseAdapter):
             return _status_from_maxq_value(await maxq.get_attribute("value"))
 
         if extractor.fallback_from == "cart_button":
-            soldout = await page.query_selector(
-                "img[src*='soldout'], img[src*='sold_out'], img[alt*='품절'], "
-                "img[alt*='soldout'], :text('품절'), :text('soldout'), :text('완판')"
-            )
-            if soldout:
-                return "sold_out"
-            cart = await page.query_selector(
-                "button:has-text('장바구니'), button:has-text('구매'), button:has-text('주문'), "
-                "button:has-text('Buy'), button:has-text('Cart'), "
-                "input[type='button'][value*='구매'], input[type='submit'][value*='구매'], "
-                "input[type='image'][src*='cart'], input[type='image'][src*='buy'], "
-                "img[src*='cart'], img[src*='buy'], img[src*='order'], img[src*='purchase']"
-            )
-            return "available" if cart else None
+            return await status_from_cart_button(page, extractor.selector)
 
         return None
 
@@ -693,6 +729,10 @@ class YAMLAdapter(BaseAdapter):
                     stock_raw = await self._extract_field(page, config.option_stock_quantity)
                     stock = _extract_number(str(stock_raw)) if isinstance(stock_raw, str) else stock_raw
 
+                # ponytail: 옵션 요소 자체 신호(disabled/텍스트 (품절)/class)로 자동 감지.
+                # 자식 배지로만 표기하는 희귀 몰은 OptionsConfig에 마커 셀렉터 추가로 확장.
+                sold = await option_is_soldout(el, raw_value_text)
+
                 options.append(StandardOption(
                     supplier_product_code=product_code,
                     option_sku=f"{product_code}-{accepted_index + 1}" if product_code else None,
@@ -708,8 +748,8 @@ class YAMLAdapter(BaseAdapter):
                     option_sale_price=None,
                     option_price_delta=price_delta,
                     option_stock_quantity=stock,
-                    option_status=None,
-                    option_usable=True,
+                    option_status="sold_out" if sold else None,
+                    option_usable=not sold,
                     option_main_image_url=image_url if isinstance(image_url, str) else None,
                     option_extra_image_urls=[],
                     option_position=accepted_index + 1,
@@ -758,6 +798,7 @@ class YAMLAdapter(BaseAdapter):
                     if not l2_value.strip():
                         continue
                     l2_value = l2_value.strip()
+                    l2_sold = await option_is_soldout(l2_el, l2_value)
                     option_data = {
                         "option_group_1": dep.level_1_group or level1_config.name,
                         "option_value_1": l1_value,
@@ -780,8 +821,8 @@ class YAMLAdapter(BaseAdapter):
                         option_sale_price=None,
                         option_price_delta=derive_option_price_delta(base_price, base_price),
                         option_stock_quantity=None,
-                        option_status=None,
-                        option_usable=True,
+                        option_status="sold_out" if l2_sold else None,
+                        option_usable=not l2_sold,
                         option_main_image_url=None,
                         option_extra_image_urls=[],
                         option_position=position,

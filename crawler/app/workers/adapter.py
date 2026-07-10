@@ -16,7 +16,14 @@ from app.analyzer.adapter_schema import extract_url_value
 from app.analyzer.option_text_parser import is_option_placeholder, parse_option_text, format_option_group
 from app.analyzer.picker_session import PickerSession
 from app.analyzer.site_probe import probe_site
-from app.crawlers.yaml_adapter import _image_key, _status_from_maxq_value, collect_detail_images
+from app.crawlers.yaml_adapter import (
+    _image_key,
+    _status_from_maxq_value,
+    collect_detail_images,
+    status_from_cart_button,
+    SOLDOUT_MARKER_SELECTOR,
+    CART_BUTTON_SELECTOR,
+)
 
 
 @dataclass
@@ -716,6 +723,33 @@ def _strip_json_response(response: str) -> str:
     return text_resp.strip()
 
 
+def _button_signature(button: dict) -> str:
+    """버튼 식별 시그니처. 같은 요소면 판매중/품절 페이지에서 동일해야 한다.
+
+    이미지 버튼은 src 파일명(쿼리스트링 제거), 그 외에는 텍스트를 쓴다. 전역 네비/헤더처럼
+    양쪽 페이지에 똑같이 있는 버튼은 시그니처가 같아 집합 차이에서 상쇄된다.
+    """
+    html = str(button.get("html") or "")
+    m = re.search(r"src=[\"']([^\"']+)", html)
+    if m:
+        src = m.group(1).split("?", 1)[0]
+        return "img:" + src.rsplit("/", 1)[-1].lower()
+    text = str(button.get("text") or "").strip().lower()
+    return "text:" + text if text else "html:" + html[:120]
+
+
+def _button_selector(button: dict) -> str:
+    """판별 버튼을 런타임에서 다시 찾기 위한 구체 셀렉터."""
+    html = str(button.get("html") or "")
+    m = re.search(r"src=[\"']([^\"']+)", html)
+    if m:
+        base = m.group(1).split("?", 1)[0].rsplit("/", 1)[-1]
+        if base:
+            return f"img[src*='{base}']"
+    text = str(button.get("text") or "").strip()
+    return f"button:has-text('{text}')" if text else ""
+
+
 def _status_suggestion_from_snapshots(available: dict, soldout: dict) -> dict | None:
     available_maxq = str(available.get("maxq_value") or "").strip()
     soldout_maxq = str(soldout.get("maxq_value") or "").strip()
@@ -728,14 +762,24 @@ def _status_suggestion_from_snapshots(available: dict, soldout: dict) -> dict | 
             "confidence": "high",
             "note": "품절 상품의 maxq 값이 0이고 판매중 상품은 0이 아닙니다.",
         }
-    if available.get("has_buy_button") and not soldout.get("has_buy_button"):
+    # 불리언 유무가 아니라 버튼 집합 차이로 비교한다: 전역 네비/헤더처럼 양쪽에 공통인
+    # 버튼은 상쇄되고, 판매중에만 있는 실제 상품 장바구니 버튼만 남는다.
+    soldout_sigs = {_button_signature(b) for b in soldout.get("buy_buttons") or []}
+    avail_only = [b for b in available.get("buy_buttons") or [] if _button_signature(b) not in soldout_sigs]
+    if avail_only:
+        # 가장 장바구니/구매다운 버튼을 판별자로 고른다.
+        def _cartness(b: dict) -> int:
+            blob = (str(b.get("html") or "") + str(b.get("text") or "")).lower()
+            return sum(kw in blob for kw in ("cart", "buy", "구매", "장바구니", "purchase"))
+        pick = max(avail_only, key=_cartness)
+        selector = _button_selector(pick)
         return {
-            "selector": "",
+            "selector": selector,
             "fallback_from": "cart_button",
             "mapping": {"available": "available", "sold_out": "sold_out"},
             "default": "available",
-            "confidence": "medium",
-            "note": "판매중 상품에만 구매/장바구니 버튼이 있습니다.",
+            "confidence": "high" if selector else "medium",
+            "note": "판매중 상품에만 있는 구매/장바구니 버튼을 발견했습니다.",
         }
     return None
 
@@ -843,18 +887,8 @@ class SoldoutCompareWorker(_AsyncWorker):
         maxq = await page.query_selector("input[name='maxq']")
         if maxq:
             maxq_value = await maxq.get_attribute("value") or ""
-        explicit = await self._collect_matches(
-            page,
-            "img[src*='soldout'], img[src*='sold_out'], img[alt*='품절'], img[alt*='soldout'], "
-            ":text('품절'), :text('soldout'), :text('완판')",
-        )
-        buy_buttons = await self._collect_matches(
-            page,
-            "button:has-text('장바구니'), button:has-text('구매'), button:has-text('주문'), "
-            "input[type='button'][value*='구매'], input[type='submit'][value*='구매'], "
-            "input[type='image'][src*='cart'], input[type='image'][src*='buy'], "
-            "img[src*='cart'], img[src*='buy'], img[src*='order'], img[src*='purchase']",
-        )
+        explicit = await self._collect_matches(page, SOLDOUT_MARKER_SELECTOR)
+        buy_buttons = await self._collect_matches(page, CART_BUTTON_SELECTOR)
         disabled = await self._collect_matches(
             page,
             "button[disabled], input[disabled], .disabled, .soldout, .sold_out, [class*='soldout'], [class*='sold_out']",
@@ -1106,11 +1140,7 @@ class AdapterTestWorker(_AsyncWorker):
             maxq = await page.query_selector("input[name='maxq']")
             return _status_from_maxq_value(await maxq.get_attribute("value")) if maxq else None
         if extractor.fallback_from == "cart_button":
-            soldout = await page.query_selector("img[src*='soldout'], img[src*='sold_out'], img[alt*='품절'], img[alt*='soldout'], :text('품절'), :text('soldout'), :text('완판')")
-            if soldout:
-                return "sold_out"
-            cart = await page.query_selector("button:has-text('장바구니'), button:has-text('구매'), button:has-text('주문'), input[type='image'][src*='cart'], input[type='image'][src*='buy'], img[src*='cart'], img[src*='buy'], img[src*='order'], img[src*='purchase']")
-            return "available" if cart else None
+            return await status_from_cart_button(page, extractor.selector)
         return None
 
 
