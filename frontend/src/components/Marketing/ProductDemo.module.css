@@ -1,0 +1,256 @@
+.shell {
+  width: min(1180px, 100%);
+  margin: 64px auto 0;
+  background: #ffffff;
+  border: 1px solid #dfe3e6;
+  border-radius: 8px;
+  overflow: hidden;
+  text-align: left;
+}
+
+.windowBar {
+  min-height: 52px;
+  padding: 0 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-bottom: 1px solid #e7eaec;
+  color: #444b50;
+  font-size: 13px;
+}
+
+.windowBar > div {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-weight: 600;
+}
+
+.statusDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #1e8e5a;
+}
+
+.sampleBadge {
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: #f0f3f4;
+  color: #646c72;
+  font-size: 12px;
+}
+
+.stageTabs {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(128px, 1fr));
+  overflow-x: auto;
+  border-bottom: 1px solid #e7eaec;
+  scrollbar-width: thin;
+}
+
+.stageTabs button {
+  min-height: 60px;
+  padding: 0 16px;
+  border: 0;
+  border-right: 1px solid #edf0f1;
+  border-bottom: 3px solid transparent;
+  background: #fafbfb;
+  color: #697177;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.stageTabs button span {
+  margin-right: 8px;
+  color: #a0a7ac;
+  font-size: 11px;
+}
+
+.stageTabs button:hover {
+  background: #f4f6f7;
+}
+
+.stageTabs button:focus-visible,
+.workspace:focus-visible {
+  outline: 2px solid #0066cc;
+  outline-offset: -2px;
+}
+
+.stageTabs .activeTab {
+  border-bottom-color: #0066cc;
+  background: #ffffff;
+  color: #101416;
+}
+
+.activeTab span {
+  color: #0066cc;
+}
+
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(360px, 0.95fr);
+  min-height: 390px;
+}
+
+.productPreview {
+  position: relative;
+  min-width: 0;
+  background: #f4f3f1;
+  border-right: 1px solid #e7eaec;
+  overflow: hidden;
+}
+
+.productPreview img {
+  width: 100%;
+  height: 100%;
+  min-height: 390px;
+  object-fit: cover;
+}
+
+.fileInfo {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  left: 16px;
+  min-height: 54px;
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(16, 20, 22, 0.1);
+  border-radius: 6px;
+  color: #5a6267;
+  font-size: 12px;
+}
+
+.fileInfo span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fileInfo strong {
+  flex: none;
+  color: #101416;
+  font-size: 13px;
+}
+
+.stageDetail {
+  padding: 42px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  background: #ffffff;
+}
+
+.stageLabel {
+  margin: 0 0 12px;
+  color: #0066cc;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.stageDetail h2 {
+  margin: 0;
+  color: #101416;
+  font-size: 28px;
+  line-height: 1.25;
+  letter-spacing: 0;
+}
+
+.stageDescription {
+  margin: 14px 0 24px;
+  color: #5d656b;
+  font-size: 15px;
+  line-height: 1.65;
+}
+
+.nameComparison {
+  border-top: 1px solid #e5e8ea;
+  border-bottom: 1px solid #e5e8ea;
+}
+
+.nameComparison > div {
+  padding: 14px 0;
+}
+
+.nameComparison > div + div {
+  border-top: 1px solid #eef0f1;
+}
+
+.nameComparison span {
+  color: #8a9297;
+  font-size: 11px;
+}
+
+.nameComparison p {
+  margin: 5px 0 0;
+  color: #252a2d;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.nameComparison > div:last-child p {
+  color: #0a7045;
+  font-weight: 600;
+}
+
+.stageMeta {
+  margin: 18px 0 0;
+  color: #697177;
+  font-size: 12px;
+}
+
+@media (max-width: 800px) {
+  .shell {
+    margin-top: 48px;
+  }
+
+  .workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .productPreview {
+    border-right: 0;
+    border-bottom: 1px solid #e7eaec;
+  }
+
+  .productPreview img {
+    min-height: 300px;
+    max-height: 360px;
+  }
+}
+
+@media (max-width: 520px) {
+  .shell {
+    margin-top: 36px;
+  }
+
+  .windowBar {
+    padding: 0 14px;
+  }
+
+  .workspace {
+    min-height: 0;
+  }
+
+  .productPreview img {
+    min-height: 230px;
+  }
+
+  .stageDetail {
+    padding: 28px 20px 30px;
+  }
+
+  .stageDetail h2 {
+    font-size: 23px;
+  }
+}
