@@ -40,8 +40,7 @@ GlassPanel {
 
         Repeater {
             model: [
-                { route: "suppliers", label: "공급사", shortLabel: "공" },
-                { route: "adapter", label: "어댑터", shortLabel: "어" },
+                { route: "suppliers", label: "도매처", shortLabel: "몰" },
                 { route: "crawl", label: "수집", shortLabel: "수" },
                 { route: "monitor", label: "모니터", shortLabel: "모" },
                 { route: "export", label: "내보내기", shortLabel: "내" },

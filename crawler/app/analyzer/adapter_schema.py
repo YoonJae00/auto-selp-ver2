@@ -47,12 +47,20 @@ class NavigationConfig(BaseModel):
     submenu: SubmenuConfig | None = None
 
 
+class CategoryItem(BaseModel):
+    """마법사가 확정한 카테고리 하나. 저장해 두면 crawl이 menu_selector로 매번
+    다시 걷지 않고 이 목록을 그대로 사용한다."""
+    name: str = ""
+    url: str
+
+
 class CategoriesConfig(BaseModel):
     mode: Literal["all_products", "tree", "hybrid"] = "tree"
     all_products: AllProductsConfig = Field(default_factory=AllProductsConfig)
     navigation: NavigationConfig | None = None
     url_template: str | None = None
     store_category_path: bool = True
+    entries: list[CategoryItem] = Field(default_factory=list)
 
 
 class PaginationConfig(BaseModel):

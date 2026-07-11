@@ -49,9 +49,14 @@ Item {
                     }
                     Components.AppButton {
                         objectName: "addSupplierButton"
-                        text: "+ 추가"
+                        text: "+ 쇼핑몰 추가"
                         selected: true
-                        onClicked: root.viewModel.beginCreate()
+                        onClicked: {
+                            // qmllint disable unqualified
+                            AdapterStudioVM.startNew()
+                            AppVM.navigate("adapter")
+                            // qmllint enable unqualified
+                        }
                     }
                 }
                 ListView {
@@ -164,7 +169,19 @@ Item {
                         font.pixelSize: 22
                         font.weight: Font.Bold
                     }
-                    Components.AppButton { text: "편집"; onClicked: root.viewModel.beginEdit() }
+                    Components.AppButton {
+                        text: "다시 분석"
+                        onClicked: {
+                            // qmllint disable unqualified
+                            AdapterStudioVM.startForSupplier(
+                                root.viewModel.selectedSupplier.name || "",
+                                root.viewModel.selectedSupplier.baseUrl || "",
+                                Boolean(root.viewModel.selectedSupplier.needsLogin))
+                            AppVM.navigate("adapter")
+                            // qmllint enable unqualified
+                        }
+                    }
+                    Components.AppButton { text: "설정"; onClicked: root.viewModel.beginEdit() }
                     Components.AppButton { text: "삭제"; onClicked: root.viewModel.requestDelete() }
                 }
                 Text {

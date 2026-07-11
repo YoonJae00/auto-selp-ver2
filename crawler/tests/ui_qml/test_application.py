@@ -300,7 +300,9 @@ def test_export_supplier_combo_starts_at_placeholder_and_tracks_vm_reset(qt_app)
     combo = root.findChild(QObject, "exportSupplierFilter")
     assert export_vm.selectedSupplierId == ""
     assert combo.property("currentIndex") == 0
-    export_vm._suppliers.resetRows([{"id": "", "name": "도매처 선택"}, {"id": "s1", "name": "One"}])
+    rows = [{"id": "", "name": "도매처 선택"}, {"id": "s1", "name": "One"}]
+    export_vm._suppliers.resetRows(rows)
+    export_vm._supplier_rows = rows
     export_vm._supplier_ids = {"s1"}
     export_vm._supplier_names = {"s1": "One"}
     export_vm.setSupplierId("s1")

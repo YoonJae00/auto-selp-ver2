@@ -36,6 +36,18 @@ ApplicationWindow {
         }
     }
 
+    // 어댑터 마법사 저장 완료 → 도매처를 자동 생성/갱신하고 도매처 화면으로 이동.
+    Connections {
+        // qmllint disable unqualified
+        target: AdapterStudioVM
+        function onSupplierSaved(slug, name, baseUrl, needsLogin) {
+            SuppliersVM.upsertFromAdapter(slug, name, baseUrl, needsLogin)
+            CrawlVM.refreshSuppliers()
+            AppVM.navigate("suppliers")
+        }
+        // qmllint enable unqualified
+    }
+
     Loader {
         anchors.fill: parent
         sourceComponent: window.firstRunRequired ? firstRunComponent : shellComponent

@@ -62,6 +62,25 @@ def model_rows(model) -> list[dict]:
     ]
 
 
+def test_upsert_from_adapter_creates_then_updates_supplier(vm) -> None:
+    # 마법사 저장 완료 → 도매처 자동 생성 (별도 등록 폼 없이)
+    vm.upsertFromAdapter("myshop", "My Shop", "https://myshop.example", True)
+    rows = model_rows(vm.model)
+    assert len(rows) == 1
+    assert rows[0]["name"] == "My Shop"
+    assert rows[0]["adapterFile"] == "myshop"
+    assert rows[0]["needsLogin"] is True
+    assert rows[0]["credentialsConfigured"] is True  # credential_key = slug
+
+    # 같은 어댑터로 재실행 = 갱신, 중복 생성 아님. 로그인 해제 시 자격증명 연결 해제.
+    vm.upsertFromAdapter("myshop", "My Shop 2", "https://myshop.example", False)
+    rows = model_rows(vm.model)
+    assert len(rows) == 1
+    assert rows[0]["name"] == "My Shop 2"
+    assert rows[0]["needsLogin"] is False
+    assert rows[0]["credentialsConfigured"] is False
+
+
 def test_missing_name_has_exact_korean_error(vm) -> None:
     vm.beginCreate()
     vm.setDraft({"name": "  ", "baseUrl": "https://example.com"})

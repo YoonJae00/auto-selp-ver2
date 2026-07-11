@@ -17,7 +17,7 @@ from app.analyzer.option_text_parser import parse_option_text, _legacy_split_opt
 from app.credentials.store import load_supplier_credentials
 from app.crawlers.base import BaseAdapter, CategoryEntry, CrawlResult, StockSnapshotData
 from app.crawlers.engine import PlaywrightEngine
-from app.diagnostics import log_exception
+from app.diagnostics import log_exception, sanitize_diagnostic
 from app.schema.standard import (
     StandardOption,
     StandardProduct,
@@ -271,19 +271,26 @@ class YAMLAdapter(BaseAdapter):
         self.supplier_name = supplier_name
         self.supplier_slug = supplier_slug
         self.delay_seconds = delay_seconds
+        self._login_failure_reason = ""
 
     async def _perform_login(self, page) -> bool:
-        """Perform login if the adapter requires it. Returns True if login succeeded or not needed."""
+        """Perform login if the adapter requires it. Returns True if login succeeded or not needed.
+        On failure sets self._login_failure_reason with a specific, user-facing cause."""
+        self._login_failure_reason = ""
         login_config = self.adapter.adapter.login
         if not login_config.required or not login_config.login_url:
             return True
 
         # Try to load credentials from keyring
         if not self.supplier_slug:
+            self._login_failure_reason = "로그인 정보 키가 없습니다. 도매처를 다시 저장하세요."
             logger.warning("login skipped: missing supplier credential key supplier=%s", self.supplier_name)
             return False
         creds = load_supplier_credentials(self.supplier_slug)
         if not creds:
+            self._login_failure_reason = (
+                "저장된 로그인 아이디/비밀번호가 없습니다. 도매처 편집에서 로그인 정보를 다시 입력하세요."
+            )
             logger.warning("login skipped: missing credentials supplier=%s", self.supplier_name)
             return False
         username, password = creds
@@ -293,48 +300,44 @@ class YAMLAdapter(BaseAdapter):
             await page.goto(login_config.login_url, wait_until="domcontentloaded", timeout=15_000)
             await page.wait_for_timeout(1500)
 
-            # Use configured selectors if available, otherwise auto-detect
+            # 설정된 로그인 입력란 선택자를 우선 시도하되, 페이지에 없으면 자동 감지로
+            # 폴백한다 (생성 오류/사이트 변경으로 선택자가 어긋나도 로그인되도록).
+            auto_id = "input[type='text'], input[type='email'], input[name*='id'], input[name*='user'], input[name*='member']"
+            auto_pw = "input[type='password']"
+            id_el = pw_el = None
             if login_config.fields and login_config.fields.id and login_config.fields.password:
-                id_selector = login_config.fields.id
-                pw_selector = login_config.fields.password
-            else:
-                # Auto-detect
-                pw_input = await page.query_selector("input[type='password']")
-                if not pw_input:
-                    return False
-                id_input = await page.query_selector("input[type='text'], input[type='email'], input[name*='id'], input[name*='user']")
-                if not id_input:
-                    return False
-                id_selector = "input[type='text'], input[type='email'], input[name*='id']"
-                pw_selector = "input[type='password']"
-
-            # Fill credentials
-            id_el = await page.query_selector(id_selector)
-            pw_el = await page.query_selector(pw_selector)
+                id_el = await page.query_selector(login_config.fields.id)
+                pw_el = await page.query_selector(login_config.fields.password)
+            if not id_el:
+                id_el = await page.query_selector(auto_id)
+            if not pw_el:
+                pw_el = await page.query_selector(auto_pw)
             if not id_el or not pw_el:
+                self._login_failure_reason = (
+                    "로그인 입력란(아이디/비밀번호)을 찾지 못했습니다. 로그인 페이지 주소가 맞는지, "
+                    "입력란 선택자가 맞는지 확인하세요."
+                )
                 return False
             await id_el.fill(username)
             await pw_el.fill(password)
 
-            # Submit
+            # 제출 버튼: 설정된 것을 우선, 없거나 못 찾으면 일반 선택자 → Enter로 폴백
+            submit_el = None
             if login_config.submit:
                 submit_el = await page.query_selector(login_config.submit)
-                if submit_el:
-                    await submit_el.click()
-                else:
-                    await pw_el.press("Enter")
-            else:
-                # Try common submit selectors
-                for sel in ["button[type='submit']", "input[type='submit']", "input[type='image']", "button:has-text('로그인')"]:
+            if not submit_el:
+                for sel in ["button[type='submit']", "input[type='submit']", ".login-btn",
+                            "button:has-text('로그인')", "input[type='image']"]:
                     try:
-                        btn = await page.query_selector(sel)
-                        if btn:
-                            await btn.click()
-                            break
+                        submit_el = await page.query_selector(sel)
                     except Exception:
-                        continue
-                else:
-                    await pw_el.press("Enter")
+                        submit_el = None
+                    if submit_el:
+                        break
+            if submit_el:
+                await submit_el.click()
+            else:
+                await pw_el.press("Enter")
 
             await page.wait_for_timeout(3000)
 
@@ -342,6 +345,12 @@ class YAMLAdapter(BaseAdapter):
             if login_config.success_indicator:
                 success_el = await page.query_selector(login_config.success_indicator)
                 logger.info("login finished supplier=%s success=%s", self.supplier_name, success_el is not None)
+                if success_el is None:
+                    self._login_failure_reason = (
+                        f"로그인을 시도했으나 성공을 확인하지 못했습니다 (성공 지표: "
+                        f"{login_config.success_indicator}). 아이디/비밀번호가 맞는지, "
+                        f"성공 지표 선택자가 맞는지 확인하세요."
+                    )
                 return success_el is not None
 
             # Check common logout indicators
@@ -363,11 +372,25 @@ class YAMLAdapter(BaseAdapter):
             logger.info("login finished supplier=%s success=True", self.supplier_name)
             return True
         except Exception as exc:
+            self._login_failure_reason = f"로그인 중 오류: {sanitize_diagnostic(exc)}"
             log_exception(logger, f"login failed supplier={self.supplier_name}", exc)
             return False
 
     async def discover_categories(self) -> list[CategoryEntry]:
         config = self.adapter.adapter.categories
+        # 마법사가 확정해 저장한 카테고리 목록이 있으면 그대로 사용한다 (menu_selector로
+        # 매번 다시 걷지 않음 — 사용자가 화면에서 본 것과 정확히 일치).
+        if getattr(config, "entries", None):
+            return [
+                CategoryEntry(
+                    category_id=(item.url.rsplit("=", 1)[-1].rsplit("/", 1)[-1] or item.name),
+                    name=item.name or item.url,
+                    path=item.name or item.url,
+                    url=item.url,
+                )
+                for item in config.entries
+                if item.url
+            ]
         if config.mode == "all_products" or (config.mode == "hybrid" and config.all_products.available):
             if config.all_products.url:
                 return [CategoryEntry(
@@ -442,14 +465,32 @@ class YAMLAdapter(BaseAdapter):
             entries.append(CategoryEntry(category_id=cat_id, name=name, path=path, url=url))
         return entries
 
+    def _listing_url(self, category_id: str | None, category_url: str | None, page_num: int) -> str:
+        """카테고리 리스팅 페이지 URL을 만든다.
+        1) url_template이 있으면 {category_id}/{page}로 채운다.
+        2) 없으면 discovery가 찾은 실제 카테고리 URL(category_url)을 쓰고,
+           2페이지 이후는 page_param을 붙여 페이지네이션한다.
+        3) 그래도 없으면 category_id를 URL로 간주(구버전 호환)."""
+        config = self.adapter.adapter
+        template = config.categories.url_template
+        if template:
+            return template.format(category_id=category_id, page=page_num)
+        base = category_url or category_id or ""
+        pagination = config.listing.pagination
+        if base and page_num > pagination.start:
+            param = pagination.page_param or "page"
+            sep = "&" if "?" in base else "?"
+            return f"{base}{sep}{param}={page_num}"
+        return base
+
     async def crawl_category(
         self,
         category_id: str,
         max_pages: int,
+        category_url: str | None = None,
     ) -> AsyncIterator[CrawlResult]:
         config = self.adapter.adapter
         pagination = config.listing.pagination
-        url_template = config.categories.url_template
 
         # Perform login if needed
         login_config = self.adapter.adapter.login
@@ -458,16 +499,16 @@ class YAMLAdapter(BaseAdapter):
             try:
                 login_ok = await self._perform_login(login_page)
                 if not login_ok:
-                    raise RuntimeError("도매처 로그인에 실패했습니다. 도매처 관리 탭에서 계정 정보를 확인하세요.")
+                    raise RuntimeError(self._login_failure_reason or "도매처 로그인에 실패했습니다. 도매처 편집에서 로그인 정보를 확인하세요.")
             finally:
                 await login_page.close()
 
+        seen_links: set[str] = set()
         page_num = pagination.start
         while page_num <= max_pages:
-            if url_template:
-                list_url = url_template.format(category_id=category_id, page=page_num)
-            else:
-                list_url = category_id
+            list_url = self._listing_url(category_id, category_url, page_num)
+            if not list_url:
+                break
 
             page = await self.engine.new_page()
             try:
@@ -479,11 +520,15 @@ class YAMLAdapter(BaseAdapter):
                         break
 
                 product_links = await self._extract_product_links(page)
-                logger.info("crawl list links supplier=%s category=%s page=%d links=%d", self.supplier_name, category_id, page_num, len(product_links))
-                if not product_links:
+                # 이미 본 링크만 나오면(사이트가 page 파라미터를 무시하고 같은 목록을
+                # 반복) 페이지네이션 종료 — 같은 상품을 max_pages번 재수집하는 것 방지.
+                new_links = [u for u in product_links if u not in seen_links]
+                logger.info("crawl list links supplier=%s category=%s page=%d links=%d new=%d", self.supplier_name, category_id, page_num, len(product_links), len(new_links))
+                if not new_links:
                     break
+                seen_links.update(new_links)
 
-                for link_url in product_links:
+                for link_url in new_links:
                     result = await self._crawl_product(link_url, category_path=category_id)
                     if result:
                         yield result
@@ -844,10 +889,10 @@ class YAMLAdapter(BaseAdapter):
     async def stock_check(
         self,
         category_id: str | None = None,
+        category_url: str | None = None,
     ) -> AsyncIterator[StockSnapshotData]:
         config = self.adapter.adapter
         pagination = config.listing.pagination
-        url_template = config.categories.url_template
 
         # Perform login if needed
         login_config = self.adapter.adapter.login
@@ -856,25 +901,27 @@ class YAMLAdapter(BaseAdapter):
             try:
                 login_ok = await self._perform_login(login_page)
                 if not login_ok:
-                    raise RuntimeError("도매처 로그인에 실패했습니다. 도매처 관리 탭에서 계정 정보를 확인하세요.")
+                    raise RuntimeError(self._login_failure_reason or "도매처 로그인에 실패했습니다. 도매처 편집에서 로그인 정보를 확인하세요.")
             finally:
                 await login_page.close()
 
+        seen_links: set[str] = set()
         page_num = pagination.start
         while page_num <= pagination.max_pages:
-            if url_template and category_id:
-                list_url = url_template.format(category_id=category_id, page=page_num)
-            else:
-                list_url = category_id or ""
+            list_url = self._listing_url(category_id, category_url, page_num)
+            if not list_url:
+                break
 
             page = await self.engine.new_page()
             try:
                 await page.goto(list_url, wait_until=config.browser.wait_until)
                 product_links = await self._extract_product_links(page)
-                if not product_links:
+                new_links = [u for u in product_links if u not in seen_links]
+                if not new_links:
                     break
+                seen_links.update(new_links)
 
-                for link_url in product_links:
+                for link_url in new_links:
                     snapshot = await self._stock_check_product(link_url)
                     if snapshot:
                         yield snapshot

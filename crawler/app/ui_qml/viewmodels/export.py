@@ -43,6 +43,8 @@ class ExportViewModel(BaseViewModel):
                  history_store: ExportHistoryStore | None = None) -> None:
         super().__init__(parent)
         self._app = app_view_model
+        self._supplier_loader = supplier_loader
+        self._supplier_rows: list[dict[str, Any]] = []
         self._scope_loader = scope_loader
         self._exports_dir = Path(exports_dir) if exports_dir is not None else default_exports_dir()
         self._picker = picker
@@ -69,20 +71,33 @@ class ExportViewModel(BaseViewModel):
         self._task_owner: object | None = None
         self._attempt_id = ""
         self._shutting_down = False
-        suppliers = supplier_loader()
+        self.refreshSuppliers()
+        self.refreshHistory()
+
+    @Slot()
+    def refreshSuppliers(self) -> None:
+        suppliers = self._supplier_loader()
         rows = [{"id": "", "name": "도매처 선택"}, *[{"id": str(item.id), "name": item.name} for item in suppliers]]
+        self._supplier_rows = rows
         self._supplier_ids = {row["id"] for row in rows if row["id"]}
         self._supplier_names = {row["id"]: row["name"] for row in rows if row["id"]}
         self._suppliers.resetRows(rows)
-        self.refreshHistory()
+        if self._supplier_id and self._supplier_id not in self._supplier_ids:
+            self._supplier_id = ""
+        self._emit()
 
     suppliers = Property(object, lambda self: self._suppliers, constant=True)
+    # ComboBox가 QAbstractListModel 리셋을 안정적으로 반영하지 못하므로 QVariantList로 구동.
+    supplierList = Property("QVariantList", lambda self: list(self._supplier_rows), notify=stateChanged)
     issues = Property(object, lambda self: self._issues, constant=True)
     history = Property(object, lambda self: self._history, constant=True)
     selectedSupplierId = Property(str, lambda self: self._supplier_id, notify=stateChanged)
     selectedSupplierIndex = Property(int, lambda self: next((index for index, row in enumerate(self._suppliers._rows) if row["id"] == self._supplier_id), 0), notify=stateChanged)
     productCount = Property(int, lambda self: self._product_count, notify=stateChanged)
     optionCount = Property(int, lambda self: self._option_count, notify=stateChanged)
+    validated = Property(bool, lambda self: self._validated, notify=stateChanged)
+    blockingCount = Property(int, lambda self: self._blocking_count, notify=stateChanged)
+    warningCount = Property(int, lambda self: self._warning_count, notify=stateChanged)
     warningAcknowledged = Property(bool, lambda self: self._warning_acknowledged, notify=stateChanged)
     busy = Property(bool, lambda self: self._busy, notify=stateChanged)
     destinationName = Property(str, lambda self: self._output_path.name if self._output_path else "", notify=stateChanged)

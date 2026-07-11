@@ -458,3 +458,89 @@ def test_discovery_emits_only_after_engine_close() -> None:
     worker.categories_found.connect(lambda _: close_state.append(engine.closed))
     worker.run()
     assert close_state == [True]
+
+
+def test_full_crawl_selects_all_categories_and_starts(monkeypatch) -> None:
+    from app.ui_qml.viewmodels.crawl import CrawlViewModel
+
+    monkeypatch.setattr("app.ui_qml.viewmodels.crawl.adapter_exists", lambda _: True)
+    monkeypatch.setattr(
+        "app.ui_qml.viewmodels.crawl.load_config",
+        lambda: SimpleNamespace(global_delay_seconds=3),
+    )
+    made: list = []
+    vm = CrawlViewModel(
+        app_view_model=AppViewModel(), supplier_loader=lambda: [supplier()],
+        worker_factories={"crawl": lambda request: made.append(FakeWorker(request)) or made[-1]},
+    )
+    vm.selectSupplier("s1")
+    vm._set_categories([
+        SimpleNamespace(category_id="c1", name="One", path="Root / One", children=[]),
+        SimpleNamespace(category_id="c2", name="Two", path="Root / Two", children=[]),
+    ])
+    # 전체 수집: 카테고리 선택 없이도 전부 선택되어 수집이 시작된다
+    assert vm.startFullCrawl() is True
+    assert len(made) == 1
+    assert {c[0] for c in made[0].request.categories} == {"c1", "c2"}
+
+
+def test_full_crawl_requires_supplier() -> None:
+    from app.ui_qml.viewmodels.crawl import CrawlViewModel
+
+    vm = CrawlViewModel(app_view_model=AppViewModel(), supplier_loader=lambda: [])
+    assert vm.startFullCrawl() is False
+    assert vm.fieldErrors["supplier"] == "도매처를 선택하세요."
+
+
+def test_refresh_auto_selects_first_supplier() -> None:
+    from app.ui_qml.viewmodels.crawl import CrawlViewModel
+
+    # 도매처가 있으면 첫 번째가 자동 선택되어 콤보에 보이는 것이 곧 선택된 것
+    vm = CrawlViewModel(app_view_model=AppViewModel(), supplier_loader=lambda: [supplier()])
+    assert vm.selectedSupplierId == "s1"
+
+    # 빈 목록이면 선택 없음
+    empty = CrawlViewModel(app_view_model=AppViewModel(), supplier_loader=lambda: [])
+    assert empty.selectedSupplierId == ""
+
+
+def test_crawl_combo_shows_supplier_added_after_screen_load(qt_app) -> None:
+    """앱을 빈 상태로 켠 뒤 도매처를 추가하면, 수집 콤보에 즉시 나타나고 선택된다.
+    (사용자 신고: 도매처를 등록했는데 수집에서 아무 도매처도 안 뜸)"""
+    from PySide6.QtCore import QUrl
+    from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent
+
+    from app.ui_qml.viewmodels.crawl import CrawlViewModel
+
+    qml_dir = Path(__file__).parents[2] / "app" / "ui_qml" / "qml"
+    box = {"items": []}  # 처음엔 도매처 없음
+    vm = CrawlViewModel(
+        app_view_model=AppViewModel(),
+        supplier_loader=lambda: list(box["items"]),
+    )
+
+    engine = QQmlApplicationEngine()
+    engine.addImportPath(str(qml_dir))
+    engine.rootContext().setContextProperty("TestCrawlVM", vm)
+    component = QQmlComponent(engine)
+    component.setData(
+        b'import QtQuick\nimport QtQuick.Controls.Basic\nimport "screens" as Screens\n'
+        b'ApplicationWindow { width: 900; height: 620; visible: true; '
+        b'Screens.CrawlScreen { anchors.fill: parent; viewModel: TestCrawlVM } }',
+        QUrl.fromLocalFile(str(qml_dir / "CrawlProbe.qml")),
+    )
+    window = component.create(engine.rootContext())
+    assert not component.errors(), component.errorString()
+    combo = window.findChild(QObject, "crawlSupplierCombo")
+    assert combo is not None
+    assert combo.property("count") == 0
+
+    # 도매처 등록 후 새로고침(마법사 저장/화면 진입 시 일어나는 것과 동일)
+    box["items"] = [supplier()]
+    vm.refreshSuppliers()
+    qt_app.processEvents()
+
+    assert combo.property("count") == 1
+    assert combo.property("currentIndex") == 0
+    assert combo.property("currentText") == "Korean Shop"
+    assert vm.selectedSupplierId == "s1"

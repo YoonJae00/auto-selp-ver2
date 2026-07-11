@@ -12,6 +12,9 @@ Item {
     objectName: "exportScreen"
     required property var viewModel
     readonly property int minimumContentWidth: 620
+    // 문제가 있을 때만 상세 목록을 펼친다 (필수 오류는 항상 펼침)
+    property bool showIssues: false
+
     FileDialog {
         id: exportFileDialog
         title: "Excel 내보내기"
@@ -32,41 +35,86 @@ Item {
             width: exportScroll.contentWidth
             spacing: 12
 
+            // ── 무엇을 내보낼지: 도매처 선택 → 자동 검사 ──
             GlassPanel {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 104
+                implicitHeight: exportScopeCol.implicitHeight + 32
                 ColumnLayout {
-                    anchors.fill: parent; anchors.margins: 14
-                    Text { text: "1. 범위"; color: Ui.Theme.text; font.bold: true; font.pixelSize: 16 }
+                    id: exportScopeCol
+                    anchors { top: parent.top; left: parent.left; right: parent.right; margins: 16 }
+                    spacing: 12
+
+                    Text { text: "어느 도매처의 상품대장을 내보낼까요?"; color: Ui.Theme.text; font.bold: true; font.pixelSize: 16 }
+
                     RowLayout {
+                        Layout.fillWidth: true
                         ComboBox {
                             id: supplierFilter
                             objectName: "exportSupplierFilter"
-                            Layout.preferredWidth: 260
-                            model: root.viewModel.suppliers
+                            Layout.preferredWidth: 280
+                            model: root.viewModel.supplierList
                             textRole: "name"; valueRole: "id"
                             Binding on currentIndex { value: root.viewModel.selectedSupplierIndex }
                             Accessible.name: "내보낼 도매처"
-                            onActivated: root.viewModel.setSupplierId(currentValue)
+                            // 도매처를 고르면 곧바로 자동 검사 — 별도 '검증' 버튼 불필요
+                            onActivated: {
+                                root.showIssues = false
+                                root.viewModel.setSupplierId(currentValue)
+                                if (currentValue)
+                                    root.viewModel.validateScope()
+                            }
                         }
-                        AppButton { objectName: "validateExportButton"; text: "검증"; enabled: !root.viewModel.busy; onClicked: root.viewModel.validateScope() }
                         Item { Layout.fillWidth: true }
-                        Text { text: "상품 " + root.viewModel.productCount + " · 옵션 " + root.viewModel.optionCount; color: Ui.Theme.textMuted }
+                        Text {
+                            visible: root.viewModel.validated
+                            text: "상품 " + root.viewModel.productCount + "개 · 옵션 " + root.viewModel.optionCount + "개"
+                            color: Ui.Theme.textMuted
+                        }
                     }
-                }
-            }
 
-            GlassPanel {
-                Layout.fillWidth: true
-                Layout.preferredHeight: 230
-                ColumnLayout {
-                    anchors.fill: parent; anchors.margins: 14
-                    Text { text: "2. 검증"; color: Ui.Theme.text; font.bold: true; font.pixelSize: 16 }
-                    ValidationList { objectName: "exportValidationList"; Layout.fillWidth: true; Layout.fillHeight: true; model: root.viewModel.issues; onIssueActivated: index => root.viewModel.selectIssue(index) }
+                    // 자동 검사 결과를 한 줄로 — 개발자식 '검증' 대신 사용자 언어
+                    RowLayout {
+                        Layout.fillWidth: true
+                        visible: root.viewModel.validated
+                        StatusBadge {
+                            objectName: "exportStatusBadge"
+                            text: root.viewModel.blockingCount > 0
+                                    ? "필수 항목 누락 " + root.viewModel.blockingCount + "건"
+                                    : root.viewModel.warningCount > 0
+                                        ? "권장 항목 누락 " + root.viewModel.warningCount + "건"
+                                        : "모든 항목이 채워졌습니다"
+                            variant: root.viewModel.blockingCount > 0 ? "danger"
+                                     : root.viewModel.warningCount > 0 ? "warning" : "success"
+                        }
+                        Text {
+                            Layout.fillWidth: true
+                            visible: root.viewModel.blockingCount > 0
+                            text: "상품명·코드·상태가 빠진 상품이 있어 내보낼 수 없습니다. 수집 화면에서 다시 수집하세요."
+                            color: Ui.Theme.textMuted; font.pixelSize: 12; wrapMode: Text.Wrap
+                        }
+                        AppButton {
+                            visible: (root.viewModel.blockingCount + root.viewModel.warningCount) > 0
+                            text: root.showIssues ? "접기" : "자세히"
+                            onClicked: root.showIssues = !root.showIssues
+                        }
+                    }
+
+                    // 문제 상세 (필요할 때만)
+                    ValidationList {
+                        objectName: "exportValidationList"
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 180
+                        visible: root.viewModel.validated && (root.showIssues || root.viewModel.blockingCount > 0)
+                        model: root.viewModel.issues
+                        onIssueActivated: index => root.viewModel.selectIssue(index)
+                    }
+
+                    // 경고만 있을 때: 확인하고 진행 (오류는 확인으로 넘길 수 없음)
                     CheckBox {
                         id: warningAcknowledgement
                         objectName: "exportWarningAcknowledgement"
-                        text: "경고를 확인했으며 계속 진행합니다"
+                        visible: root.viewModel.validated && root.viewModel.warningCount > 0 && root.viewModel.blockingCount === 0
+                        text: "권장 항목이 빠졌지만 이대로 내보냅니다"
                         Accessible.name: text
                         onClicked: root.viewModel.acknowledgeWarnings(checked)
                         Binding on checked { value: root.viewModel.warningAcknowledged }
@@ -74,25 +122,50 @@ Item {
                 }
             }
 
+            // ── 저장 & 내보내기 ──
             GlassPanel {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 112
+                implicitHeight: exportSaveCol.implicitHeight + 32
                 ColumnLayout {
-                    anchors.fill: parent; anchors.margins: 14
-                    Text { text: "3. 대상"; color: Ui.Theme.text; font.bold: true; font.pixelSize: 16 }
+                    id: exportSaveCol
+                    anchors { top: parent.top; left: parent.left; right: parent.right; margins: 16 }
+                    spacing: 10
                     RowLayout {
-                        Text { Layout.fillWidth: true; text: root.viewModel.destinationName || "저장 위치를 선택하세요"; color: Ui.Theme.text; elide: Text.ElideMiddle }
+                        Layout.fillWidth: true
+                        Text { text: "저장 위치"; color: Ui.Theme.textMuted; font.pixelSize: 12 }
+                        Text {
+                            Layout.fillWidth: true
+                            text: root.viewModel.destinationName || "도매처를 선택하면 기본 위치가 정해집니다"
+                            color: Ui.Theme.text; elide: Text.ElideMiddle
+                        }
                         AppButton {
                             objectName: "chooseExportFileButton"
-                            text: "위치 선택"
+                            text: "변경"
+                            enabled: root.viewModel.validated
                             onClicked: {
                                 exportFileDialog.selectedFile = root.viewModel.dialogSelectedFile
                                 exportFileDialog.open()
                             }
                         }
-                        AppButton { objectName: "startExportButton"; text: root.viewModel.busy ? "내보내는 중" : "내보내기"; enabled: root.viewModel.canExport; onClicked: root.viewModel.export() }
                     }
-                    Text { visible: text.length > 0; text: root.viewModel.fieldErrors.form || ""; color: Ui.Theme.dangerForeground; Accessible.role: Accessible.Alert }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        AppButton {
+                            objectName: "startExportButton"
+                            text: root.viewModel.busy ? "내보내는 중…" : "엑셀로 내보내기"
+                            selected: true
+                            enabled: root.viewModel.canExport
+                            onClicked: root.viewModel.export()
+                        }
+                        Text {
+                            Layout.fillWidth: true
+                            visible: text.length > 0
+                            text: root.viewModel.fieldErrors.form || ""
+                            color: Ui.Theme.dangerForeground
+                            Accessible.role: Accessible.Alert
+                            wrapMode: Text.Wrap
+                        }
+                    }
                 }
             }
 

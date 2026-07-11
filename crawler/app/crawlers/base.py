@@ -38,6 +38,7 @@ class BaseAdapter:
         self,
         category_id: str,
         max_pages: int,
+        category_url: str | None = None,
     ) -> AsyncIterator[CrawlResult]:
         raise NotImplementedError
         if False:
@@ -46,6 +47,7 @@ class BaseAdapter:
     async def stock_check(
         self,
         category_id: str | None = None,
+        category_url: str | None = None,
     ) -> AsyncIterator[StockSnapshotData]:
         raise NotImplementedError
         if False:
