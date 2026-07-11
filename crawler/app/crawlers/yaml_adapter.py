@@ -115,7 +115,7 @@ CART_BUTTON_SELECTOR = (
     "input[type='image'][src*='cart'], input[type='image'][src*='buy'], "
     "img[src*='cart'], img[src*='buy'], img[src*='order'], img[src*='purchase']"
 )
-SOLDOUT_TEXT_RE = re.compile(r"품절|매진|완판|sold\s*out|재고\s*없", re.IGNORECASE)
+SOLDOUT_TEXT_RE = re.compile(r"품절(?!\s*아님)|매진|완판|sold\s*out|재고\s*없", re.IGNORECASE)
 
 
 def is_soldout_text(text: str | None) -> bool:
@@ -158,7 +158,8 @@ def _is_placeholder_src(value: Any) -> bool:
     return not url or url.lower().startswith("data:") or bool(_JUNK_IMAGE_RE.search(url))
 
 
-def _supported_image_url(value: Any) -> str | None:
+def _supported_image_url(value: Any, base_url: str = "") -> str | None:
+    """유효한 이미지 URL이면 base_url 기준 절대 URL로 반환. src 속성값은 보통 상대경로다."""
     if not isinstance(value, str):
         return None
     url = value.strip()
@@ -170,12 +171,14 @@ def _supported_image_url(value: Any) -> str | None:
     last_segment = path.rsplit("/", 1)[-1]
     # Accept known image extensions, or extensionless CDN/resizer URLs (no "." in the
     # filename part) — collected values already come from <img> src, so they are images.
-    return url if path.endswith(_IMAGE_EXT) or "." not in last_segment else None
+    if not (path.endswith(_IMAGE_EXT) or "." not in last_segment):
+        return None
+    return urljoin(base_url, url)
 
 
-def _image_values(value: Any) -> list[str]:
+def _image_values(value: Any, base_url: str = "") -> list[str]:
     values = value if isinstance(value, list) else ([value] if value else [])
-    return [img for img in (_supported_image_url(item) for item in values) if img]
+    return [img for img in (_supported_image_url(item, base_url) for item in values) if img]
 
 
 def _image_key(url: str, base_url: str = "") -> str:
@@ -580,12 +583,12 @@ class YAMLAdapter(BaseAdapter):
             supply_price = _extract_number(str(supply_price_raw)) if isinstance(supply_price_raw, str) else supply_price_raw
 
             main_image = fields.get("main_image_url")
-            main_image = _supported_image_url(main_image)
+            main_image = _supported_image_url(main_image, page.url)
 
-            detail_images = _without_images(_image_values(fields.get("detail_content")), main_image, page.url)
+            detail_images = _without_images(_image_values(fields.get("detail_content"), page.url), main_image, page.url)
             detail = ",".join(detail_images) or None
 
-            extra_images = _without_images(_image_values(fields.get("extra_image_urls")), main_image, page.url)
+            extra_images = _without_images(_image_values(fields.get("extra_image_urls"), page.url), main_image, page.url)
 
             raw_meta: dict[str, Any] = {
                 "url": url,
@@ -723,7 +726,9 @@ class YAMLAdapter(BaseAdapter):
 
     async def _extract_options(self, page, product_code: str, base_price: int | None) -> list[StandardOption]:
         config = self.adapter.adapter.options
-        if config.detection == "none" or not config.groups:
+        # 옵션 선택자가 매핑돼 있으면 수집한다. detection 플래그는 groups와 중복이라 게이트로 쓰지 않는다
+        # (LLM 생성 YAML이 detection: none으로 남겨두는 바람에 매핑된 옵션이 통째로 누락됐다).
+        if not any(group.values_selector.strip() for group in config.groups):
             return []
 
         if config.dependent_options.enabled:
@@ -767,7 +772,9 @@ class YAMLAdapter(BaseAdapter):
                     option_supply = parsed_text.supply_price
                 image_url = None
                 if config.option_image_url:
-                    image_url = await self._extract_field(page, config.option_image_url)
+                    image_url = _supported_image_url(
+                        await self._extract_field(page, config.option_image_url), page.url
+                    )
 
                 stock = None
                 if config.option_stock_quantity:
