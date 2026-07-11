@@ -150,42 +150,106 @@ Item {
                             }
                         }
                     }
-                    ColumnLayout {
+                    Flickable {
+                        contentHeight: analyzeForm.implicitHeight
+                        clip: true
+                        ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+                        ColumnLayout {
+                        id: analyzeForm
+                        width: parent.width
+                        spacing: 8
                         Text { text: "분석 결과"; color: Ui.Theme.text; font.pixelSize: 20; font.weight: Font.Bold }
-                        Text { text: "카테고리 " + (root.viewModel.probeSummary.categoryCount || 0) + "개 · " + (root.viewModel.probeSummary.encoding || "-"); color: Ui.Theme.textMuted }
-                        ListView {
+
+                        // 수집할 카테고리
+                        Text {
                             Layout.fillWidth: true
-                            Layout.preferredHeight: 120
-                            clip: true
-                            model: root.viewModel.probeSummary.categories || []
-                            delegate: RowLayout {
-                                required property var modelData
-                                width: ListView.view.width
-                                spacing: 6
-                                Text {
-                                    Layout.fillWidth: true
-                                    text: modelData.name || modelData.url || ""
-                                    color: Ui.Theme.text
-                                    elide: Text.ElideRight
-                                    verticalAlignment: Text.AlignVCenter
-                                }
-                                ToolButton {
-                                    text: "✕"
-                                    flat: true
-                                    enabled: !root.viewModel.busy
-                                    onClicked: root.viewModel.setCategoryExcluded(modelData.url || modelData.name, true)
-                                    ToolTip.text: "이 카테고리를 목록에서 제거"
-                                    ToolTip.visible: hovered
-                                    ToolTip.delay: 400
-                                    Accessible.name: "카테고리 제거: " + (modelData.name || modelData.url || "")
+                            text: "수집할 카테고리 " + (root.viewModel.probeSummary.categoryCount || 0) + "개 · " + (root.viewModel.probeSummary.encoding || "-") + " — ✕로 제외"
+                            color: Ui.Theme.textMuted
+                            font.pixelSize: 12
+                            wrapMode: Text.Wrap
+                        }
+                        Components.GlassPanel {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 200
+                            color: Ui.Theme.surfaceRaised
+                            ListView {
+                                id: categoryList
+                                anchors.fill: parent
+                                anchors.margins: 6
+                                clip: true
+                                model: root.viewModel.probeSummary.categories || []
+                                ScrollBar.vertical: ScrollBar { policy: ScrollBar.AlwaysOn }
+                                delegate: RowLayout {
+                                    required property var modelData
+                                    width: categoryList.width - (categoryList.ScrollBar.vertical.visible ? categoryList.ScrollBar.vertical.width : 0)
+                                    spacing: 4
+                                    Text {
+                                        Layout.fillWidth: true
+                                        text: modelData.name || modelData.url || ""
+                                        color: Ui.Theme.text
+                                        font.pixelSize: 12
+                                        elide: Text.ElideRight
+                                        verticalAlignment: Text.AlignVCenter
+                                    }
+                                    ToolButton {
+                                        implicitWidth: 24
+                                        implicitHeight: 24
+                                        text: "✕"
+                                        flat: true
+                                        enabled: !root.viewModel.busy
+                                        onClicked: root.viewModel.setCategoryExcluded(modelData.url || modelData.name, true)
+                                        ToolTip.text: "이 카테고리를 목록에서 제거"
+                                        ToolTip.visible: hovered
+                                        ToolTip.delay: 400
+                                        Accessible.name: "카테고리 제거: " + (modelData.name || modelData.url || "")
+                                    }
                                 }
                             }
                         }
-                        ListView {
-                            Layout.fillWidth: true; Layout.fillHeight: true; clip: true
-                            model: root.viewModel.probeSummary.sampleProducts || []
-                            delegate: Text { required property var modelData; width: ListView.view.width; text: modelData.name || modelData.url || ""; color: Ui.Theme.text; elide: Text.ElideRight }
+
+                        // 샘플 상품
+                        Text {
+                            Layout.fillWidth: true
+                            text: "샘플 상품 " + ((root.viewModel.probeSummary.sampleProducts || []).length) + "개 — 프로브가 발견한 상품입니다. 3단계 필드 매핑 검증에 사용됩니다"
+                            color: Ui.Theme.textMuted
+                            font.pixelSize: 12
+                            wrapMode: Text.Wrap
                         }
+                        Components.GlassPanel {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 110
+                            color: Ui.Theme.surfaceRaised
+                            Text {
+                                anchors.fill: parent
+                                anchors.margins: 12
+                                visible: (root.viewModel.probeSummary.sampleProducts || []).length === 0
+                                text: "샘플 상품을 찾지 못했습니다. 아래 '수동 보정'으로 전체상품 링크를 지정하거나, 1단계에서 샘플 상품 URL을 확인하세요."
+                                color: Ui.Theme.textMuted
+                                font.pixelSize: 12
+                                wrapMode: Text.Wrap
+                                verticalAlignment: Text.AlignVCenter
+                            }
+                            ListView {
+                                id: sampleList
+                                anchors.fill: parent
+                                anchors.margins: 6
+                                clip: true
+                                visible: (root.viewModel.probeSummary.sampleProducts || []).length > 0
+                                model: root.viewModel.probeSummary.sampleProducts || []
+                                ScrollBar.vertical: ScrollBar { policy: ScrollBar.AlwaysOn }
+                                delegate: Text {
+                                    required property var modelData
+                                    width: sampleList.width - (sampleList.ScrollBar.vertical.visible ? sampleList.ScrollBar.vertical.width : 0)
+                                    height: 22
+                                    text: (modelData.name && modelData.name !== "(이름 없음)") ? modelData.name : (modelData.url || modelData.name || "")
+                                    color: Ui.Theme.text
+                                    font.pixelSize: 12
+                                    elide: Text.ElideMiddle
+                                    verticalAlignment: Text.AlignVCenter
+                                }
+                            }
+                        }
+
                         // 수동 보정 섹션 (선택사항)
                         ColumnLayout {
                             Layout.fillWidth: true
@@ -203,20 +267,30 @@ Item {
                                 font.pixelSize: 11
                                 wrapMode: Text.Wrap
                             }
+                            // 전체상품 링크 지정
                             RowLayout {
                                 Layout.fillWidth: true
                                 spacing: 8
-                                // 전체상품 링크 지정
-                                Components.AppButton {
-                                    text: "브라우저에서 전체상품 링크 지정"
-                                    enabled: !root.viewModel.busy && !root.viewModel.allProductsAutoDetected
-                                    onClicked: root.viewModel.pickAllProducts()
-                                    ToolTip.text: "사이트의 '전체상품' 메뉴를 브라우저에서 직접 클릭해 지정합니다."
-                                    ToolTip.visible: hovered
-                                    ToolTip.delay: 400
-                                    Accessible.name: text
-                                    Accessible.description: ToolTip.text
-                                    Accessible.role: Accessible.Button
+                                Rectangle {
+                                    Layout.fillWidth: true
+                                    implicitHeight: pickAllProductsBtn.implicitHeight
+                                    radius: Ui.Theme.radiusSmall
+                                    color: Qt.alpha(Ui.Theme.surfaceRaised, 0.6)
+                                    border.color: Ui.Theme.border
+                                    border.width: 1
+                                    Components.AppButton {
+                                        id: pickAllProductsBtn
+                                        anchors.fill: parent
+                                        text: "브라우저에서 전체상품 링크 지정"
+                                        enabled: !root.viewModel.busy && !root.viewModel.allProductsAutoDetected
+                                        onClicked: root.viewModel.pickAllProducts()
+                                        ToolTip.text: "사이트의 '전체상품' 메뉴를 브라우저에서 직접 클릭해 지정합니다."
+                                        ToolTip.visible: hovered
+                                        ToolTip.delay: 400
+                                        Accessible.name: text
+                                        Accessible.description: ToolTip.text
+                                        Accessible.role: Accessible.Button
+                                    }
                                 }
                                 Text {
                                     visible: root.viewModel.allProductsAutoDetected
@@ -227,9 +301,25 @@ Item {
                                     verticalAlignment: Text.AlignVCenter
                                     Accessible.name: "전체상품 메뉴 자동 감지됨"
                                 }
-                                Item { Layout.fillWidth: true }
-                                // 카테고리 메뉴 지정
+                            }
+                            Text {
+                                Layout.fillWidth: true
+                                text: "'전체상품' 페이지가 자동 감지되지 않았을 때 직접 지정"
+                                color: Ui.Theme.textMuted
+                                font.pixelSize: 11
+                                wrapMode: Text.Wrap
+                            }
+                            // 카테고리 메뉴 지정
+                            Rectangle {
+                                Layout.fillWidth: true
+                                implicitHeight: pickCategoryMenuBtn.implicitHeight
+                                radius: Ui.Theme.radiusSmall
+                                color: Qt.alpha(Ui.Theme.surfaceRaised, 0.6)
+                                border.color: Ui.Theme.border
+                                border.width: 1
                                 Components.AppButton {
+                                    id: pickCategoryMenuBtn
+                                    anchors.fill: parent
                                     text: "브라우저에서 카테고리 메뉴 지정"
                                     enabled: !root.viewModel.busy
                                     onClicked: root.viewModel.pickCategoryMenu()
@@ -240,6 +330,13 @@ Item {
                                     Accessible.description: ToolTip.text
                                     Accessible.role: Accessible.Button
                                 }
+                            }
+                            Text {
+                                Layout.fillWidth: true
+                                text: "카테고리 메뉴 항목 1개를 클릭하면 AI가 메뉴 구조를 파악하는 힌트로 사용"
+                                color: Ui.Theme.textMuted
+                                font.pixelSize: 11
+                                wrapMode: Text.Wrap
                             }
                         }
                         // 주 액션
@@ -268,6 +365,7 @@ Item {
                                 onClicked: root.viewModel.cancelGenerate()
                                 Accessible.name: text
                             }
+                        }
                         }
                     }
                     ColumnLayout {
@@ -434,8 +532,12 @@ Item {
                             Components.AppButton { text: "검증 실행"; enabled: !root.viewModel.busy; onClicked: root.viewModel.testAll() }
                             Components.AppButton {
                                 visible: Boolean(root.viewModel.saveWarning.allowContinue)
-                                text: "경고 확인 후 계속"
-                                onClicked: root.viewModel.acknowledgeSaveWarning()
+                                text: "확인하고 저장"
+                                enabled: !root.viewModel.busy
+                                onClicked: {
+                                    root.viewModel.acknowledgeSaveWarning()
+                                    if (root.viewModel.save() && root.toastHost) root.toastHost.showMessage("쇼핑몰이 등록되었습니다", "info")
+                                }
                             }
                             Components.AppButton { text: "저장하고 도매처 등록"; selected: true; enabled: !root.viewModel.busy; onClicked: { if (root.viewModel.save() && root.toastHost) root.toastHost.showMessage("쇼핑몰이 등록되었습니다", "info") } }
                         }

@@ -280,7 +280,10 @@ def test_crawl_screen_scrolls_and_swaps_start_cancel_controls() -> None:
     assert 'objectName: "crawlCancelButton"' in qml
     assert "visible: !root.viewModel.busy" in qml
     assert "visible: root.viewModel.busy" in qml
-    assert "implicitHeight: root.compact ? 760" in qml
+    assert "implicitHeight: (root.compact ? 760" in qml
+    # 카테고리 선택 섹션을 펼치면 트리가 보이도록 전체 높이가 늘어나야 한다
+    assert "categoryModeToggle.checked ? 260 : 0" in qml
+    assert "Layout.minimumHeight: 220" in qml
 
 
 class FakeSession:
@@ -544,3 +547,19 @@ def test_crawl_combo_shows_supplier_added_after_screen_load(qt_app) -> None:
     assert combo.property("currentIndex") == 0
     assert combo.property("currentText") == "Korean Shop"
     assert vm.selectedSupplierId == "s1"
+
+
+def test_list_model_properties_exposed_as_qobject() -> None:
+    """Property(object)로 노출한 QAbstractListModel은 QML ListView가 모델로 인식하지
+    못한다("Model size of -1", count 0). QObject* 타입으로 노출돼야 한다."""
+    from app.ui_qml.viewmodels.crawl import CrawlViewModel
+    from app.ui_qml.viewmodels.export import ExportViewModel
+
+    for cls, names in ((CrawlViewModel, ("suppliers", "categories", "results")),
+                       (ExportViewModel, ("suppliers", "issues", "history"))):
+        meta = cls.staticMetaObject
+        for name in names:
+            idx = meta.indexOfProperty(name)
+            assert idx >= 0, f"{cls.__name__}.{name} property missing"
+            type_name = meta.property(idx).typeName()
+            assert type_name == "QObject*", f"{cls.__name__}.{name} is {type_name}, expected QObject*"

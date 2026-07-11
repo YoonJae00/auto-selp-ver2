@@ -141,3 +141,45 @@ def test_validate_export_scope_none_means_all(tmp_path):
     assert v.product_count == 1
     assert v.blocking_count == 0        # 예전엔 None==비교로 0개→blocking=1 오판
     s.close()
+
+
+def test_entry_category_ids_unique_for_makeshop_type_suffix() -> None:
+    """xcode=NNN&type=O 형태에서 예전 방식(마지막 = 뒤)은 모든 id가 'O'로 겹쳐
+    선택/수집이 1개 카테고리로 붕괴했다. 첫 파라미터 값으로 고유 id를 얻어야 한다."""
+    import asyncio
+
+    adapter = YAMLAdapter.__new__(YAMLAdapter)
+    adapter.adapter = SimpleNamespace(
+        adapter=SimpleNamespace(
+            categories=SimpleNamespace(
+                entries=[
+                    SimpleNamespace(name="EDX", url="/shop/shopbrand.html?xcode=024&type=O"),
+                    SimpleNamespace(name="ELC", url="/shop/shopbrand.html?xcode=026&type=O"),
+                    SimpleNamespace(name="MIDEER", url="/shop/shopbrand.html?xcode=057&type=O"),
+                ]
+            )
+        )
+    )
+    result = asyncio.run(adapter.discover_categories())
+    ids = [e.category_id for e in result]
+    assert ids == ["024", "026", "057"]
+    assert len(set(ids)) == 3
+
+
+def test_entry_category_ids_deduped_by_url_on_collision() -> None:
+    import asyncio
+
+    adapter = YAMLAdapter.__new__(YAMLAdapter)
+    adapter.adapter = SimpleNamespace(
+        adapter=SimpleNamespace(
+            categories=SimpleNamespace(
+                entries=[
+                    SimpleNamespace(name="A", url="http://x/list.html"),
+                    SimpleNamespace(name="B", url="http://y/list.html"),  # 같은 마지막 조각
+                ]
+            )
+        )
+    )
+    result = asyncio.run(adapter.discover_categories())
+    ids = [e.category_id for e in result]
+    assert len(set(ids)) == 2  # 충돌 시 URL로 폴백해 유일성 보장

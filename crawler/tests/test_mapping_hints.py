@@ -213,3 +213,28 @@ def test_locked_all_products_hint_sets_url_and_available() -> None:
     categories = data["adapter"]["categories"]
     assert categories["all_products"]["url"] == "https://example.com/all-products"
     assert categories["all_products"]["available"] is True
+
+
+def test_locked_menu_selector_hint_survives_navigation_none() -> None:
+    # _strip_empty_selectors가 navigation: null로 비워둔 YAML에 잠금 힌트를 적용해도
+    # "must be a dict"로 죽지 않아야 한다 (2단계 '카테고리 메뉴 지정' 후 생성 막힘 회귀).
+    data = _base_yaml_dict()
+    data["adapter"]["categories"] = {"mode": "tree", "navigation": None}
+    apply_locked_hints_to_yaml_dict(data, [
+        MappingHint("category", "adapter.categories.navigation.menu_selector", "#gnb li", locked=True)
+    ])
+    assert data["adapter"]["categories"]["navigation"]["menu_selector"] == "#gnb li"
+
+
+def test_locked_hints_survive_none_containers() -> None:
+    # LLM이 product:/options:/listing: 를 빈 값(null)으로 내보낸 경우에도 적용돼야 한다.
+    data = {"adapter": {"name": "t", "base_url": "https://e.com",
+                        "product": None, "options": None, "listing": None}}
+    apply_locked_hints_to_yaml_dict(data, [
+        MappingHint("product", "adapter.product.raw_product_name", ".name", locked=True),
+        MappingHint("option", "adapter.options.groups.0.values_selector", "#opt option", locked=True),
+        MappingHint("listing", "adapter.listing.product_link", "a.prd", locked=True),
+    ])
+    assert data["adapter"]["product"]["raw_product_name"]["selector"] == ".name"
+    assert data["adapter"]["options"]["groups"][0]["values_selector"] == "#opt option"
+    assert data["adapter"]["listing"]["product_link"]["selector"] == "a.prd"

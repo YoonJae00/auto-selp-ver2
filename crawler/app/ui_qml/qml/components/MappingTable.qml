@@ -38,8 +38,8 @@ ListView {
         property bool urlMode: urlPattern !== "" || urlParam !== ""
         readonly property bool hasTestValue: testValue !== ""
         // 상태 칩: "매핑됨"은 실제 값이 들어왔을 때만. 선택자만 있으면 "미검증".
-        readonly property string statusVariant: hasTestValue ? (testOk ? "success" : "danger") : (status === "ok" ? "neutral" : "warning")
-        readonly property string statusLabel: hasTestValue ? (testOk ? "매핑됨" : "값 오류") : (status === "ok" ? "미검증" : "비어있음")
+        readonly property string statusVariant: hasTestValue ? (testOk ? "success" : "danger") : (status === "ok" ? "neutral" : (status === "optional" ? "neutral" : "warning"))
+        readonly property string statusLabel: hasTestValue ? (testOk ? "매핑됨" : "값 오류") : (status === "ok" ? "미검증" : (status === "optional" ? "선택사항" : "비어있음"))
         function publishGeometry() {
             if (index === 0) {
                 root.firstRowHeight = height

@@ -154,6 +154,19 @@ def test_mapping_rows_hide_option_price_row_but_keep_option_value_row() -> None:
     assert option["selector"] == ".opt"
 
 
+def test_mapping_row_unmapped_option_is_optional_not_missing() -> None:
+    # 옵션 그룹이 없으면 옵션 행은 오류('missing')가 아니라 선택사항('optional')이어야 한다.
+    adapter = Adapter.model_validate({
+        "adapter": {
+            "name": "Shop",
+            "base_url": "https://shop.example",
+            "product": {"supplier_product_code": {"selector": ".code"}},
+        }
+    })
+    option_row = next(r for r in get_product_field_mappings(adapter) if r["key"] == "option_values")
+    assert option_row["status"] == "optional"
+
+
 def test_mapping_row_url_param_marks_ok() -> None:
     adapter = Adapter.model_validate({
         "adapter": {

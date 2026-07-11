@@ -4,7 +4,7 @@ import asyncio
 import logging
 import re
 from typing import Any, AsyncIterator
-from urllib.parse import urljoin
+from urllib.parse import parse_qsl, urljoin, urlparse
 
 from app.analyzer.adapter_schema import (
     Adapter,
@@ -13,7 +13,11 @@ from app.analyzer.adapter_schema import (
     OptionsConfig,
     extract_url_value,
 )
-from app.analyzer.option_text_parser import parse_option_text, _legacy_split_option_text_price
+from app.analyzer.option_text_parser import (
+    parse_option_text,
+    is_option_placeholder,
+    _legacy_split_option_text_price,
+)
 from app.credentials.store import load_supplier_credentials
 from app.crawlers.base import BaseAdapter, CategoryEntry, CrawlResult, StockSnapshotData
 from app.crawlers.engine import PlaywrightEngine
@@ -58,6 +62,111 @@ def _extract_signed_number(text: str | None) -> int | None:
 
 def _split_option_text_price(text: str | None) -> tuple[str | None, int | None]:
     return _legacy_split_option_text_price(text)
+
+
+def _category_id_from_url(url: str, fallback: str = "") -> str:
+    """카테고리 URL에서 안정적인 id를 뽑는다: 첫 쿼리 파라미터 값(xcode=024&type=O → "024"),
+    없으면 마지막 경로 조각, 없으면 fallback. 예전의 '마지막 = 뒤' 방식은 &type=O 같은
+    꼬리 파라미터를 집어 모든 카테고리 id가 'O'로 겹쳤다 (선택/수집이 id 세트 기반이라 전멸)."""
+    parsed = urlparse(url)
+    pairs = parse_qsl(parsed.query)
+    if pairs and pairs[0][1]:
+        return pairs[0][1]
+    segment = parsed.path.rstrip("/").rsplit("/", 1)[-1]
+    return segment or fallback or url
+
+
+def _option_price_at(
+    price_values: list[int | None],
+    total_count: int,
+    raw_idx: int,
+    accepted_idx: int,
+) -> int | None:
+    """옵션 가격 배열에서 이 옵션에 해당하는 값을 고른다.
+
+    price_values(option_price_delta multiple)는 보통 placeholder 포함 '전체 요소'에서
+    나오는데, 옵션 순회는 placeholder를 걸러 accepted_idx로 센다. 개수가 같으면 원소
+    위치(raw_idx)로 집어야 가격이 한 칸씩 밀리지 않는다. 개수가 다르면 accepted_idx 폴백.
+    """
+    idx = raw_idx if len(price_values) == total_count else accepted_idx
+    return price_values[idx] if 0 <= idx < len(price_values) else None
+
+
+def _first_nonempty_str(*values: Any) -> str | None:
+    for value in values:
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _first_number(*values: Any) -> int | None:
+    for value in values:
+        if isinstance(value, int):
+            return value
+        if value is not None:
+            number = _extract_number(str(value))
+            if number is not None:
+                return number
+    return None
+
+
+def _fill_from_structured(
+    name: str | None,
+    image: str | None,
+    price: int | None,
+    sd: dict[str, Any],
+) -> tuple[str | None, str | None, int | None]:
+    """추출값이 비었을 때만 구조화 데이터(og meta / JSON-LD Product)로 채운다. 순수 함수.
+
+    이름: og:title → JSON-LD name. 이미지: og:image → JSON-LD image(검증은 호출부).
+    가격: JSON-LD offers.price → meta product:price:amount.
+    """
+    if not (name or "").strip():
+        name = _first_nonempty_str(sd.get("og_title"), sd.get("ld_name")) or name
+    if not (image or "").strip():
+        image = _first_nonempty_str(sd.get("og_image"), sd.get("ld_image")) or image
+    if price is None:
+        price = _first_number(sd.get("ld_price"), sd.get("og_price"))
+    return name, image, price
+
+
+# 상세 페이지의 og meta 3종 + JSON-LD Product(name/image/offers.price)를 한 번에 읽는다.
+_STRUCTURED_DATA_JS = r"""
+() => {
+  const meta = (p) => {
+    const el = document.querySelector(`meta[property='${p}']`);
+    return el ? (el.getAttribute('content') || null) : null;
+  };
+  let ldName = null, ldImage = null, ldPrice = null;
+  for (const s of document.querySelectorAll("script[type='application/ld+json']")) {
+    let data;
+    try { data = JSON.parse(s.textContent); } catch (e) { continue; }
+    const nodes = Array.isArray(data) ? data : (data['@graph'] || [data]);
+    for (const node of nodes) {
+      if (!node || typeof node !== 'object') continue;
+      const t = node['@type'];
+      const isProduct = t === 'Product' || (Array.isArray(t) && t.includes('Product'));
+      if (!isProduct) continue;
+      if (!ldName && node.name) ldName = String(node.name);
+      if (!ldImage && node.image) {
+        const img = Array.isArray(node.image) ? node.image[0] : node.image;
+        ldImage = (img && typeof img === 'object') ? (img.url || null) : img;
+      }
+      let offers = node.offers;
+      if (Array.isArray(offers)) offers = offers[0];
+      if (!ldPrice && offers && offers.price != null) ldPrice = String(offers.price);
+    }
+  }
+  return {
+    og_title: meta('og:title'),
+    og_image: meta('og:image'),
+    og_price: meta('product:price:amount'),
+    ld_name: ldName,
+    ld_image: ldImage ? String(ldImage) : null,
+    ld_price: ldPrice,
+  };
+}
+"""
 
 
 def _apply_transform(value: str | None, transform: str) -> str | int | None:
@@ -384,16 +493,22 @@ class YAMLAdapter(BaseAdapter):
         # 마법사가 확정해 저장한 카테고리 목록이 있으면 그대로 사용한다 (menu_selector로
         # 매번 다시 걷지 않음 — 사용자가 화면에서 본 것과 정확히 일치).
         if getattr(config, "entries", None):
-            return [
-                CategoryEntry(
-                    category_id=(item.url.rsplit("=", 1)[-1].rsplit("/", 1)[-1] or item.name),
+            entries: list[CategoryEntry] = []
+            seen_ids: set[str] = set()
+            for item in config.entries:
+                if not item.url:
+                    continue
+                cat_id = _category_id_from_url(item.url, item.name)
+                if cat_id in seen_ids:
+                    cat_id = item.url  # id 충돌 시 URL로 유일성 보장 — 중복 id는 선택/수집에서 통째로 누락됨
+                seen_ids.add(cat_id)
+                entries.append(CategoryEntry(
+                    category_id=cat_id,
                     name=item.name or item.url,
                     path=item.name or item.url,
                     url=item.url,
-                )
-                for item in config.entries
-                if item.url
-            ]
+                ))
+            return entries
         if config.mode == "all_products" or (config.mode == "hybrid" and config.all_products.available):
             if config.all_products.url:
                 return [CategoryEntry(
@@ -429,7 +544,7 @@ class YAMLAdapter(BaseAdapter):
             if not href:
                 continue
             url = urljoin(self.adapter.adapter.base_url, href)
-            cat_id = href.split("=")[-1].split("/")[-1] or name
+            cat_id = _category_id_from_url(url, name)
             path = f"{parent_path} > {name}" if parent_path else name
 
             entry = CategoryEntry(category_id=cat_id, name=name, path=path, url=url)
@@ -463,7 +578,7 @@ class YAMLAdapter(BaseAdapter):
             if not href:
                 continue
             url = urljoin(self.adapter.adapter.base_url, href)
-            cat_id = href.split("=")[-1].split("/")[-1] or name
+            cat_id = _category_id_from_url(url, name)
             path = f"{parent_path} > {name}"
             entries.append(CategoryEntry(category_id=cat_id, name=name, path=path, url=url))
         return entries
@@ -582,8 +697,17 @@ class YAMLAdapter(BaseAdapter):
             supply_price_raw = fields.get("supply_price")
             supply_price = _extract_number(str(supply_price_raw)) if isinstance(supply_price_raw, str) else supply_price_raw
 
-            main_image = fields.get("main_image_url")
-            main_image = _supported_image_url(main_image, page.url)
+            raw_name = str(fields.get("raw_product_name") or "").strip()
+            main_image = _supported_image_url(fields.get("main_image_url"), page.url)
+
+            # 선택자가 비면 상세 페이지의 og meta / JSON-LD로 폴백(하나라도 비었을 때만 조회).
+            if not raw_name or not main_image or supply_price is None:
+                sd = await self._structured_data(page)
+                raw_name, sd_image, supply_price = _fill_from_structured(
+                    raw_name, main_image, supply_price, sd
+                )
+                if not main_image and sd_image:
+                    main_image = _supported_image_url(sd_image, page.url)
 
             detail_images = _without_images(_image_values(fields.get("detail_content"), page.url), main_image, page.url)
             detail = ",".join(detail_images) or None
@@ -604,7 +728,7 @@ class YAMLAdapter(BaseAdapter):
                 supplier_product_id=str(fields.get("supplier_product_id") or "").strip() or None,
                 supplier_product_code=str(fields.get("supplier_product_code") or "").strip() or url,
                 supplier_status=mapped_status,
-                raw_product_name=str(fields.get("raw_product_name") or "").strip() or "이름 없음",
+                raw_product_name=raw_name or "이름 없음",
                 origin=str(fields.get("origin") or "").strip() or None if isinstance(fields.get("origin"), str) else fields.get("origin"),
                 supply_price=supply_price,
                 main_image_url=main_image if isinstance(main_image, str) else None,
@@ -630,6 +754,15 @@ class YAMLAdapter(BaseAdapter):
             raise
         finally:
             await page.close()
+
+    async def _structured_data(self, page) -> dict[str, Any]:
+        """상세 페이지의 og meta 3종 + JSON-LD Product를 page.evaluate 한 번으로 읽는다.
+        브라우저 실패 시 빈 dict — 폴백은 있으면 좋은 보강일 뿐이라 크롤을 막지 않는다."""
+        try:
+            result = await page.evaluate(_STRUCTURED_DATA_JS)
+            return result or {}
+        except Exception:
+            return {}
 
     async def _extract_field(self, page, extractor: FieldExtractor) -> Any:
         try:
@@ -745,8 +878,9 @@ class YAMLAdapter(BaseAdapter):
                 ]
         for group_config in config.groups:
             values = await page.query_selector_all(group_config.values_selector)
+            total_count = len(values)
             accepted_index = 0
-            for el in values:
+            for raw_idx, el in enumerate(values):
                 raw_value_text = await self._read_option_value(el, group_config)
                 parsed_text = parse_option_text(raw_value_text, config.option_text_parser, base_price)
                 value_text = parsed_text.value
@@ -761,7 +895,7 @@ class YAMLAdapter(BaseAdapter):
                 price_delta = None
                 option_supply = None
                 if price_values:
-                    option_supply = price_values[accepted_index] if accepted_index < len(price_values) else None
+                    option_supply = _option_price_at(price_values, total_count, raw_idx, accepted_index)
                     price_delta = derive_option_price_delta(option_supply, base_price)
                 elif config.option_price_delta:
                     price_delta_raw = await self._extract_field(page, config.option_price_delta)
@@ -820,22 +954,25 @@ class YAMLAdapter(BaseAdapter):
 
         level1_config = config.groups[0]
         level1_elements = await page.query_selector_all(level1_config.values_selector)
-        level1_values: list[str] = []
-        for el in level1_elements:
+        # (raw_idx, 값) — placeholder("- 선택하세요 -" 등) 제외. raw_idx로 매 반복 재질의해
+        # 클릭 후 stale 핸들과 따옴표 이스케이프 문제를 함께 회피한다.
+        level1_values: list[tuple[int, str]] = []
+        for idx, el in enumerate(level1_elements):
             value_text = await self._read_option_value(el, level1_config)
-            if value_text:
-                level1_values.append(value_text)
+            if value_text and value_text.strip() and not is_option_placeholder(value_text):
+                level1_values.append((idx, value_text.strip()))
 
         options: list[StandardOption] = []
         position = 1
-        for l1_value in level1_values:
+        for raw_idx, l1_value in level1_values:
             try:
-                level1_el = await page.query_selector(f"{level1_config.values_selector}:has-text('{l1_value}')")
-                if level1_el:
+                current = await page.query_selector_all(level1_config.values_selector)
+                if raw_idx < len(current):
+                    level1_el = current[raw_idx]
                     if dep.level_2_trigger == "click":
                         await level1_el.click()
                     elif dep.level_2_trigger == "select":
-                        await level1_el.select_option(label=l1_value)
+                        await self._select_dependent_level1(level1_el, l1_value)
                     if dep.level_2_load_indicator:
                         try:
                             await page.wait_for_selector(dep.level_2_load_indicator, timeout=5000)
@@ -847,7 +984,7 @@ class YAMLAdapter(BaseAdapter):
                 level2_elements = await page.query_selector_all(dep.level_2_values_selector)
                 for l2_el in level2_elements:
                     l2_value = await l2_el.inner_text()
-                    if not l2_value.strip():
+                    if not l2_value.strip() or is_option_placeholder(l2_value):
                         continue
                     l2_value = l2_value.strip()
                     l2_sold = await option_is_soldout(l2_el, l2_value)
@@ -885,6 +1022,19 @@ class YAMLAdapter(BaseAdapter):
             except Exception:
                 continue
         return options
+
+    async def _select_dependent_level1(self, element, label: str) -> None:
+        """의존 옵션 level-1 선택. 요소가 <select>면 select_option, <option> 등이면
+        부모 <select>에 값 설정 + change 이벤트를 직접 발생시킨다(option.select_option은 없음)."""
+        tag = str(await element.evaluate("el => el.tagName") or "").upper()
+        if tag == "SELECT":
+            await element.select_option(label=label)
+            return
+        await element.evaluate(
+            "el => { const s = el.closest('select');"
+            " if (s) { s.value = el.value;"
+            " s.dispatchEvent(new Event('change', {bubbles:true})); } }"
+        )
 
     async def _read_option_value(self, element, group_config) -> str | None:
         if group_config.value_text == "value":
@@ -954,6 +1104,9 @@ class YAMLAdapter(BaseAdapter):
             if product_config.supply_price:
                 price_raw = await self._extract_field(page, product_config.supply_price)
                 price = _extract_number(str(price_raw)) if isinstance(price_raw, str) else price_raw
+            if price is None:
+                sd = await self._structured_data(page)
+                price = _first_number(sd.get("ld_price"), sd.get("og_price"))
 
             code = url
             if product_config.supplier_product_code:

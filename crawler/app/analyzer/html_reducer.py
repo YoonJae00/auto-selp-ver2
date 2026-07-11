@@ -4,17 +4,33 @@ from bs4 import BeautifulSoup, Comment, NavigableString, Tag
 
 
 _STRIP_TAGS = {"script", "style", "svg", "noscript", "iframe", "link", "meta"}
+# 크롬(사이트 공통 프레임) 태그 — drop_chrome=True일 때만 태그명 기준으로 제거.
+# 클래스 매칭은 오탐 위험이 커서 하지 않는다. 카테고리는 nav 안에 있으므로
+# 카테고리 축소에는 drop_chrome를 쓰지 않는다.
+_CHROME_TAGS = {"header", "footer", "nav", "aside"}
 _MAX_TEXT_CHARS = 80
 _MAX_REPEATED = 2
+# 자식 없이도 보존할 태그 — void/폼 입력 요소는 LLM이 로그인 폼·hidden 상품코드·
+# maxq 품절지표를 보려면 남아 있어야 한다.
+_KEEP_EMPTY_TAGS = ("br", "hr", "img", "input", "textarea", "select")
 
 
-def reduce_html(html: str, max_text_chars: int = _MAX_TEXT_CHARS, max_repeated: int = _MAX_REPEATED) -> str:
+def reduce_html(
+    html: str,
+    max_text_chars: int = _MAX_TEXT_CHARS,
+    max_repeated: int = _MAX_REPEATED,
+    drop_chrome: bool = False,
+) -> str:
     if not html:
         return ""
     soup = BeautifulSoup(html, "html.parser")
 
     for tag in soup(list(_STRIP_TAGS)):
         tag.decompose()
+
+    if drop_chrome:
+        for tag in soup(list(_CHROME_TAGS)):
+            tag.decompose()
 
     for comment in soup.find_all(string=lambda text: isinstance(text, Comment)):
         comment.extract()
@@ -63,7 +79,7 @@ def _collapse_empty(soup: BeautifulSoup) -> None:
         changed = False
         for tag in soup.find_all(True):
             children = [c for c in tag.children if isinstance(c, Tag) or (isinstance(c, NavigableString) and c.strip())]
-            if not children and tag.name not in ("br", "hr", "img"):
+            if not children and tag.name not in _KEEP_EMPTY_TAGS:
                 tag.decompose()
                 changed = True
 

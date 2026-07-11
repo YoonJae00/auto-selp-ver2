@@ -6,7 +6,7 @@ from pathlib import Path
 import re
 from typing import Any
 
-from PySide6.QtCore import Property, QTimer, QUrl, Signal, Slot
+from PySide6.QtCore import Property, QObject, QTimer, QUrl, Signal, Slot
 from sqlalchemy import select
 
 from app.db.models import Product, Supplier
@@ -86,11 +86,13 @@ class ExportViewModel(BaseViewModel):
             self._supplier_id = ""
         self._emit()
 
-    suppliers = Property(object, lambda self: self._suppliers, constant=True)
+    # Property(object)는 QAbstractListModel을 QVariant(PyObject)로 감싸 QML ListView가
+    # 모델로 인식하지 못한다("Model size of -1") — 반드시 QObject 타입으로 노출해야 한다.
+    suppliers = Property(QObject, lambda self: self._suppliers, constant=True)
     # ComboBox가 QAbstractListModel 리셋을 안정적으로 반영하지 못하므로 QVariantList로 구동.
     supplierList = Property("QVariantList", lambda self: list(self._supplier_rows), notify=stateChanged)
-    issues = Property(object, lambda self: self._issues, constant=True)
-    history = Property(object, lambda self: self._history, constant=True)
+    issues = Property(QObject, lambda self: self._issues, constant=True)
+    history = Property(QObject, lambda self: self._history, constant=True)
     selectedSupplierId = Property(str, lambda self: self._supplier_id, notify=stateChanged)
     selectedSupplierIndex = Property(int, lambda self: next((index for index, row in enumerate(self._suppliers._rows) if row["id"] == self._supplier_id), 0), notify=stateChanged)
     productCount = Property(int, lambda self: self._product_count, notify=stateChanged)

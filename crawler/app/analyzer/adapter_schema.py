@@ -216,7 +216,7 @@ def get_product_field_mappings(adapter: "Adapter") -> list[dict[str, Any]]:
     """Extract product field mappings for display in a table.
 
     Returns a list of dicts with keys: key, label, selector, attribute, transform, status, urlPattern
-    where status is one of: 'ok', 'missing', 'empty'
+    where status is one of: 'ok', 'missing', 'empty', 'optional'
     """
     product = adapter.adapter.product
     rows = []
@@ -288,7 +288,7 @@ def get_product_field_mappings(adapter: "Adapter") -> list[dict[str, Any]]:
         "selector": option_selector,
         "attribute": "",
         "transform": "",
-        "status": "ok" if option_group and option_group.values_selector.strip() else "missing",
+        "status": "ok" if option_group and option_group.values_selector.strip() else "optional",
         "urlPattern": "", "urlParam": "",
         "urlAllowed": False,
         "testable": True,

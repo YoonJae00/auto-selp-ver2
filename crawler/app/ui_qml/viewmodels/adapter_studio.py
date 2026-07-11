@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
 import unicodedata
 from collections.abc import Callable, Mapping
@@ -34,6 +35,7 @@ from app.credentials.store import (
     save_supplier_credentials,
 )
 from app.crawlers.registry import adapter_exists, load_adapter, load_adapter_from_text, save_adapter
+from app.diagnostics import log_exception
 from app.ui_qml.models.list_model import ListModel
 from app.ui_qml.viewmodels.base import BaseViewModel, sanitize_diagnostic
 from app.workers.adapter import (
@@ -49,6 +51,8 @@ from app.workers.adapter import (
 )
 from app.workers.lifecycle import stop_workers
 
+
+logger = logging.getLogger(__name__)
 
 MAPPING_ROLES = (
     "key", "label", "fieldPath", "selector", "attribute", "transform", "status",
@@ -1890,6 +1894,17 @@ class AdapterStudioViewModel(BaseViewModel):
 
     @Slot(result=bool)
     def save(self) -> bool:
+        # 저장 시도는 반드시 로그를 남긴다 — "눌러도 아무 반응 없음" 신고 시 crawler.log로 원인 추적.
+        logger.info("adapter save attempt supplier=%s busy=%s", self._inputs.get("supplierName"), self._busy)
+        try:
+            return self._save_inner()
+        except Exception as exc:  # 예기치 못한 오류도 화면에 반드시 표시 (무반응 방지)
+            log_exception(logger, "adapter save failed unexpectedly", exc)
+            self.set_field_errors({"form": f"저장 중 오류: {sanitize_diagnostic(exc)}"})
+            self._emit()
+            return False
+
+    def _save_inner(self) -> bool:
         try:
             load_adapter_from_text(self._yaml_text)
         except Exception as exc:
@@ -1897,6 +1912,7 @@ class AdapterStudioViewModel(BaseViewModel):
             return False
         if not self._can_save():
             decision = get_save_gate_decision(self._validation_summary, self._validation_stale)
+            logger.info("adapter save blocked reason=%s failed=%s", decision.reason, decision.failed_fields)
             self._save_warning = {
                 "reason": decision.reason, "message": decision.message,
                 "failedFields": list(decision.failed_fields),

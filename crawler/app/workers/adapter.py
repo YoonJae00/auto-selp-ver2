@@ -980,6 +980,10 @@ class AdapterTestWorker(_AsyncWorker):
         from app.crawlers.registry import load_adapter_from_text
 
         adapter = load_adapter_from_text(self.adapter_yaml)
+        # 옵션은 선택사항: 옵션 그룹이 없는데 전체 테스트(fields 미지정)면 option_values를
+        # 실패 행으로 만들지 않도록 제외한다. 사용자가 명시 요청한 경우(request.fields)는 그대로.
+        if self.request.fields is None and not adapter.adapter.options.groups:
+            self.fields = tuple(f for f in self.fields if f not in ("option_values", "option_prices"))
         aggregate: dict[str, list[dict]] = {name: [] for name in self.fields}
         total_fields = len(self.test_urls) * len(self.fields)
         completed_fields = 0

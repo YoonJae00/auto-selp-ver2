@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from PySide6.QtCore import Property, QElapsedTimer, QTimer, Signal, Slot
+from PySide6.QtCore import Property, QElapsedTimer, QObject, QTimer, Signal, Slot
 
 from app.config import load_config
 from app.crawlers.registry import adapter_exists
@@ -80,13 +80,15 @@ class CrawlViewModel(BaseViewModel):
         self._elapsed_timer.timeout.connect(self._emit)
         self.refreshSuppliers()
 
-    suppliers = Property(object, lambda self: self._suppliers, constant=True)
+    # Property(object)는 QAbstractListModel을 QVariant(PyObject)로 감싸 QML ListView가
+    # 모델로 인식하지 못한다("Model size of -1") — 반드시 QObject 타입으로 노출해야 한다.
+    suppliers = Property(QObject, lambda self: self._suppliers, constant=True)
     # ComboBox는 QAbstractListModel의 in-place 리셋(beginResetModel)을 안정적으로
     # 반영하지 못해 목록이 안 바뀐다. 정체성이 바뀌면 통째로 재구성되는
     # QVariantList로 콤보를 구동한다.
     supplierList = Property("QVariantList", lambda self: list(self._supplier_rows), notify=stateChanged)
-    categories = Property(object, lambda self: self._categories, constant=True)
-    results = Property(object, lambda self: self._results, constant=True)
+    categories = Property(QObject, lambda self: self._categories, constant=True)
+    results = Property(QObject, lambda self: self._results, constant=True)
     selectedSupplierId = Property(str, lambda self: self._supplier_id, notify=stateChanged)
     selectedCategoryIds = Property("QStringList", lambda self: sorted(self._selected), notify=stateChanged)
     maxPages = Property(int, lambda self: self._max_pages, notify=stateChanged)

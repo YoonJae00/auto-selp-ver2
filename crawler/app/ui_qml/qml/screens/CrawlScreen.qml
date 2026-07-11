@@ -24,7 +24,10 @@ Item {
 
     GridLayout {
         width: crawlScroll.availableWidth
-        implicitHeight: root.compact ? 760 : Math.max(440, crawlScroll.availableHeight)
+        // 카테고리 선택 섹션을 펼치면 트리가 보일 공간만큼 전체 높이를 늘린다
+        // (고정 높이 그대로면 fillHeight인 트리가 0px로 눌려 안 보임).
+        implicitHeight: (root.compact ? 760 : Math.max(440, crawlScroll.availableHeight))
+                        + (categoryModeToggle.checked ? 260 : 0)
         columns: root.compact ? 1 : 2
         columnSpacing: 14
         rowSpacing: 14
@@ -103,7 +106,7 @@ Item {
                         Item { Layout.fillWidth: true }
                         Text { text: root.viewModel.selectedCategoryIds.length + "개 선택"; color: Ui.Theme.textMuted }
                     }
-                    Components.CategoryTree { Layout.fillWidth: true; Layout.fillHeight: true; viewModel: root.viewModel }
+                    Components.CategoryTree { Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: 220; viewModel: root.viewModel }
                     Components.InlineBanner { Layout.fillWidth: true; visible: text.length > 0; text: root.viewModel.fieldErrors.categories || ""; severity: "danger" }
                     Components.AppButton {
                         objectName: "crawlStartButton"

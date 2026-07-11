@@ -107,12 +107,22 @@ def _hint_fields(hint: MappingHint) -> dict[str, Any]:
     return data
 
 
+def _ensure_dict(parent: dict[str, Any], key: str, path: str) -> dict[str, Any]:
+    """parent[key]를 dict로 보장. None이면(예: _strip_empty_selectors가 navigation: null로
+    비워둔 경우) 새 dict로 교체 — setdefault는 기존 None을 그대로 돌려줘 생성이 막혔었다."""
+    value = parent.get(key)
+    if value is None:
+        value = {}
+        parent[key] = value
+    if not isinstance(value, dict):
+        raise ValueError(f"{path} must be a dict")
+    return value
+
+
 def apply_locked_hints_to_yaml_dict(data: dict[str, Any], hints: list[MappingHint] | None) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise ValueError("YAML data must be a dict")
-    adapter = data.setdefault("adapter", {})
-    if not isinstance(adapter, dict):
-        raise ValueError("adapter must be a dict")
+    adapter = _ensure_dict(data, "adapter", "adapter")
 
     for hint in hints or []:
         if hint.field_path not in ALLOWED_HINT_PATHS:
@@ -122,17 +132,16 @@ def apply_locked_hints_to_yaml_dict(data: dict[str, Any], hints: list[MappingHin
         fields = _hint_fields(hint)
         if hint.field_path.startswith("adapter.product."):
             name = hint.field_path.rsplit(".", 1)[-1]
-            product = adapter.setdefault("product", {})
-            if not isinstance(product, dict):
-                raise ValueError("adapter.product must be a dict")
+            product = _ensure_dict(adapter, "product", "adapter.product")
             existing_raw = product.get(name)
             existing = existing_raw if isinstance(existing_raw, dict) else {}
             product[name] = {**PRODUCT_DEFAULTS.get(name, {}), **existing, **fields}
         elif hint.field_path == "adapter.options.groups.0.values_selector":
-            options = adapter.setdefault("options", {})
-            if not isinstance(options, dict):
-                raise ValueError("adapter.options must be a dict")
-            groups = options.setdefault("groups", [])
+            options = _ensure_dict(adapter, "options", "adapter.options")
+            groups = options.get("groups")
+            if groups is None:
+                groups = []
+                options["groups"] = groups
             if not isinstance(groups, list):
                 raise ValueError("adapter.options.groups must be a list")
             if not groups:
@@ -142,37 +151,23 @@ def apply_locked_hints_to_yaml_dict(data: dict[str, Any], hints: list[MappingHin
             options["detection"] = "dom"
             options.setdefault("type", "combination")
         elif hint.field_path == "adapter.options.option_price_delta":
-            options = adapter.setdefault("options", {})
-            if not isinstance(options, dict):
-                raise ValueError("adapter.options must be a dict")
+            options = _ensure_dict(adapter, "options", "adapter.options")
             existing_raw = options.get("option_price_delta")
             existing = existing_raw if isinstance(existing_raw, dict) else {}
             options["option_price_delta"] = {**OPTION_PRICE_DEFAULTS, **existing, **fields}
             options["detection"] = "dom"
             options.setdefault("type", "combination")
         elif hint.field_path == "adapter.listing.product_link":
-            listing = adapter.setdefault("listing", {})
-            if not isinstance(listing, dict):
-                raise ValueError("adapter.listing must be a dict")
+            listing = _ensure_dict(adapter, "listing", "adapter.listing")
             existing_raw = listing.get("product_link")
             existing = existing_raw if isinstance(existing_raw, dict) else {}
             listing["product_link"] = {**LISTING_PRODUCT_LINK_DEFAULTS, **existing, **fields}
         elif hint.field_path == "adapter.categories.all_products.url":
-            categories = adapter.setdefault("categories", {})
-            if not isinstance(categories, dict):
-                raise ValueError("adapter.categories must be a dict")
-            all_products = categories.setdefault("all_products", {})
-            if not isinstance(all_products, dict):
-                raise ValueError("adapter.categories.all_products must be a dict")
-            existing_raw = all_products
-            existing = existing_raw if isinstance(existing_raw, dict) else {}
-            all_products.update({**ALL_PRODUCTS_URL_DEFAULTS, **existing, "url": hint.chosen_selector})
+            categories = _ensure_dict(adapter, "categories", "adapter.categories")
+            all_products = _ensure_dict(categories, "all_products", "adapter.categories.all_products")
+            all_products.update({**ALL_PRODUCTS_URL_DEFAULTS, **all_products, "url": hint.chosen_selector})
         elif hint.field_path == "adapter.categories.navigation.menu_selector":
-            categories = adapter.setdefault("categories", {})
-            if not isinstance(categories, dict):
-                raise ValueError("adapter.categories must be a dict")
-            nav = categories.setdefault("navigation", {})
-            if not isinstance(nav, dict):
-                raise ValueError("adapter.categories.navigation must be a dict")
+            categories = _ensure_dict(adapter, "categories", "adapter.categories")
+            nav = _ensure_dict(categories, "navigation", "adapter.categories.navigation")
             nav["menu_selector"] = hint.chosen_selector
     return data

@@ -7,6 +7,54 @@ from urllib.parse import urljoin
 
 from app.analyzer.html_reducer import reduce_html
 from app.analyzer.login_helper import _check_logout_indicators, _safe_goto, perform_login
+from app.analyzer.platform_hints import detect_platform
+
+
+# 상세 페이지에서 og meta + JSON-LD Product를 추출하는 브라우저 스크립트.
+# html_reducer가 script/meta를 제거하므로 축소 전에 page.evaluate로 뽑아야 한다.
+_STRUCTURED_DATA_JS = r"""
+() => {
+  const out = {};
+  const meta = (prop) => {
+    const el = document.querySelector(`meta[property='${prop}'], meta[name='${prop}']`);
+    return el ? (el.getAttribute('content') || '').trim() : '';
+  };
+  const ogTitle = meta('og:title');
+  const ogImage = meta('og:image');
+  const ogPrice = meta('product:price:amount');
+  if (ogTitle) out['og:title'] = ogTitle;
+  if (ogImage) out['og:image'] = ogImage;
+  if (ogPrice) out['product:price:amount'] = ogPrice;
+  for (const node of document.querySelectorAll("script[type='application/ld+json']")) {
+    let data;
+    try { data = JSON.parse(node.textContent); } catch (e) { continue; }
+    const items = Array.isArray(data) ? data : (data['@graph'] || [data]);
+    for (const item of items) {
+      if (!item || typeof item !== 'object') continue;
+      const t = item['@type'];
+      const isProduct = t === 'Product' || (Array.isArray(t) && t.includes('Product'));
+      if (!isProduct) continue;
+      if (item.name && !out['jsonld:name']) out['jsonld:name'] = String(item.name).trim();
+      if (item.image && !out['jsonld:image']) {
+        const img = Array.isArray(item.image) ? item.image[0] : item.image;
+        out['jsonld:image'] = String(typeof img === 'object' ? (img.url || '') : img).trim();
+      }
+      const offers = Array.isArray(item.offers) ? item.offers[0] : item.offers;
+      if (offers && offers.price && !out['jsonld:price']) out['jsonld:price'] = String(offers.price).trim();
+    }
+  }
+  return out;
+}
+"""
+
+
+async def _extract_structured_data(page) -> dict:
+    """상세 페이지의 og meta + JSON-LD Product 구조화 데이터 추출. 실패 시 빈 dict."""
+    try:
+        data = await page.evaluate(_STRUCTURED_DATA_JS)
+        return {k: v for k, v in (data or {}).items() if v}
+    except Exception:
+        return {}
 
 
 @dataclass
@@ -30,6 +78,8 @@ class ProbeResult:
     status_indicators: dict = field(default_factory=dict)  # {"has_cart_button": bool, "has_soldout_image": bool, "maxq_value": str, "has_explicit_status": bool}
     login_url: str = ""
     storage_state: dict | None = None
+    platform: str | None = None  # 감지된 쇼핑몰 솔루션 (cafe24/makeshop/godomall/youngcart/wisa)
+    structured_data: dict = field(default_factory=dict)  # 상세 페이지 og/JSON-LD 추출값
 
 
 def normalize_sample_products(base_url: str, products: list[dict], links: list[str] | None = None, limit: int = 15) -> tuple[list[dict], list[str]]:
@@ -239,6 +289,10 @@ async def probe_site(
             except Exception:
                 content = ""
 
+            platform = detect_platform(content, final_url)
+            if platform:
+                _log(f"쇼핑몰 솔루션 감지: {platform}")
+
             _log("로그인 폼 확인 중...")
             # If user provided login credentials, force needs_login = True
             needs_login = bool(login_url and username and password)
@@ -331,7 +385,7 @@ async def probe_site(
 
             _log("상품 목록 분석 중...")
             try:
-                listing_html = reduce_html(await page.content())
+                listing_html = reduce_html(await page.content(), drop_chrome=True)
             except Exception:
                 pass
 
@@ -457,6 +511,7 @@ async def probe_site(
 
             detail_html = ""
             status_indicators: dict = {}
+            structured_data: dict = {}
             sample_products, sample_links = normalize_sample_products(main_url, sample_products, sample_links)
 
             detail_url = sample_detail_url or (sample_links[0] if sample_links else None)
@@ -465,7 +520,8 @@ async def probe_site(
                 _log(f"상품 상세 페이지 접속 중: {full_url}")
                 if await _safe_goto(page, full_url):
                     try:
-                        detail_html = reduce_html(await page.content())
+                        structured_data = await _extract_structured_data(page)
+                        detail_html = reduce_html(await page.content(), drop_chrome=True)
                         # Extract status indicators from detail page
                         status_indicators: dict = {}
                         try:
@@ -522,6 +578,8 @@ async def probe_site(
                 products_per_page=products_per_page,
                 total_pages=total_pages,
                 status_indicators=status_indicators,
+                platform=platform,
+                structured_data=structured_data,
             )
 
     return await asyncio.wait_for(_do_probe(), timeout=60)

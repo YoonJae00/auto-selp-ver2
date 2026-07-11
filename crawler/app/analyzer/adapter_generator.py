@@ -2,15 +2,20 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass
-from typing import Callable
+from dataclasses import dataclass, field
+from typing import Any, Callable
 
 import yaml
+from bs4 import BeautifulSoup
 from pydantic import ValidationError
+from soupsieve import SelectorSyntaxError
+
+from app.analyzer.adapter_schema import FieldExtractor
 
 from app.analyzer.adapter_schema import Adapter
 from app.analyzer.llm_client import get_llm_client, QuotaExceededError
 from app.analyzer.mapping_hints import MappingHint, PRODUCT_DEFAULTS, apply_locked_hints_to_yaml_dict, format_mapping_hints_for_prompt
+from app.analyzer.platform_hints import platform_hint_block
 from app.analyzer.site_probe import ProbeResult
 
 
@@ -105,6 +110,7 @@ class GenerationResult:
     adapter: Adapter
     provider_used: str
     retries: int
+    verification: dict = field(default_factory=dict)
 
 
 def _extract_yaml(raw: str) -> str:
@@ -221,6 +227,13 @@ def _build_user_prompt(probe_result: ProbeResult, supplier_name: str, mapping_hi
         f"- 전체상품 메뉴: {'있음' if probe_result.has_all_products else '없음'}",
     ]
 
+    platform = getattr(probe_result, "platform", None)
+    if platform:
+        parts.append(f"- 감지된 쇼핑몰 솔루션: {platform}")
+        hint_block = platform_hint_block(platform)
+        if hint_block:
+            parts.append(f"\n## 플랫폼 표준 선택자 힌트 ({platform})\n{hint_block}")
+
     # Add status indicators if available
     if hasattr(probe_result, 'status_indicators') and probe_result.status_indicators:
         si = probe_result.status_indicators
@@ -249,6 +262,17 @@ def _build_user_prompt(probe_result: ProbeResult, supplier_name: str, mapping_hi
         detail_trimmed = probe_result.detail_html[:12000]
         parts.append(f"\n## 상품 상세 페이지 DOM (축소됨)\n{detail_trimmed}")
 
+    structured = getattr(probe_result, "structured_data", None)
+    if structured:
+        sd_lines = "\n".join(f"- {k}: {v}" for k, v in structured.items())
+        parts.append(
+            "\n## 구조화 데이터 (상세 페이지)\n"
+            f"{sd_lines}\n"
+            "위 값이 실제 상품과 일치하면, main_image_url은 selector \"meta[property='og:image']\" + "
+            "attribute: content 를 우선 고려하세요 (런타임이 attribute 추출을 지원하므로 meta 선택자가 동작합니다). "
+            "상품명·가격도 meta/JSON-LD 값과 대조해 정확한 선택자를 고르세요."
+        )
+
     if probe_result.sample_links:
         parts.append(f"\n## 샘플 상품 링크\n" + "\n".join(f"- {link}" for link in probe_result.sample_links))
 
@@ -271,6 +295,106 @@ def _build_user_prompt(probe_result: ProbeResult, supplier_name: str, mapping_hi
     return "\n".join(parts)
 
 
+# Playwright 전용 의사클래스 — BeautifulSoup(soupsieve)가 파싱 못 하므로 검증 스킵.
+_PLAYWRIGHT_PSEUDO = (":has-text(", ":text(", ":visible")
+# 이미지 lazy 로딩 속성 — 런타임 _read_image_attribute와 동일 우선순위.
+_IMAGE_ATTRS = ("data-src", "data-original", "data-lazy", "data-echo")
+
+
+def _verify_number(text: str | None) -> int | None:
+    """extract_number transform 재현 — 검증용 오프라인 숫자 파싱."""
+    if not text:
+        return None
+    m = re.search(r"-?\d[\d,]*", text)
+    if not m:
+        return None
+    try:
+        return int(m.group().replace(",", ""))
+    except ValueError:
+        return None
+
+
+def _extract_field_value(element, extractor: FieldExtractor) -> Any:
+    """soup 요소에서 extractor(attribute/transform)를 반영해 값 추출. 없으면 None."""
+    attr = extractor.attribute
+    value: str | None = None
+    if attr:
+        if attr in ("src", "data-src"):
+            candidates = [attr, extractor.fallback_attribute, *_IMAGE_ATTRS]
+            for a in candidates:
+                if not a:
+                    continue
+                v = element.get(a)
+                if v and str(v).strip():
+                    value = str(v).strip()
+                    break
+        else:
+            v = element.get(attr)
+            if (not v or not str(v).strip()) and extractor.fallback_attribute:
+                v = element.get(extractor.fallback_attribute)
+            value = str(v).strip() if v and str(v).strip() else None
+    else:
+        text = element.get_text(strip=True)
+        value = text or None
+
+    if value is None:
+        return None
+    if extractor.transform == "extract_number":
+        return _verify_number(value)  # 숫자 파싱 실패 시 None → 실패로 처리
+    return value
+
+
+def verify_adapter_against_probe(adapter: Adapter, probe_result: ProbeResult) -> dict[str, Any]:
+    """생성된 어댑터 선택자가 축소 DOM에서 실제로 값을 뽑는지 오프라인 검증.
+
+    Playwright 전용 의사클래스나 fallback_from!="none" 필드, 파싱 불가 선택자는
+    '검증 불가'로 건너뛴다(실패 아님). 반환:
+      {"failed_fields": [...], "values": {field: value}, "product_link_count": n}
+    """
+    detail_html = getattr(probe_result, "detail_html", "") or ""
+    listing_html = getattr(probe_result, "listing_html", "") or ""
+    failed: list[str] = []
+    values: dict[str, Any] = {}
+
+    detail_soup = BeautifulSoup(detail_html, "html.parser") if detail_html else None
+    product = adapter.adapter.product
+    if detail_soup is not None:
+        for name in REPAIRABLE_PRODUCT_FIELDS:
+            extractor = getattr(product, name, None)
+            if extractor is None or not (extractor.selector or "").strip():
+                continue  # 선택자 미설정 → 검증 대상 아님
+            if extractor.fallback_from not in (None, "", "none"):
+                continue  # 자동 판정 필드 → 검증 불가
+            selector = extractor.selector.strip()
+            if any(p in selector for p in _PLAYWRIGHT_PSEUDO):
+                continue  # Playwright 전용 → 검증 불가
+            try:
+                matches = detail_soup.select(selector)
+            except SelectorSyntaxError:
+                continue  # 파싱 불가 → 검증 불가
+            value = _extract_field_value(matches[0], extractor) if matches else None
+            if value is None or (isinstance(value, str) and not value.strip()):
+                failed.append(name)
+            else:
+                values[name] = value
+
+    # listing product_link — 매치 개수만 확인(≥1이면 ok). reduce가 반복 요소를 압축하므로
+    # 개수 기대치를 높이지 않는다.
+    product_link_count = 0
+    link_cfg = adapter.adapter.listing.product_link
+    link_selector = (link_cfg.selector or "").strip()
+    if listing_html and link_selector and not any(p in link_selector for p in _PLAYWRIGHT_PSEUDO):
+        try:
+            listing_soup = BeautifulSoup(listing_html, "html.parser")
+            product_link_count = len(listing_soup.select(link_selector))
+            if product_link_count == 0:
+                failed.append("product_link")
+        except SelectorSyntaxError:
+            pass  # 검증 불가
+
+    return {"failed_fields": failed, "values": values, "product_link_count": product_link_count}
+
+
 async def generate_adapter_yaml(
     probe_result: ProbeResult,
     supplier_name: str,
@@ -290,6 +414,57 @@ async def generate_adapter_yaml(
         if err:
             return f"{user_prompt}\n\n## 이전 오류\n{err}\n\n위 오류를 수정하여 다시 생성하세요."
         return user_prompt
+
+    # 잠금 힌트가 걸린 필드는 사용자 확정 선택자라 축소 DOM에서 안 잡혀도 정상 → 검증/수리 제외.
+    locked_fields = {
+        h.field_path.rsplit(".", 1)[-1]
+        for h in (mapping_hints or [])
+        if h.locked
+    }
+
+    async def _succeed(raw_response: str, used_provider: str, retries: int) -> GenerationResult:
+        """finalize → 오프라인 검증 → 실패 시 1회 자동 수리 → 개선됐을 때만 수리본 채택."""
+        yaml_text, adapter = _finalize_generated_yaml(raw_response, mapping_hints)
+        _log(f"Generation succeeded with {used_provider}.")
+
+        verification = verify_adapter_against_probe(adapter, probe_result)
+        failed = [f for f in verification["failed_fields"] if f not in locked_fields]
+        repairable = [f for f in failed if f in REPAIRABLE_PRODUCT_FIELDS]
+        detail = getattr(probe_result, "detail_html", "") or ""
+        listing = getattr(probe_result, "listing_html", "") or ""
+
+        if repairable and (detail or listing):
+            _log(f"검증 실패 필드 {len(failed)}개 — 자동 수리 시도...")
+            # 수리는 보강일 뿐 — 수리 중 오류(쿼터 등)로 이미 성공한 생성본을 버리지 않는다.
+            try:
+                repaired_yaml = await repair_adapter_fields(
+                    yaml_text, repairable, probe_result,
+                    llm_provider=used_provider, auto_fallback=auto_fallback, on_progress=on_progress,
+                )
+            except Exception as exc:
+                _log(f"자동 수리 실패, 생성본 유지: {exc}")
+                repaired_yaml = yaml_text
+            if repaired_yaml != yaml_text:
+                try:
+                    new_adapter = _validate_yaml(repaired_yaml)
+                except (ValidationError, yaml.YAMLError):
+                    new_adapter = None
+                if new_adapter is not None:
+                    new_verification = verify_adapter_against_probe(new_adapter, probe_result)
+                    new_failed = [f for f in new_verification["failed_fields"] if f not in locked_fields]
+                    if len(new_failed) < len(failed):
+                        _log(f"자동 수리로 실패 필드 {len(failed)}→{len(new_failed)}개 감소, 수리본 채택.")
+                        yaml_text, adapter, verification, failed = (
+                            repaired_yaml, new_adapter, new_verification, new_failed,
+                        )
+        verification = {**verification, "failed_fields": failed}
+        return GenerationResult(
+            yaml_text=yaml_text,
+            adapter=adapter,
+            provider_used=used_provider,
+            retries=retries,
+            verification=verification,
+        )
 
     provider = llm_provider
     fallback_provider = "openai" if provider == "gemini" else "gemini"
@@ -318,24 +493,10 @@ async def generate_adapter_yaml(
             # Try fallback immediately (one attempt, no retries)
             client = get_llm_client(provider)
             raw_response = await client.generate(SYSTEM_PROMPT, user_prompt)
-            yaml_text, adapter = _finalize_generated_yaml(raw_response, mapping_hints)
-            _log(f"Generation succeeded with fallback {provider}.")
-            return GenerationResult(
-                yaml_text=yaml_text,
-                adapter=adapter,
-                provider_used=provider,
-                retries=0,
-            )
+            return await _succeed(raw_response, provider, retries=0)
 
         try:
-            yaml_text, adapter = _finalize_generated_yaml(raw_response, mapping_hints)
-            _log(f"Generation succeeded with {provider}.")
-            return GenerationResult(
-                yaml_text=yaml_text,
-                adapter=adapter,
-                provider_used=provider,
-                retries=attempt,
-            )
+            return await _succeed(raw_response, provider, retries=attempt)
         except (ValidationError, yaml.YAMLError) as exc:
             last_error = str(exc)
             _log(
@@ -354,14 +515,7 @@ async def generate_adapter_yaml(
         raw_response = await client.generate(
             SYSTEM_PROMPT, _build_prompt(last_error)
         )
-        yaml_text, adapter = _finalize_generated_yaml(raw_response, mapping_hints)
-        _log(f"Generation succeeded with fallback {provider}.")
-        return GenerationResult(
-            yaml_text=yaml_text,
-            adapter=adapter,
-            provider_used=provider,
-            retries=max_retries,
-        )
+        return await _succeed(raw_response, provider, retries=max_retries)
 
     raise ValueError(
         "Adapter generation failed with both providers. "

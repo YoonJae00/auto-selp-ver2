@@ -77,3 +77,30 @@ def test_reduce_html_strips_sensitive_input_values() -> None:
     assert "csrf_token" in result
     assert "secret" not in result
     assert "1234" not in result
+
+
+def test_reduce_html_keeps_empty_select_and_textarea() -> None:
+    html = '<select name="opt"></select><textarea name="memo"></textarea>'
+    result = reduce_html(html)
+    assert 'name="opt"' in result
+    assert 'name="memo"' in result
+
+
+def test_reduce_html_drop_chrome_removes_frame_tags() -> None:
+    html = (
+        '<header><nav class="gnb">메뉴</nav></header>'
+        '<main><div class="product">상품</div></main>'
+        '<aside>사이드</aside><footer>푸터</footer>'
+    )
+    result = reduce_html(html, drop_chrome=True)
+    assert "메뉴" not in result
+    assert "사이드" not in result
+    assert "푸터" not in result
+    assert "상품" in result
+
+
+def test_reduce_html_keeps_chrome_by_default() -> None:
+    html = '<header>헤더</header><div class="product">상품</div>'
+    result = reduce_html(html)
+    assert "헤더" in result
+    assert "상품" in result
