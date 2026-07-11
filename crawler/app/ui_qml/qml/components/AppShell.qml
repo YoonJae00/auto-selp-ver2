@@ -47,6 +47,18 @@ Item {
         if (wasOverlayOpen && !detailPanelOpen && contentStack) {
             contentStack.forceActiveFocus()
         }
+        // 수집 화면으로 들어올 때마다 도매처 목록을 다시 불러온다 — 방금 등록한
+        // 도매처가 콤보에 즉시 나타나도록 (수집 중에는 건너뜀).
+        if (currentRoute === "crawl") {
+            // qmllint disable unqualified
+            if (!CrawlVM.busy) CrawlVM.refreshSuppliers()
+            // qmllint enable unqualified
+        }
+        if (currentRoute === "export") {
+            // qmllint disable unqualified
+            if (!ExportVM.busy) ExportVM.refreshSuppliers()
+            // qmllint enable unqualified
+        }
     }
 
     Component.onCompleted: syncViewModel()

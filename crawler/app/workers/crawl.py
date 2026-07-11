@@ -11,9 +11,16 @@ from PySide6.QtCore import QThread, Signal
 from app.crawlers.engine import PlaywrightEngine
 from app.crawlers.registry import adapter_exists, load_adapter
 from app.crawlers.yaml_adapter import YAMLAdapter
-from app.db.models import CrawlRun, Product, ProductOption
+from app.db.models import CrawlRun, Product, ProductOption, StockChange, StockSnapshot
 from app.db.session import get_session
 from app.diagnostics import log_exception, sanitize_diagnostic
+from app.monitor.stock_checker import detect_changes
+
+
+_CHANGE_LABELS = {
+    "sold_out": "품절", "restocked": "재입고", "price_changed": "가격 변경",
+    "stock_changed": "재고 변경", "status_changed": "상태 변경",
+}
 
 
 logger = logging.getLogger(__name__)
@@ -24,7 +31,7 @@ class CrawlRequest:
     supplier_id: str
     supplier_name: str
     adapter_file: str
-    categories: list[tuple[str, str]]
+    categories: list[tuple[str, str, str]]  # (category_id, path, listing_url)
     max_pages: int
     delay_seconds: int
     credential_key: str | None = None
@@ -187,7 +194,7 @@ class CrawlWorker(_AsyncThread):
             run = CrawlRun(
                 supplier_id=request.supplier_id, run_type="full", status="running",
                 started_at=datetime.now(timezone.utc),
-                categories_crawled=[path for _, path in request.categories],
+                categories_crawled=[c[1] for c in request.categories],
             )
             session.add(run)
             session.commit()
@@ -203,10 +210,12 @@ class CrawlWorker(_AsyncThread):
             if model.adapter.login.required:
                 logger.info("crawl login required supplier=%s", request.supplier_name)
                 self.progress.emit("도매처 로그인 중...")
-            for category_id, category_path in request.categories:
+            for category in request.categories:
+                category_id, category_path = category[0], category[1]
+                category_url = category[2] if len(category) > 2 else None
                 logger.info("crawl category started supplier=%s category=%s", request.supplier_name, category_path)
                 self.progress.emit(f"[카테고리] {category_path}")
-                async for result in adapter.crawl_category(category_id, request.max_pages):
+                async for result in adapter.crawl_category(category_id, request.max_pages, category_url):
                     products += 1
                     options += len(result.options)
                     self._counts = products, options
@@ -303,3 +312,177 @@ class CrawlWorker(_AsyncThread):
                 if column.name not in {"id", "product_id"}
             }
             session.add(ProductOption(product_id=product.id, **values))
+        # 재수집(다시 수집하기)이 첫 실행부터 변경을 감지할 수 있도록 수집 시점의
+        # 상태/가격을 baseline 스냅샷으로 남긴다 (이게 없으면 첫 재수집은 비교 대상이
+        # 없어 아무 변경도 못 잡고, 모니터에도 안 뜬다).
+        session.add(StockSnapshot(
+            product_id=product.id, crawl_run_id=crawl_run_id,
+            supplier_status=data.supplier_status, supply_price=data.supply_price,
+        ))
+
+
+class StockCheckWorker(_AsyncThread):
+    """다시 수집하기: 기존 상품을 재점검해 판매상태/가격/재고 변경을 반영·기록한다."""
+
+    progress = Signal(str)
+    change_found = Signal(str, str, str)  # product name, change label, "before → after"
+    finished = Signal(int, int)  # products_checked, changes_found
+    cancelled = Signal(int, int)
+
+    def __init__(
+        self,
+        request: CrawlRequest,
+        *,
+        session_factory: Callable[[], Any] = get_session,
+        adapter_checker: Callable[[str], bool] = adapter_exists,
+        adapter_loader: Callable[[str], Any] = load_adapter,
+        engine_factory: Callable[..., Any] = PlaywrightEngine,
+        adapter_factory: Callable[..., Any] = YAMLAdapter,
+    ) -> None:
+        super().__init__()
+        self.request = request
+        self._session_factory = session_factory
+        self._adapter_checker = adapter_checker
+        self._adapter_loader = adapter_loader
+        self._engine_factory = engine_factory
+        self._adapter_factory = adapter_factory
+        self._counts = (0, 0)
+
+    def run(self) -> None:
+        try:
+            self._execute(self._check())
+        except asyncio.CancelledError:
+            logger.info("stock check cancelled supplier=%s checked=%d changes=%d", self.request.supplier_name, *self._counts)
+            self.cancelled.emit(*self._counts)
+        except Exception as exc:
+            log_exception(logger, f"stock check failed supplier={self.request.supplier_name}", exc)
+            self.error.emit(str(exc))
+
+    async def _check(self) -> None:
+        request = self.request
+        session = self._session_factory()
+        run = None
+        checked = changes = 0
+        engine = None
+        try:
+            logger.info(
+                "stock check started supplier=%s adapter=%s categories=%d",
+                request.supplier_name, request.adapter_file, len(request.categories),
+            )
+            run = CrawlRun(
+                supplier_id=request.supplier_id, run_type="stock_check", status="running",
+                started_at=datetime.now(timezone.utc),
+                categories_crawled=[c[1] for c in request.categories],
+            )
+            session.add(run)
+            session.commit()
+            if not self._adapter_checker(request.adapter_file):
+                raise FileNotFoundError(f"어댑터 파일이 없습니다: {request.adapter_file}")
+            model = self._adapter_loader(request.adapter_file)
+            engine = self._engine_factory(channel=model.adapter.browser.channel, headless=True)
+            await engine.start()
+            adapter = self._adapter_factory(
+                adapter=model, engine=engine, supplier_name=request.supplier_name,
+                delay_seconds=request.delay_seconds, supplier_slug=request.credential_key,
+            )
+            for category in request.categories:
+                category_id, category_path = category[0], category[1]
+                category_url = category[2] if len(category) > 2 else None
+                self.progress.emit(f"[재수집] {category_path}")
+                async for snapshot in adapter.stock_check(category_id, category_url):
+                    checked += 1
+                    changes += self._persist_snapshot(session, run.id, snapshot)
+                    self._counts = checked, changes
+                    self.progress.emit(
+                        f"재점검 {checked}: {snapshot.supplier_product_code} (변경 {changes}건)"
+                    )
+                    if checked % 5 == 0:
+                        session.commit()
+            await engine.close()
+            engine = None
+            self._finish_run(session, run, "completed", checked, changes)
+            logger.info("stock check completed supplier=%s checked=%d changes=%d", request.supplier_name, checked, changes)
+            self.finished.emit(checked, changes)
+        except asyncio.CancelledError:
+            if engine is not None:
+                await engine.close()
+                engine = None
+            session.rollback()
+            if run is not None:
+                self._finish_run(session, run, "cancelled", checked, changes)
+            raise
+        except Exception as exc:
+            safe = sanitize_diagnostic(exc)
+            log_exception(logger, f"stock check exception supplier={request.supplier_name}", exc)
+            if engine is not None:
+                try:
+                    await engine.close()
+                    engine = None
+                except Exception as close_exc:
+                    safe = f"{safe}; 종료 오류: {sanitize_diagnostic(close_exc)}"
+            session.rollback()
+            if run is not None:
+                try:
+                    self._finish_run(session, run, "failed", checked, changes, safe)
+                except Exception:
+                    session.rollback()
+            raise RuntimeError(safe) from exc
+        finally:
+            session.close()
+
+    @staticmethod
+    def _finish_run(session, run, status, checked, changes, error=None) -> None:
+        run.status = status
+        run.products_crawled = checked
+        run.options_crawled = changes
+        run.error = error
+        run.finished_at = datetime.now(timezone.utc)
+        session.add(run)
+        session.commit()
+
+    def _persist_snapshot(self, session, crawl_run_id: str, snapshot) -> int:
+        product = session.query(Product).filter_by(
+            supplier_id=self.request.supplier_id,
+            supplier_product_code=snapshot.supplier_product_code,
+        ).first()
+        if product is None:
+            return 0  # 재수집은 이미 수집된 상품만 갱신한다
+
+        last = session.query(StockSnapshot).filter_by(product_id=product.id).order_by(
+            StockSnapshot.captured_at.desc()
+        ).first()
+        previous = None
+        if last is not None:
+            previous = {
+                "supplier_status": last.supplier_status,
+                "supply_price": last.supply_price,
+                "option_stock_json": last.option_stock_json or {},
+            }
+        new = {
+            "supplier_status": snapshot.supplier_status,
+            "supply_price": snapshot.supply_price,
+            "option_stock_json": snapshot.option_stock or {},
+        }
+        records = detect_changes(previous, new)
+
+        if snapshot.supplier_status is not None:
+            product.supplier_status = snapshot.supplier_status
+        if snapshot.supply_price is not None:
+            product.supply_price = snapshot.supply_price
+
+        session.add(StockSnapshot(
+            product_id=product.id, crawl_run_id=crawl_run_id,
+            supplier_status=snapshot.supplier_status, supply_price=snapshot.supply_price,
+            option_stock_json=snapshot.option_stock or None,
+        ))
+        for record in records:
+            session.add(StockChange(
+                product_id=product.id, change_type=record.change_type,
+                previous_value=record.previous_value, new_value=record.new_value,
+            ))
+            label = _CHANGE_LABELS.get(record.change_type, record.change_type)
+            self.change_found.emit(
+                product.raw_product_name, label,
+                f"{record.previous_value or '-'} → {record.new_value or '-'}",
+            )
+        return len(records)

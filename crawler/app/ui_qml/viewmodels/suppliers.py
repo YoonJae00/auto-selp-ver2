@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.credentials.store import (
     delete_supplier_credentials,
+    load_supplier_credentials,
     save_supplier_credentials,
 )
 from app.crawlers.registry import adapter_exists, list_adapters
@@ -213,6 +214,45 @@ class SuppliersViewModel(BaseViewModel):
     @Slot(str)
     def selectSupplier(self, supplier_id: str) -> None:
         self._load_selection(supplier_id)
+        self.stateChanged.emit()
+
+    @Slot(str, str, str, bool)
+    def upsertFromAdapter(
+        self, slug: str, name: str, base_url: str, needs_login: bool
+    ) -> None:
+        """어댑터 마법사 저장 완료 시 호출 — 어댑터(slug)에 대응하는 도매처를
+        자동으로 만들거나 갱신한다. 자격증명은 마법사가 이미 slug 키로 저장했으므로
+        credential_key = slug 로 연결한다. 사용자는 별도 도매처 등록 폼을 거치지 않는다."""
+        slug = str(slug).strip()
+        if not slug:
+            return
+        with self._session_factory() as session:
+            supplier = session.execute(
+                select(Supplier).where(Supplier.adapter_file == slug)
+            ).scalar_one_or_none()
+            created = supplier is None
+            if created:
+                supplier = Supplier(id=str(uuid.uuid4()), name=name, base_url=base_url)
+                session.add(supplier)
+            supplier.name = name or supplier.name
+            supplier.base_url = base_url or supplier.base_url
+            supplier.adapter_file = slug
+            supplier.needs_login = bool(needs_login)
+            if not needs_login:
+                supplier.credential_key = None
+            elif load_supplier_credentials(slug):
+                # 마법사가 slug 키로 자격증명을 이관해 둔 경우
+                supplier.credential_key = slug
+            elif supplier.credential_key and load_supplier_credentials(supplier.credential_key):
+                # 기존에 동작하던 자격증명 키가 있으면 유지 (덮어써서 로그인 깨지 않도록)
+                pass
+            else:
+                supplier.credential_key = slug
+            session.commit()
+            saved_id = supplier.id
+        self.refresh()
+        self._selected_id = saved_id
+        self._load_selection(saved_id)
         self.stateChanged.emit()
 
     @Slot()

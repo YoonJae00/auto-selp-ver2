@@ -97,6 +97,14 @@ FocusScope {
                 Accessible.name: text
                 onToggled: root.viewModel.setDraft({"needsLogin": checked})
             }
+            Text {
+                Layout.fillWidth: true
+                visible: Boolean(root.viewModel.draft.needsLogin)
+                text: "로그인 주소(URL)는 어댑터에서 설정합니다. 여기서는 아이디·비밀번호만 저장하세요."
+                color: Ui.Theme.textMuted
+                font.pixelSize: 11
+                wrapMode: Text.Wrap
+            }
             AppTextField {
                 id: usernameField
                 objectName: "supplierUsernameField"

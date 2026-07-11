@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from hashlib import sha256
 from typing import Any
 
-from sqlalchemy import case, func, or_, select
+from sqlalchemy import case, func, or_, select, true
 from sqlalchemy.orm import Session
 
 from app.db.models import Product, ProductOption
@@ -21,7 +21,9 @@ class ExportScopeValidation:
 
 
 def validate_export_scope(session: Session, supplier_id: str, *, issue_limit: int = 50) -> ExportScopeValidation:
-    scope = Product.supplier_id == supplier_id
+    # supplier_id 미지정 = 전체 상품 (export_to_excel과 동일 의미). None을 == 비교하면
+    # 아무 행도 안 잡혀 "상품 없음"으로 오판하므로 true()로 전체를 스코프한다.
+    scope = (Product.supplier_id == supplier_id) if supplier_id else true()
     error_fields = (
         or_(Product.raw_product_name.is_(None), Product.raw_product_name == ""),
         or_(Product.supplier_product_code.is_(None), Product.supplier_product_code == ""),

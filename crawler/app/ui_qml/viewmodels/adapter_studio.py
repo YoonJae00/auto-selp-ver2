@@ -76,6 +76,9 @@ def studio_credential_key(name: str, main_url: str) -> str:
 
 class AdapterStudioViewModel(BaseViewModel):
     stateChanged = Signal()
+    # 저장 완료 시 (slug, 도매처명, 사이트주소, 로그인필요) — 도매처 화면이 이걸 받아
+    # Supplier 레코드를 자동 생성/갱신한다. 어댑터와 도매처가 한 번에 만들어진다.
+    supplierSaved = Signal(str, str, str, bool)
 
     def __init__(self, parent: QObject | None = None, *, app_view_model=None,
                  worker_factories: Mapping[str, Callable[..., object]] | None = None) -> None:
@@ -1866,6 +1869,25 @@ class AdapterStudioViewModel(BaseViewModel):
             for row in self._mapping_rows._rows
         ])
 
+    def _yaml_with_category_entries(self) -> str:
+        """저장 직전, 마법사가 확정한 카테고리 목록(제외 반영)을 어댑터 yaml에 병합한다.
+        이게 있어야 crawl이 menu_selector로 다시 걷지 않고 이 목록을 그대로 쓴다."""
+        categories = self._probe_summary_with_checks().get("categories") or []
+        entries = [
+            {"name": str(c.get("name") or ""), "url": str(c.get("url") or "")}
+            for c in categories
+            if isinstance(c, dict) and c.get("url")
+        ]
+        if not entries:
+            return self._yaml_text
+        try:
+            raw = yaml.safe_load(self._yaml_text) or {}
+            cats = raw.setdefault("adapter", {}).setdefault("categories", {})
+            cats["entries"] = entries
+            return yaml.safe_dump(raw, allow_unicode=True, sort_keys=False)
+        except Exception:
+            return self._yaml_text
+
     @Slot(result=bool)
     def save(self) -> bool:
         try:
@@ -1887,8 +1909,9 @@ class AdapterStudioViewModel(BaseViewModel):
         if not slug:
             self.set_field_errors({"supplierName": "저장할 영문 도매처명을 입력하세요."})
             return False
+        yaml_to_save = self._yaml_with_category_entries()
         try:
-            save_adapter(slug, self._yaml_text)
+            save_adapter(slug, yaml_to_save)
         except Exception as exc:
             self.set_field_errors({"form": f"저장 실패: {sanitize_diagnostic(exc)}"})
             return False
@@ -1897,7 +1920,50 @@ class AdapterStudioViewModel(BaseViewModel):
         self._yaml_dirty = False
         self.set_field_errors({})
         self._emit()
+        # 도매처(Supplier) 자동 생성/갱신을 도매처 화면에 위임한다. 자격증명은 이미
+        # slug 키로 저장돼 있으므로 credential_key = slug 로 연결된다.
+        self.supplierSaved.emit(
+            slug,
+            str(self._inputs["supplierName"]).strip(),
+            str(self._inputs["mainUrl"]).strip(),
+            bool(self._inputs["needsLogin"]),
+        )
         return True
+
+    def _reset_wizard(self) -> None:
+        self._current_stage = 0
+        self._inputs = {
+            "supplierName": "", "mainUrl": "", "listingUrl": "", "detailUrl": "",
+            "needsLogin": False, "loginUrl": "", "username": "", "password": "",
+        }
+        self._yaml_text = ""
+        self._yaml_dirty = False
+        self._validated_hash = None
+        self._validation_summary = None
+        self._validation_stale = True
+        self._validation_raw = {}
+        self._probe_result = None
+        self._probe_summary = {}
+        self._mapping_hints = []
+        self._mapping_rows.resetRows([])
+        self._clear_save_warning()
+        self.set_field_errors({})
+
+    @Slot()
+    def startNew(self) -> None:
+        """‘+ 쇼핑몰 추가’ 진입 시 마법사를 1단계(연결)부터 새로 시작."""
+        self._reset_wizard()
+        self._emit()
+
+    @Slot(str, str, bool)
+    def startForSupplier(self, name: str, main_url: str, needs_login: bool) -> None:
+        """기존 쇼핑몰 ‘다시 분석’ — 이름/주소/로그인여부를 채운 채 마법사를 연다.
+        같은 이름 → 같은 slug 이므로 저장 시 기존 어댑터·도매처가 갱신된다."""
+        self._reset_wizard()
+        self._inputs["supplierName"] = str(name or "")
+        self._inputs["mainUrl"] = str(main_url or "")
+        self._inputs["needsLogin"] = bool(needs_login)
+        self._emit()
 
     def _migrate_credentials_to_runtime_slug(self, slug: str) -> bool:
         if not self._inputs["needsLogin"]:

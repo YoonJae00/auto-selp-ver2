@@ -437,7 +437,7 @@ Item {
                                 text: "경고 확인 후 계속"
                                 onClicked: root.viewModel.acknowledgeSaveWarning()
                             }
-                            Components.AppButton { text: "어댑터 저장"; selected: true; enabled: !root.viewModel.busy; onClicked: { if (root.viewModel.save() && root.toastHost) root.toastHost.showMessage("어댑터가 저장되었습니다", "info") } }
+                            Components.AppButton { text: "저장하고 도매처 등록"; selected: true; enabled: !root.viewModel.busy; onClicked: { if (root.viewModel.save() && root.toastHost) root.toastHost.showMessage("쇼핑몰이 등록되었습니다", "info") } }
                         }
                     }
                 }

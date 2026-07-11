@@ -2074,3 +2074,49 @@ def test_preview_mapping_does_not_trigger_repair(vm) -> None:
     })
 
     assert calls == []
+
+
+def test_start_for_supplier_seeds_connection_inputs() -> None:
+    from app.ui_qml.viewmodels.adapter_studio import AdapterStudioViewModel
+
+    vm = AdapterStudioViewModel(app_view_model=AppViewModel())
+    vm.acceptGeneratedYaml(VALID_YAML)  # 마법사에 상태를 채워두고
+    vm.startForSupplier("Re Shop", "https://reshop.example", True)
+
+    assert vm.currentStage == 0
+    assert vm.yamlText == ""  # 리셋됨
+    inputs = vm.connectionInputs
+    assert inputs["supplierName"] == "Re Shop"
+    assert inputs["mainUrl"] == "https://reshop.example"
+    assert inputs["needsLogin"] is True
+
+
+def test_start_new_clears_previous_wizard_state() -> None:
+    from app.ui_qml.viewmodels.adapter_studio import AdapterStudioViewModel
+
+    vm = AdapterStudioViewModel(app_view_model=AppViewModel())
+    vm.setConnectionInputs({"supplierName": "Old", "mainUrl": "https://old.example"})
+    vm.acceptGeneratedYaml(VALID_YAML)
+    vm.startNew()
+
+    assert vm.currentStage == 0
+    assert vm.yamlText == ""
+    assert vm.connectionInputs["supplierName"] == ""
+
+
+def test_save_persists_discovered_category_entries_into_yaml() -> None:
+    import yaml as _yaml
+    from app.ui_qml.viewmodels.adapter_studio import AdapterStudioViewModel
+
+    vm = AdapterStudioViewModel(app_view_model=AppViewModel())
+    vm._yaml_text = "adapter:\n  name: t\n  categories:\n    mode: tree\n"
+    vm._probe_summary = {"categories": [
+        {"name": "주방", "url": "http://x/k"},
+        {"name": "욕실", "url": "http://x/b"},
+    ]}
+    merged = vm._yaml_with_category_entries()
+    entries = _yaml.safe_load(merged)["adapter"]["categories"]["entries"]
+    assert entries == [
+        {"name": "주방", "url": "http://x/k"},
+        {"name": "욕실", "url": "http://x/b"},
+    ]
