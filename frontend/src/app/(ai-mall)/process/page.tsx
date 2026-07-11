@@ -17,6 +17,7 @@ interface WholesaleSite {
 interface ProductPlatformMapping {
   id: string;
   platform_name: string;
+  product_name: string | null;
   category_id: string | null;
   category_path: string | null;
   sync_status: string;
@@ -150,6 +151,7 @@ export default function ProcessPage() {
   const [isLoadingSites, setIsLoadingSites] = useState(true);
   const [isLoadingProducts, setIsLoadingProducts] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
+  const [isGeneratingMarketplaceNames, setIsGeneratingMarketplaceNames] = useState(false);
   const [statusFilter, setStatusFilter] = useState('');
   const [completedOnly, setCompletedOnly] = useState(false);
   const [sortMode, setSortMode] = useState('');
@@ -165,6 +167,10 @@ export default function ProcessPage() {
   );
   const totalPages = Math.ceil(total / pageSize) || 1;
   const isAllSelected = products.length > 0 && products.every((product) => selectedIds.has(product.id));
+  const completedSelectedIds = useMemo(
+    () => products.filter((product) => selectedIds.has(product.id) && product.status === 'completed').map((product) => product.id),
+    [products, selectedIds],
+  );
 
   useEffect(() => {
     const fetchSites = async () => {
@@ -359,6 +365,26 @@ export default function ProcessPage() {
     }
   };
 
+  const handleGenerateMarketplaceNames = async () => {
+    if (completedSelectedIds.length === 0) return;
+
+    setIsGeneratingMarketplaceNames(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const response = await api.post<{ generated_count: number; items: { product_id: string; product_name: string }[] }>(
+        '/api/processor/products/generate-marketplace-names',
+        { product_ids: completedSelectedIds, marketplace: 'smartstore' },
+      );
+      setSuccess(`스마트스토어 상품명 ${response.generated_count}개를 생성했습니다.`);
+      await fetchProducts();
+    } catch (err: any) {
+      setError(err.message || '스마트스토어 상품명 생성 중 오류가 발생했습니다.');
+    } finally {
+      setIsGeneratingMarketplaceNames(false);
+    }
+  };
+
   return (
     <div className={styles.container}>
       <div className={styles.pageHeader}>
@@ -402,10 +428,20 @@ export default function ProcessPage() {
               <PillButton
                 variant="primary"
                 onClick={handleStartSelectedProcessing}
-                disabled={selectedIds.size === 0 || isStarting}
+                disabled={selectedIds.size === 0 || isStarting || isGeneratingMarketplaceNames}
                 type="button"
               >
-                {isStarting ? '가공 시작 중...' : `선택 상품 가공 (${selectedIds.size})`}
+                {isStarting ? '1단계 AI 가공 시작 중...' : `1단계 AI 가공 (${selectedIds.size})`}
+              </PillButton>
+              <PillButton
+                variant="secondary"
+                onClick={handleGenerateMarketplaceNames}
+                disabled={completedSelectedIds.length === 0 || isGeneratingMarketplaceNames || isStarting}
+                type="button"
+              >
+                {isGeneratingMarketplaceNames
+                  ? '2단계 스마트스토어 상품명 생성 중...'
+                  : `2단계 스마트스토어 상품명 생성 (${completedSelectedIds.length})`}
               </PillButton>
             </div>
           </div>
@@ -536,6 +572,7 @@ export default function ProcessPage() {
                   <th>상품명</th>
                   <th>옵션</th>
                   <th>가공된 상품명</th>
+                  <th>스마트스토어 상품명</th>
                   <th>키워드</th>
                   <th>도매처 코드</th>
                   <th>도매가</th>
@@ -546,12 +583,12 @@ export default function ProcessPage() {
               <tbody>
                 {isLoadingProducts && (
                   <tr>
-                    <td colSpan={10} className={styles.tableMessage}>상품을 불러오는 중입니다.</td>
+                    <td colSpan={11} className={styles.tableMessage}>상품을 불러오는 중입니다.</td>
                   </tr>
                 )}
                 {!isLoadingProducts && products.length === 0 && (
                   <tr>
-                    <td colSpan={10} className={styles.tableMessage}>이 조건에 맞는 상품이 없습니다.</td>
+                    <td colSpan={11} className={styles.tableMessage}>이 조건에 맞는 상품이 없습니다.</td>
                   </tr>
                 )}
                 {!isLoadingProducts && products.map((product) => {
@@ -560,6 +597,7 @@ export default function ProcessPage() {
                   const displayStatus = realTimeUpdate ? realTimeUpdate.status : product.status;
                   const displayRefinedName = realTimeUpdate && realTimeUpdate.refined_name ? realTimeUpdate.refined_name : product.refined_name;
                   const displayKeywords = realTimeUpdate && realTimeUpdate.keywords ? realTimeUpdate.keywords : product.keywords;
+                  const smartstoreProductName = product.platform_mappings?.find((mapping) => mapping.platform_name === 'naver')?.product_name;
                   const hasAiResult = displayStatus === 'completed' && (!!displayRefinedName || (displayKeywords?.length ?? 0) > 0);
                   return (
                     <tr key={product.id} className={selectedIds.has(product.id) ? styles.selectedRow : ''}>
@@ -621,6 +659,9 @@ export default function ProcessPage() {
                           </span>
                         )}
                       </td>
+                      <td className={styles.marketplaceNameCell}>
+                        {smartstoreProductName || (product.status === 'completed' ? '생성 전' : '-')}
+                      </td>
                       <td>
                         {hasAiResult && displayKeywords && displayKeywords.length > 0 ? (
                           <div className={styles.keywordCloud}>
@@ -675,10 +716,20 @@ export default function ProcessPage() {
               <PillButton
                 variant="primary"
                 onClick={handleStartSelectedProcessing}
-                disabled={isStarting}
+                disabled={isStarting || isGeneratingMarketplaceNames}
                 type="button"
               >
-                {isStarting ? '가공 시작 중...' : '선택 상품 가공'}
+                {isStarting ? '1단계 AI 가공 시작 중...' : '1단계 AI 가공'}
+              </PillButton>
+              <PillButton
+                variant="secondary"
+                onClick={handleGenerateMarketplaceNames}
+                disabled={completedSelectedIds.length === 0 || isGeneratingMarketplaceNames || isStarting}
+                type="button"
+              >
+                {isGeneratingMarketplaceNames
+                  ? '2단계 스마트스토어 상품명 생성 중...'
+                  : `2단계 스마트스토어 상품명 생성 (${completedSelectedIds.length})`}
               </PillButton>
               <button
                 type="button"

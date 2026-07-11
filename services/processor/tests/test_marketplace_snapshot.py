@@ -103,6 +103,7 @@ def build_product(product_id: uuid.UUID, user_id: uuid.UUID):
                 platform_name="naver",
                 category_id="50000001",
                 category_path="생활/주방",
+                product_name="저소음 무선 선풍기",
                 mapped_attributes={"color": "red"},
             ),
             SimpleNamespace(
@@ -200,16 +201,19 @@ def test_marketplace_snapshot_success(monkeypatch):
         "smartstore": {
             "category_id": "50000001",
             "category_path": "생활/주방",
+            "product_name": "저소음 무선 선풍기",
             "mapped_attributes": {"color": "red"},
         },
         "coupang": {
             "category_id": "12345",
             "category_path": "가전디지털",
+            "product_name": None,
             "mapped_attributes": {"delivery": "rocket"},
         },
         "11st": {
             "category_id": "888",
             "category_path": "기타",
+            "product_name": None,
             "mapped_attributes": {"x": "y"},
         },
     }
@@ -312,12 +316,14 @@ def test_marketplace_snapshot_prefers_explicit_smartstore_over_legacy_naver(monk
         platform_name="smartstore",
         category_id="90000009",
         category_path="우선/스마트스토어",
+        product_name="명시 스마트스토어 상품명",
         mapped_attributes={"priority": "explicit"},
     )
     legacy_naver = SimpleNamespace(
         platform_name="naver",
         category_id="50000001",
         category_path="레거시/네이버",
+        product_name="레거시 네이버 상품명",
         mapped_attributes={"priority": "legacy"},
     )
 
@@ -340,6 +346,7 @@ def test_marketplace_snapshot_prefers_explicit_smartstore_over_legacy_naver(monk
         assert response.json()["market_categories"]["smartstore"] == {
             "category_id": "90000009",
             "category_path": "우선/스마트스토어",
+            "product_name": "명시 스마트스토어 상품명",
             "mapped_attributes": {"priority": "explicit"},
         }
 

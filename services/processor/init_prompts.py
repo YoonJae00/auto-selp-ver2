@@ -51,6 +51,7 @@ async def seed_prompts():
         await conn.execute(text("ALTER TABLE product_platform_mappings ADD COLUMN IF NOT EXISTS last_synced_status VARCHAR"))
         await conn.execute(text("ALTER TABLE product_platform_mappings ADD COLUMN IF NOT EXISTS last_synced_at TIMESTAMP"))
         await conn.execute(text("ALTER TABLE product_platform_mappings ADD COLUMN IF NOT EXISTS last_changed_at TIMESTAMP"))
+        await conn.execute(text("ALTER TABLE product_platform_mappings ADD COLUMN IF NOT EXISTS product_name VARCHAR"))
         
     async with SessionLocal() as db:
         for key, data in DEFAULT_PROMPTS.items():

@@ -150,7 +150,7 @@ def test_smartstore_adapter_builds_payload_and_pricing_snapshot():
     assert result.expected_margin_rate == 25.14
     assert result.primary_image_url == "https://img.example/1.jpg"
     assert result.adapter_version == "smartstore-adapter:v1"
-    assert result.recipe_versions["title"] == "smartstore-title:v1"
+    assert result.recipe_versions["title"] == "smartstore-title:v2"
     assert result.validation_result == {"status": "valid"}
 
     payload = result.generated_payload
@@ -179,6 +179,16 @@ def test_smartstore_adapter_builds_payload_and_pricing_snapshot():
         "expectedProfit": 4324,
         "expectedMarginRate": 25.14,
     }
+
+
+def test_smartstore_adapter_prefers_precomputed_product_name():
+    snapshot = _source_snapshot()
+    snapshot["market_categories"]["smartstore"]["product_name"] = "저소음 무선 선풍기"
+
+    result = SmartstoreAdapter().generate_draft(snapshot, _smartstore_settings())
+
+    assert result.display_title == "저소음 무선 선풍기"
+    assert result.generated_payload["originProduct"]["name"] == "저소음 무선 선풍기"
 
 
 def test_coupang_adapter_uses_market_specific_policy_and_keeps_item_assets():

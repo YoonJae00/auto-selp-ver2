@@ -12,12 +12,13 @@ from schemas import DraftResult
 class SmartstoreAdapter(MarketplaceAdapter):
     market_code = "smartstore"
     adapter_version = "smartstore-adapter:v1"
-    title_recipe_version = "smartstore-title:v1"
+    title_recipe_version = "smartstore-title:v2"
 
     def generate_draft(
         self, source_snapshot: Mapping[str, Any], account_settings: Mapping[str, Any] | None
     ) -> DraftResult:
-        title = self._compose_title(source_snapshot)
+        smartstore_category = source_snapshot.get("market_categories", {}).get("smartstore", {})
+        title = self._clean_str(smartstore_category.get("product_name")) or self._compose_title(source_snapshot)
         category_id = self._extract_category_id(source_snapshot)
         primary_image_url = self._extract_primary_image(source_snapshot)
         optional_images = self._extract_optional_images(source_snapshot)
@@ -52,7 +53,6 @@ class SmartstoreAdapter(MarketplaceAdapter):
         expected_margin_rate = pricing_output["expectedMarginRate"] if pricing_output else None
 
         # Add attribute mapping consumption
-        smartstore_category = source_snapshot.get("market_categories", {}).get("smartstore", {})
         mapped_attrs = smartstore_category.get("mapped_attributes", {}) if smartstore_category else {}
         
         detail_attribute = {

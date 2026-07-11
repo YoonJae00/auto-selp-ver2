@@ -98,6 +98,7 @@ class ProductPlatformMapping(Base):
 
     category_id: Mapped[str | None] = mapped_column(String, nullable=True)
     category_path: Mapped[str | None] = mapped_column(String, nullable=True)
+    product_name: Mapped[str | None] = mapped_column(String, nullable=True)
 
     platform_product_id: Mapped[str | None] = mapped_column(String, nullable=True)
     sync_status: Mapped[str] = mapped_column(String, default="draft") # 'draft', 'synced', 'failed', 'pending_update'

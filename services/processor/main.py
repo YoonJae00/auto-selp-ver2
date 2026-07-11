@@ -1,5 +1,6 @@
 import os
 import uuid
+import logging
 import pandas as pd
 from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, Request, Header
 from fastapi.responses import FileResponse, StreamingResponse
@@ -31,16 +32,21 @@ from schemas import (
     WholesaleSiteUpdate,
     WholesaleSiteResponse,
     MarketplaceSnapshotResponse,
+    MarketplaceNameRequest,
+    MarketplaceNameResponse,
     ProductDeleteRequest,
     ProductDeleteResponse,
 )
 from utils.prompt_manager import PromptManager
 from utils.wholesale_upload import parse_wholesale_row, validate_required_mappings
+from utils.product_name import generate_product_name
+from clients.marketplace_client import MarketplaceClient
 from config import settings
 
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(title="Auto-Selp Product Processor")
+logger = logging.getLogger(__name__)
 
 app.add_middleware(
     CORSMiddleware,
@@ -561,6 +567,53 @@ async def list_products(
     }
 
 
+@app.post("/products/generate-marketplace-names", response_model=MarketplaceNameResponse)
+async def generate_marketplace_names(
+    request: MarketplaceNameRequest,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    product_ids = list(dict.fromkeys(request.product_ids))
+    result = await db.execute(
+        select(Product)
+        .where(and_(Product.user_id == current_user["id"], Product.id.in_(product_ids)))
+        .options(selectinload(Product.platform_mappings))
+    )
+    products = result.scalars().all()
+    if len(products) != len(product_ids):
+        raise HTTPException(status_code=404, detail="Some selected products were not found.")
+    if any(product.status != "completed" or not product.refined_name or not product.keywords for product in products):
+        raise HTTPException(status_code=422, detail="Selected products must have completed processing results.")
+
+    items = []
+    for product in products:
+        mapping = next(
+            (item for item in product.platform_mappings if item.platform_name == "naver"), None
+        )
+        if mapping is None:
+            mapping = ProductPlatformMapping(product_id=product.id, platform_name="naver")
+            db.add(mapping)
+        product_name = generate_product_name(
+            product.keywords, product.refined_name, product.brand_name, product.original_name
+        )
+        if not product_name:
+            raise HTTPException(status_code=422, detail="Could not generate a marketplace product name.")
+        mapping.product_name = product_name
+        product.updated_at = datetime.utcnow()
+        items.append({"product_id": product.id, "product_name": mapping.product_name})
+
+    await db.commit()
+
+    marketplace_client = MarketplaceClient()
+    for product in products:
+        try:
+            await marketplace_client.request_draft_generation(product)
+        except Exception as error:
+            logger.error("Failed to request marketplace draft generation for %s: %s", product.id, error)
+
+    return {"generated_count": len(items), "items": items}
+
+
 @app.get("/internal/products/{product_id}/marketplace-snapshot", response_model=MarketplaceSnapshotResponse)
 async def get_marketplace_snapshot(
     product_id: uuid.UUID,
@@ -589,6 +642,7 @@ async def get_marketplace_snapshot(
         market_categories[platform_name] = {
             "category_id": mapping.category_id,
             "category_path": mapping.category_path,
+            "product_name": getattr(mapping, "product_name", None),
             "mapped_attributes": mapping.mapped_attributes,
         }
 

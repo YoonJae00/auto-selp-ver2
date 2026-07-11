@@ -1,6 +1,6 @@
 from pydantic import BaseModel, ConfigDict, Field
 from datetime import datetime
-from typing import Optional, Dict, List, Any
+from typing import Optional, Dict, List, Any, Literal
 from uuid import UUID
 
 class ProcessRequest(BaseModel):
@@ -32,6 +32,7 @@ class ProductPlatformMappingResponse(BaseModel):
     platform_name: str
     category_id: Optional[str] = None
     category_path: Optional[str] = None
+    product_name: Optional[str] = None
     platform_product_id: Optional[str] = None
     sync_status: str
     sync_error: Optional[str] = None
@@ -138,6 +139,7 @@ class MarketplaceSnapshotImages(BaseModel):
 class MarketplaceSnapshotCategory(BaseModel):
     category_id: Optional[str] = None
     category_path: Optional[str] = None
+    product_name: Optional[str] = None
     mapped_attributes: Optional[Any] = None
 
 
@@ -169,3 +171,18 @@ class ProductDeleteResponse(BaseModel):
     deleted_count: int
     warning_synced_count: int = 0
     message: str
+
+
+class MarketplaceNameRequest(BaseModel):
+    product_ids: List[UUID] = Field(min_length=1)
+    marketplace: Literal["smartstore"]
+
+
+class MarketplaceNameItem(BaseModel):
+    product_id: UUID
+    product_name: str
+
+
+class MarketplaceNameResponse(BaseModel):
+    generated_count: int
+    items: List[MarketplaceNameItem]
