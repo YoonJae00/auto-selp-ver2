@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from app.crawlers.yaml_adapter import (
     _image_csv,
+    _image_values,
     _is_placeholder_src,
     _supported_image_url,
     _without_images,
@@ -56,3 +57,13 @@ def test_image_csv_filters_and_joins() -> None:
         "https://x.com/data/goods/9",  # extensionless → kept
     ]) == "https://x.com/a.jpg,https://x.com/data/goods/9"
     assert _image_csv([]) is None
+
+
+def test_relative_src_is_absolutized_against_page_url() -> None:
+    # 몰의 <img src>는 대개 상대경로 — page.url 기준으로 절대 URL이 되어야 한다.
+    page_url = "http://localhost:9000/detail.html?product_no=401"
+    assert _supported_image_url("assets/images/p_main.jpg", page_url) == "http://localhost:9000/assets/images/p_main.jpg"
+    assert _image_values(["assets/images/a.jpg", "/b.png"], page_url) == [
+        "http://localhost:9000/assets/images/a.jpg",
+        "http://localhost:9000/b.png",
+    ]

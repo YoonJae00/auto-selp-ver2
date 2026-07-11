@@ -139,7 +139,7 @@ def apply_locked_hints_to_yaml_dict(data: dict[str, Any], hints: list[MappingHin
                 groups.append(dict(OPTION_GROUP_DEFAULTS))
             existing = groups[0] if isinstance(groups[0], dict) else {}
             groups[0] = {**OPTION_GROUP_DEFAULTS, **existing, "values_selector": hint.chosen_selector}
-            options.setdefault("detection", "dom")
+            options["detection"] = "dom"
             options.setdefault("type", "combination")
         elif hint.field_path == "adapter.options.option_price_delta":
             options = adapter.setdefault("options", {})
@@ -148,7 +148,7 @@ def apply_locked_hints_to_yaml_dict(data: dict[str, Any], hints: list[MappingHin
             existing_raw = options.get("option_price_delta")
             existing = existing_raw if isinstance(existing_raw, dict) else {}
             options["option_price_delta"] = {**OPTION_PRICE_DEFAULTS, **existing, **fields}
-            options.setdefault("detection", "dom")
+            options["detection"] = "dom"
             options.setdefault("type", "combination")
         elif hint.field_path == "adapter.listing.product_link":
             listing = adapter.setdefault("listing", {})
