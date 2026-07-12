@@ -29,6 +29,8 @@ export interface Task {
   startTime: number;
   warnings?: Record<number, any[]>;
   result?: any;
+  kind?: 'ai-processing' | 'smartstore-naming';
+  poll?: boolean;
 }
 
 interface TaskState {

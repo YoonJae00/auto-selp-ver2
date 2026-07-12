@@ -140,7 +140,7 @@ const renderAttributes = (product: Product, realTimeMappedAttributes?: any) => {
 
 export default function ProcessPage() {
   const { llmProvider, visionLlmProvider, kiprisEnabled } = useSettingsStore();
-  const { tasks, addTask } = useTaskStore();
+  const { tasks, addTask, updateTask } = useTaskStore();
 
   const [wholesaleSites, setWholesaleSites] = useState<WholesaleSite[]>([]);
   const [activeSiteId, setActiveSiteId] = useState('');
@@ -152,6 +152,8 @@ export default function ProcessPage() {
   const [isLoadingProducts, setIsLoadingProducts] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
   const [isGeneratingMarketplaceNames, setIsGeneratingMarketplaceNames] = useState(false);
+  const [workMode, setWorkMode] = useState<'ai' | 'marketplace'>('ai');
+  const [smartstoreSelected, setSmartstoreSelected] = useState(true);
   const [statusFilter, setStatusFilter] = useState('');
   const [completedOnly, setCompletedOnly] = useState(false);
   const [sortMode, setSortMode] = useState('');
@@ -353,9 +355,10 @@ export default function ProcessPage() {
         total: response.total,
         status: 'PENDING',
         startTime: Date.now(),
+        kind: 'ai-processing',
       });
 
-      setSuccess(`${response.total}개 상품 가공을 시작했습니다. 좌측 하단 진행 캡슐에서 상태를 확인할 수 있습니다.`);
+      setSuccess(`${response.total}개 상품 가공을 시작했습니다. 오른쪽 하단 진행 캡슐에서 상태를 확인할 수 있습니다.`);
       setSelectedIds(new Set());
       fetchProducts();
     } catch (err: any) {
@@ -366,8 +369,19 @@ export default function ProcessPage() {
   };
 
   const handleGenerateMarketplaceNames = async () => {
-    if (completedSelectedIds.length === 0) return;
+    if (!smartstoreSelected || completedSelectedIds.length === 0) return;
 
+    const taskId = crypto.randomUUID();
+    addTask({
+      id: taskId,
+      filename: `${activeSite?.name || '선택'} 상품`,
+      progress: 0,
+      total: completedSelectedIds.length,
+      status: 'PROGRESS',
+      startTime: Date.now(),
+      kind: 'smartstore-naming',
+      poll: false,
+    });
     setIsGeneratingMarketplaceNames(true);
     setError(null);
     setSuccess(null);
@@ -376,10 +390,13 @@ export default function ProcessPage() {
         '/api/processor/products/generate-marketplace-names',
         { product_ids: completedSelectedIds, marketplace: 'smartstore' },
       );
+      updateTask(taskId, { progress: 100, status: 'SUCCESS', result: response });
       setSuccess(`스마트스토어 상품명 ${response.generated_count}개를 생성했습니다.`);
       await fetchProducts();
     } catch (err: any) {
-      setError(err.message || '스마트스토어 상품명 생성 중 오류가 발생했습니다.');
+      const message = err.message || '스마트스토어 상품명 생성 중 오류가 발생했습니다.';
+      updateTask(taskId, { status: 'FAILURE', result: { error: message } });
+      setError(message);
     } finally {
       setIsGeneratingMarketplaceNames(false);
     }
@@ -424,25 +441,63 @@ export default function ProcessPage() {
               <h2 className={styles.sectionTitle}>{activeSite.name} 상품 목록</h2>
               <p className={styles.sectionDesc}>총 {total.toLocaleString('ko-KR')}개 중 현재 페이지 {products.length}개 표시</p>
             </div>
-            <div className={styles.toolbarActions}>
-              <PillButton
-                variant="primary"
-                onClick={handleStartSelectedProcessing}
-                disabled={selectedIds.size === 0 || isStarting || isGeneratingMarketplaceNames}
+          </div>
+
+          <div className={styles.workbench}>
+            <div className={styles.modeTabs} role="tablist" aria-label="상품 가공 방식">
+              <button
                 type="button"
+                role="tab"
+                aria-selected={workMode === 'ai'}
+                className={workMode === 'ai' ? styles.activeModeTab : ''}
+                onClick={() => setWorkMode('ai')}
               >
-                {isStarting ? '1단계 AI 가공 시작 중...' : `1단계 AI 가공 (${selectedIds.size})`}
-              </PillButton>
-              <PillButton
-                variant="secondary"
-                onClick={handleGenerateMarketplaceNames}
-                disabled={completedSelectedIds.length === 0 || isGeneratingMarketplaceNames || isStarting}
+                기본 AI 가공
+              </button>
+              <button
                 type="button"
+                role="tab"
+                aria-selected={workMode === 'marketplace'}
+                className={workMode === 'marketplace' ? styles.activeModeTab : ''}
+                onClick={() => setWorkMode('marketplace')}
               >
-                {isGeneratingMarketplaceNames
-                  ? '2단계 스마트스토어 상품명 생성 중...'
-                  : `2단계 스마트스토어 상품명 생성 (${completedSelectedIds.length})`}
-              </PillButton>
+                마켓 상품명
+              </button>
+            </div>
+            <div className={styles.modePanel} role="tabpanel">
+              {workMode === 'ai' ? (
+                <div>
+                  <strong>판매에 필요한 기본 정보를 한 번에 준비합니다</strong>
+                  <p>AI가 상품명을 정제하고 키워드, 카테고리, 속성을 만듭니다. 상품을 선택하면 아래에서 바로 시작할 수 있어요.</p>
+                </div>
+              ) : (
+                <>
+                  <div>
+                    <strong>판매할 마켓을 선택하세요</strong>
+                    <p>기본 AI 가공이 완료된 상품만 마켓별 상품명을 만들 수 있습니다.</p>
+                  </div>
+                  <div className={styles.marketOptions} aria-label="마켓 선택">
+                    <label className={styles.marketOption}>
+                      <input
+                        type="checkbox"
+                        checked={smartstoreSelected}
+                        onChange={(event) => setSmartstoreSelected(event.target.checked)}
+                      />
+                      <span><strong>스마트스토어</strong><small>네이버 검색 규칙에 맞춘 상품명</small></span>
+                    </label>
+                    <label className={`${styles.marketOption} ${styles.disabledMarketOption}`}>
+                      <input type="checkbox" disabled />
+                      <span><strong>쿠팡 <em>준비 중</em></strong><small>지원 시 이곳에서 함께 선택할 수 있어요</small></span>
+                    </label>
+                  </div>
+                  {selectedIds.size > 0 && (
+                    <p className={styles.eligibilityNote}>
+                      선택 {selectedIds.size}개 중 <strong>AI 가공 완료 {completedSelectedIds.length}개</strong>만 대상
+                      {selectedIds.size > completedSelectedIds.length && ` · 미완료 ${selectedIds.size - completedSelectedIds.length}개 제외`}
+                    </p>
+                  )}
+                </>
+              )}
             </div>
           </div>
 
@@ -710,27 +765,32 @@ export default function ProcessPage() {
         <div className={styles.floatingActionBar}>
           <div className={styles.floatingContent}>
             <span className={styles.floatingText}>
-              ✨ 현재 <strong>{selectedIds.size}</strong>개의 상품이 선택되었습니다.
+              {workMode === 'ai' ? (
+                <>✨ 선택한 <strong>{selectedIds.size}개</strong>를 기본 AI 가공합니다.</>
+              ) : (
+                <>🏷️ 선택 {selectedIds.size}개 중 <strong>AI 가공 완료 {completedSelectedIds.length}개</strong>가 대상입니다.</>
+              )}
             </span>
             <div className={styles.floatingButtons}>
-              <PillButton
-                variant="primary"
-                onClick={handleStartSelectedProcessing}
-                disabled={isStarting || isGeneratingMarketplaceNames}
-                type="button"
-              >
-                {isStarting ? '1단계 AI 가공 시작 중...' : '1단계 AI 가공'}
-              </PillButton>
-              <PillButton
-                variant="secondary"
-                onClick={handleGenerateMarketplaceNames}
-                disabled={completedSelectedIds.length === 0 || isGeneratingMarketplaceNames || isStarting}
-                type="button"
-              >
-                {isGeneratingMarketplaceNames
-                  ? '2단계 스마트스토어 상품명 생성 중...'
-                  : `2단계 스마트스토어 상품명 생성 (${completedSelectedIds.length})`}
-              </PillButton>
+              {workMode === 'ai' ? (
+                <PillButton
+                  variant="primary"
+                  onClick={handleStartSelectedProcessing}
+                  disabled={isStarting || isGeneratingMarketplaceNames}
+                  type="button"
+                >
+                  {isStarting ? '가공 시작 중...' : `선택 상품 가공 (${selectedIds.size})`}
+                </PillButton>
+              ) : (
+                <PillButton
+                  variant="primary"
+                  onClick={handleGenerateMarketplaceNames}
+                  disabled={!smartstoreSelected || completedSelectedIds.length === 0 || isGeneratingMarketplaceNames || isStarting}
+                  type="button"
+                >
+                  {isGeneratingMarketplaceNames ? '상품명 만드는 중...' : `상품명 만들기 (${completedSelectedIds.length})`}
+                </PillButton>
+              )}
               <button
                 type="button"
                 className={styles.floatingCancelButton}

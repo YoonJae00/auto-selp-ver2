@@ -15,6 +15,8 @@ const STAGE_META: Record<string, { label: string; icon: string }> = {
 
 const STAGE_ORDER = ['refining', 'keywords', 'categorizing', 'extracting'];
 
+const taskLabel = (task: Task) => task.kind === 'smartstore-naming' ? '스마트스토어 상품명' : 'AI 기본 가공';
+
 function formatMs(ms: number): string {
   return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`;
 }
@@ -159,7 +161,7 @@ function DetailModal({ task, onClose }: { task: Task; onClose: () => void }) {
         {/* Header */}
         <div className={styles.modalHeader}>
           <button className={styles.backBtn} onClick={onClose}>← 목록</button>
-          <span className={styles.modalFilename} title={task.filename}>{task.filename}</span>
+          <span className={styles.modalFilename} title={task.filename}>{taskLabel(task)} · {task.filename}</span>
           <span className={`${styles.badge} ${styles[`badge_${task.status}`]}`}>
             {task.status === 'PROGRESS' ? `${task.progress}%`
               : task.status === 'SUCCESS' ? '완료'
@@ -174,7 +176,7 @@ function DetailModal({ task, onClose }: { task: Task; onClose: () => void }) {
             <div className={styles.modalProgressFill} style={{ width: `${task.progress}%` }} />
           </div>
           <span className={styles.modalProgressText}>
-            {completedRows.length} / {total} 완료 · {task.progress}%
+            {task.kind === 'smartstore-naming' ? `${taskLabel(task)} · ${task.progress}%` : `${completedRows.length} / ${total} 완료 · ${task.progress}%`}
           </span>
         </div>
 
@@ -189,6 +191,15 @@ function DetailModal({ task, onClose }: { task: Task; onClose: () => void }) {
           {[...completedRows].reverse().map((row, i) => (
             <CompletedRowItem key={i} row={row} />
           ))}
+          {task.status === 'FAILURE' && task.result?.error && (
+            <div className={`${styles.stageItem} ${styles.stageError}`}>
+              <span className={styles.stageDot}>✗</span>
+              <div className={styles.stageBody}>
+                <div className={styles.stageLabel}>오류 발생</div>
+                <div className={styles.stageDetail}>{task.result.error}</div>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Download */}
@@ -226,7 +237,7 @@ function ListView({
         {[...tasks].reverse().map((task) => (
           <button key={task.id} className={styles.taskRow} onClick={() => onSelect(task.id)}>
             <div className={styles.taskRowTop}>
-              <span className={styles.taskFilename} title={task.filename}>{task.filename}</span>
+              <span className={styles.taskFilename} title={task.filename}>{taskLabel(task)} · {task.filename}</span>
               <span className={`${styles.badge} ${styles[`badge_${task.status}`]}`}>
                 {task.status === 'PROGRESS' ? `${task.progress}%`
                   : task.status === 'SUCCESS' ? '완료'
@@ -314,7 +325,7 @@ export default function IntelligenceCapsule() {
                 {isActive ? (
                   <>
                     <span className={styles.capsuleIcon}>⚡</span>
-                    <span>가공 중... ({displayTask.progress}%)</span>
+                    <span>{taskLabel(displayTask)} 중... ({displayTask.progress}%)</span>
                     <div className={styles.miniBar}>
                       <div className={styles.miniBarFill} style={{ width: `${displayTask.progress}%` }} />
                     </div>
@@ -322,7 +333,7 @@ export default function IntelligenceCapsule() {
                 ) : (
                   <>
                     <span className={styles.capsuleIcon}>✅</span>
-                    <span>가공 완료</span>
+                    <span>{taskLabel(displayTask)} {displayTask.status === 'FAILURE' ? '실패' : '완료'}</span>
                   </>
                 )}
               </div>

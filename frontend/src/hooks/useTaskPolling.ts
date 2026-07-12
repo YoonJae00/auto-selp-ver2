@@ -18,7 +18,7 @@ export function useTaskPolling() {
     const interval = setInterval(async () => {
       // Get the latest tasks from the store state to avoid triggering effect re-runs
       const { tasks } = useTaskStore.getState();
-      const activeTasks = tasks.filter(t => t.status === 'PENDING' || t.status === 'PROGRESS');
+      const activeTasks = tasks.filter(t => t.poll !== false && (t.status === 'PENDING' || t.status === 'PROGRESS'));
       
       if (activeTasks.length === 0) return;
 

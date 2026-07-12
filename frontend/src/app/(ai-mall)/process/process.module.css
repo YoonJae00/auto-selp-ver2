@@ -100,6 +100,111 @@
   color: var(--ink-muted-48);
 }
 
+.workbench {
+  margin-bottom: 18px;
+  border: 1px solid var(--hairline);
+  border-radius: 16px;
+  overflow: hidden;
+  background: var(--canvas-parchment);
+}
+
+.modeTabs {
+  display: flex;
+  gap: 4px;
+  padding: 6px;
+  border-bottom: 1px solid var(--hairline);
+  background: var(--canvas);
+}
+
+.modeTabs button {
+  border: 0;
+  border-radius: 10px;
+  padding: 10px 16px;
+  background: transparent;
+  color: var(--ink-muted-48);
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.modeTabs button.activeModeTab {
+  background: var(--ink);
+  color: var(--canvas);
+}
+
+.modePanel {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 18px 20px;
+}
+
+.modePanel > div:first-child strong {
+  color: var(--ink);
+  font-size: 15px;
+}
+
+.modePanel p {
+  margin: 5px 0 0;
+  color: var(--ink-muted-48);
+  font-size: 13px;
+}
+
+.marketOptions {
+  display: flex;
+  gap: 10px;
+  margin-left: auto;
+}
+
+.marketOption {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 210px;
+  padding: 12px 14px;
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  background: var(--canvas);
+  cursor: pointer;
+}
+
+.marketOption span,
+.marketOption small {
+  display: block;
+}
+
+.marketOption strong {
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.marketOption small {
+  margin-top: 3px;
+  color: var(--ink-muted-48);
+  font-size: 11px;
+}
+
+.marketOption em {
+  margin-left: 4px;
+  color: var(--ink-muted-48);
+  font-size: 10px;
+  font-style: normal;
+}
+
+.disabledMarketOption {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.modePanel .eligibilityNote {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--ink-muted-80);
+  text-align: right;
+}
+
 .selectAllControl {
   display: inline-flex;
   align-items: center;
@@ -778,6 +883,21 @@
   .filterBar {
     flex-direction: column;
     align-items: stretch;
+  }
+  .modePanel,
+  .marketOptions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .marketOptions {
+    width: 100%;
+    margin-left: 0;
+  }
+  .marketOption {
+    min-width: 0;
+  }
+  .modePanel .eligibilityNote {
+    text-align: left;
   }
   .filterLeft {
     flex-direction: column;
