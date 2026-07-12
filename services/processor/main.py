@@ -1,4 +1,5 @@
 import os
+import asyncio
 import uuid
 import logging
 import pandas as pd
@@ -39,7 +40,8 @@ from schemas import (
 )
 from utils.prompt_manager import PromptManager
 from utils.wholesale_upload import parse_wholesale_row, validate_required_mappings
-from utils.product_name import generate_product_name
+from utils.product_name import select_product_name
+from clients.llm_factory import get_llm_client
 from clients.marketplace_client import MarketplaceClient
 from config import settings
 
@@ -585,7 +587,13 @@ async def generate_marketplace_names(
     if any(product.status != "completed" or not product.refined_name or not product.keywords for product in products):
         raise HTTPException(status_code=422, detail="Selected products must have completed processing results.")
 
-    items = []
+    prompt_manager = PromptManager(db)
+    try:
+        llm_client = get_llm_client(request.llm_provider, prompt_manager)
+    except Exception as error:
+        logger.error("Could not initialize %s for Smartstore names: %s", request.llm_provider, error)
+        llm_client = None
+    contexts = []
     for product in products:
         mapping = next(
             (item for item in product.platform_mappings if item.platform_name == "naver"), None
@@ -593,8 +601,46 @@ async def generate_marketplace_names(
         if mapping is None:
             mapping = ProductPlatformMapping(product_id=product.id, platform_name="naver")
             db.add(mapping)
-        product_name = generate_product_name(
-            product.keywords, product.refined_name, product.brand_name, product.original_name
+        contexts.append({
+            "product": product,
+            "mapping": mapping,
+            "refined_name": product.refined_name,
+            "keywords": product.keywords,
+            "brand_name": product.brand_name,
+            "original_name": product.original_name,
+            "category_path": mapping.category_path,
+        })
+
+    # ponytail: fixed concurrency fits HTTP batches; move to a queue if request timeouts become common.
+    semaphore = asyncio.Semaphore(4)
+
+    async def generate_candidates(context):
+        if llm_client is None:
+            return []
+        async with semaphore:
+            try:
+                return await llm_client.generate_smartstore_name_candidates(
+                    context["refined_name"],
+                    context["keywords"],
+                    context["brand_name"],
+                    context["category_path"],
+                )
+            except Exception as error:
+                logger.error("Smartstore candidate generation failed for %s: %s", context["product"].id, error)
+                return []
+
+    candidate_lists = await asyncio.gather(*(generate_candidates(context) for context in contexts))
+
+    items = []
+    for context, candidates in zip(contexts, candidate_lists):
+        product = context["product"]
+        mapping = context["mapping"]
+        product_name = select_product_name(
+            candidates,
+            context["keywords"],
+            context["refined_name"],
+            context["brand_name"],
+            context["original_name"],
         )
         if not product_name:
             raise HTTPException(status_code=422, detail="Could not generate a marketplace product name.")

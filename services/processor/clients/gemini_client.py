@@ -4,7 +4,7 @@ import json
 import logging
 from config import settings
 from utils.backoff import retry_with_backoff
-from clients.llm_client import LLMClient
+from clients.llm_client import LLMClient, smartstore_name_prompt
 from utils.prompt_manager import PromptManager
 
 logger = logging.getLogger(__name__)
@@ -14,6 +14,30 @@ class GeminiClient(LLMClient):
         genai.configure(api_key=settings.GEMINI_API_KEY)
         self.model = genai.GenerativeModel(model)
         self.prompt_manager = prompt_manager
+
+    async def generate_smartstore_name_candidates(
+        self,
+        refined_name: str,
+        keywords: list[str],
+        brand_name: str | None = None,
+        category_path: str | None = None,
+    ) -> list[str]:
+        prompt = smartstore_name_prompt(refined_name, keywords, brand_name, category_path)
+        try:
+            response = await self.model.generate_content_async(prompt)
+            text = response.text
+            if "```json" in text:
+                text = text.split("```json", 1)[1].split("```", 1)[0].strip()
+            elif "{" in text and "}" in text:
+                text = text[text.find("{"):text.rfind("}") + 1]
+            candidates = json.loads(text).get("candidates")
+            if not isinstance(candidates, list) or len(candidates) != 3 or not all(isinstance(item, str) for item in candidates):
+                return []
+            candidates = [item.strip() for item in candidates]
+            return candidates if all(candidates) else []
+        except Exception as error:
+            logger.error("Gemini Smartstore candidate generation failed: %s", error)
+            return []
 
     @retry_with_backoff(max_retries=3)
     async def refine_product_name(self, original_name: str) -> str:
@@ -121,7 +145,6 @@ class GeminiClient(LLMClient):
     async def extract_product_attributes(self, refined_name: str, image_urls: list[str], attributes: list) -> dict:
         if not image_urls:
             return {}
-        
         # Download first 3 details page images
         image_parts = []
         for url in image_urls[:3]:

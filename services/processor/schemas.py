@@ -176,6 +176,7 @@ class ProductDeleteResponse(BaseModel):
 class MarketplaceNameRequest(BaseModel):
     product_ids: List[UUID] = Field(min_length=1)
     marketplace: Literal["smartstore"]
+    llm_provider: Literal["openai", "gemini"] = "gemini"
 
 
 class MarketplaceNameItem(BaseModel):

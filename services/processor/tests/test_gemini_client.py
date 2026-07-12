@@ -71,3 +71,16 @@ async def test_gemini_extract_product_attributes_success():
         client._download_image.assert_called_once_with("http://example.com/img1.jpg")
         MockModel.return_value.generate_content_async.assert_called_once()
 
+
+@pytest.mark.asyncio
+async def test_gemini_smartstore_candidates_json_and_failure_fallback():
+    with patch("google.generativeai.GenerativeModel") as MockModel:
+        response = MagicMock()
+        response.text = '```json\n{"candidates": ["후보 하나", "후보 둘", "후보 셋"]}\n```'
+        generate = MockModel.return_value.generate_content_async = AsyncMock(return_value=response)
+        client = GeminiClient()
+
+        assert await client.generate_smartstore_name_candidates("정제명", ["키워드"]) == ["후보 하나", "후보 둘", "후보 셋"]
+
+        generate.side_effect = ValueError("bad json")
+        assert await client.generate_smartstore_name_candidates("정제명", ["키워드"]) == []

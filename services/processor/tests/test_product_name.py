@@ -1,4 +1,4 @@
-from utils.product_name import generate_product_name
+from utils.product_name import generate_product_name, select_product_name
 
 
 def test_overlapping_keywords_keep_useful_order():
@@ -42,3 +42,39 @@ def test_brand_duplicate_contained_and_fallback_are_excluded():
 def test_product_name_is_deterministic():
     values = ["작업 발판", "발판 사다리", "접이식"]
     assert generate_product_name(values, "무시") == generate_product_name(values, "무시")
+
+
+def test_llm_candidate_prefers_weighted_keyword_coverage_then_front_position():
+    assert select_product_name(
+        ["발판 사다리 접이식 작업", "작업 발판 사다리 접이식", "접이식 작업 발판 사다리"],
+        ["작업 발판", "발판 사다리", "접이식"],
+        "접이식 작업 발판 사다리",
+    ) == "작업 발판 사다리 접이식"
+
+
+def test_llm_candidate_rejects_hallucinated_and_brand_tokens():
+    assert select_product_name(
+        ["작업 발판 초경량", "ACME 작업 발판", "작업! 발판 사다리", "작업 발판 사다리"],
+        ["작업 발판", "발판 사다리"],
+        "작업 발판 사다리",
+        "acme",
+    ) == "작업 발판 사다리"
+
+
+def test_llm_candidate_rejects_bounds_and_repetition_then_falls_back():
+    keywords = ["작업 발판", "발판 사다리"]
+    refined = "작업 발판 사다리"
+    invalid = [
+        "작업 " + "발판" * 25,
+        "작업 발판 사다리 작업 발판 사다리 작업 발판 사다리 작업",
+        "작업 작업 작업 발판",
+    ]
+    assert select_product_name(invalid, keywords, refined) == generate_product_name(keywords, refined)
+    assert select_product_name([], keywords, refined) == generate_product_name(keywords, refined)
+
+
+def test_llm_candidate_requires_a_complete_verified_keyword_phrase():
+    keywords = ["작업 발판", "발판 사다리"]
+    refined = "접이식 작업 발판 사다리"
+    candidates = ["작업 접이식", "발판 접이식", "사다리 작업"]
+    assert select_product_name(candidates, keywords, refined) == generate_product_name(keywords, refined)

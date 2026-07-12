@@ -108,6 +108,57 @@ def generate_product_name(
     return " ".join(chain) if chain else _fallback(brand_tokens, refined_name, original_name)
 
 
+def select_product_name(
+    llm_candidates: Iterable[object] | None,
+    keywords: Iterable[object] | None,
+    refined_name: object,
+    brand_name: object = None,
+    original_name: object = None,
+) -> str:
+    """Select the strongest grounded LLM candidate, or use the deterministic generator."""
+    keyword_tokens = [_tokens(keyword) for keyword in keywords or []]
+    keyword_tokens = [tokens for tokens in keyword_tokens if tokens]
+    allowed = {
+        token.casefold()
+        for tokens in [*keyword_tokens, _tokens(refined_name)]
+        for token in tokens
+    }
+    brand = {token.casefold() for token in _tokens(brand_name)}
+    scored: list[tuple[tuple[int, int, int, int], str]] = []
+
+    for candidate_index, candidate in enumerate(llm_candidates or []):
+        tokens = _tokens(candidate)
+        folded = tuple(token.casefold() for token in tokens)
+        if (
+            not _fits(tokens)
+            or not _is_clean_candidate(candidate, tokens)
+            or any(token in brand for token in folded)
+            or any(token not in allowed for token in folded)
+        ):
+            continue
+
+        coverage = 0
+        front = 0
+        for keyword_index, keyword in enumerate(keyword_tokens):
+            position = _find_sequence(folded, tuple(token.casefold() for token in keyword))
+            if position is None:
+                continue
+            weight = len(keyword_tokens) - keyword_index
+            coverage += weight * len(keyword)
+            front -= weight * position
+
+        if coverage == 0:
+            continue
+
+        length = len(" ".join(tokens))
+        length_score = 0 if 25 <= length <= 35 else -min(abs(length - 25), abs(length - 35))
+        scored.append(((coverage, front, length_score, -candidate_index), " ".join(tokens)))
+
+    if scored:
+        return max(scored, key=lambda item: item[0])[1]
+    return generate_product_name(keywords, refined_name, brand_name, original_name)
+
+
 def _contains(container: tuple[str, ...], candidate: tuple[str, ...]) -> bool:
     width = len(candidate)
     candidate_folded = tuple(token.casefold() for token in candidate)
@@ -115,3 +166,18 @@ def _contains(container: tuple[str, ...], candidate: tuple[str, ...]) -> bool:
         tuple(token.casefold() for token in container[index:index + width]) == candidate_folded
         for index in range(len(container) - width + 1)
     )
+
+
+def _find_sequence(container: tuple[str, ...], candidate: tuple[str, ...]) -> int | None:
+    width = len(candidate)
+    return next(
+        (index for index in range(len(container) - width + 1) if container[index:index + width] == candidate),
+        None,
+    )
+
+
+def _is_clean_candidate(candidate: object, tokens: tuple[str, ...]) -> bool:
+    if not isinstance(candidate, str):
+        return False
+    normalized = re.sub(r"\s+", " ", unicodedata.normalize("NFKC", candidate).strip())
+    return normalized == " ".join(tokens)

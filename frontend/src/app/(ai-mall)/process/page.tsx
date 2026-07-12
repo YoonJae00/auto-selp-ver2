@@ -388,7 +388,7 @@ export default function ProcessPage() {
     try {
       const response = await api.post<{ generated_count: number; items: { product_id: string; product_name: string }[] }>(
         '/api/processor/products/generate-marketplace-names',
-        { product_ids: completedSelectedIds, marketplace: 'smartstore' },
+        { product_ids: completedSelectedIds, marketplace: 'smartstore', llm_provider: llmProvider },
       );
       updateTask(taskId, { progress: 100, status: 'SUCCESS', result: response });
       setSuccess(`스마트스토어 상품명 ${response.generated_count}개를 생성했습니다.`);

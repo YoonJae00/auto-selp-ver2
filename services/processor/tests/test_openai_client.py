@@ -38,3 +38,19 @@ async def test_openai_extract_product_attributes_success():
         assert result == {"색상": "블루", "사이즈": "M"}
         client._download_image.assert_called_once_with("http://example.com/img1.jpg")
         MockOpenAI.return_value.chat.completions.create.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_openai_smartstore_candidates_json_and_failure_fallback():
+    with patch("openai.AsyncOpenAI") as MockOpenAI:
+        response = MagicMock()
+        response.choices = [MagicMock()]
+        response.choices[0].message.content = '{"candidates": ["후보 하나", "후보 둘", "후보 셋"]}'
+        create = MockOpenAI.return_value.chat.completions.create = AsyncMock(return_value=response)
+        client = OpenAIClient()
+
+        assert await client.generate_smartstore_name_candidates("정제명", ["키워드"]) == ["후보 하나", "후보 둘", "후보 셋"]
+        assert create.call_args.kwargs["response_format"] == {"type": "json_object"}
+
+        create.side_effect = ValueError("bad json")
+        assert await client.generate_smartstore_name_candidates("정제명", ["키워드"]) == []
