@@ -210,7 +210,7 @@ export default function ProcessPage() {
       if (activeSearchQuery.trim()) {
         params.append('search', activeSearchQuery.trim());
       }
-      const effectiveStatus = completedOnly ? 'completed' : statusFilter;
+      const effectiveStatus = workMode === 'marketplace' ? 'completed' : completedOnly ? 'completed' : statusFilter;
       if (effectiveStatus) params.append('status', effectiveStatus);
       if (sortMode === 'price_asc') {
         params.append('sort_by', 'price_wholesale');
@@ -231,7 +231,7 @@ export default function ProcessPage() {
     } finally {
       setIsLoadingProducts(false);
     }
-  }, [activeSiteId, page, pageSize, statusFilter, completedOnly, sortMode, activeSearchQuery]);
+  }, [activeSiteId, page, pageSize, statusFilter, completedOnly, sortMode, activeSearchQuery, workMode]);
 
   useEffect(() => {
     fetchProducts();
@@ -247,7 +247,7 @@ export default function ProcessPage() {
   useEffect(() => {
     setSelectedIds(new Set());
     setPage(1);
-  }, [statusFilter, completedOnly, sortMode, activeSearchQuery, pageSize]);
+  }, [statusFilter, completedOnly, sortMode, activeSearchQuery, pageSize, workMode]);
 
   // Memoize a map of completed rows by product name from all active tasks
   const completedRowsMap = useMemo(() => {
@@ -531,7 +531,7 @@ export default function ProcessPage() {
                 )}
               </div>
 
-              <label className={styles.filterGroup}>
+              {workMode === 'ai' && <label className={styles.filterGroup}>
                 <span>가공 상태</span>
                 <select
                   value={statusFilter}
@@ -546,7 +546,7 @@ export default function ProcessPage() {
                   <option value="completed">완료</option>
                   <option value="failed">실패</option>
                 </select>
-              </label>
+              </label>}
 
               <label className={styles.filterGroup}>
                 <span>정렬</span>
@@ -575,7 +575,7 @@ export default function ProcessPage() {
                 </select>
               </label>
 
-              <label className={`${styles.filterToggle} ${completedOnly ? styles.activeFilterToggle : ''}`}>
+              {workMode === 'ai' && <label className={`${styles.filterToggle} ${completedOnly ? styles.activeFilterToggle : ''}`}>
                 <input
                   type="checkbox"
                   checked={completedOnly}
@@ -586,7 +586,7 @@ export default function ProcessPage() {
                   }}
                 />
                 가공 완료만 보기
-              </label>
+              </label>}
             </div>
 
             <div className={styles.filterRight}>
