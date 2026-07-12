@@ -1,12 +1,21 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 
-export type ProcessingStage = 'refining' | 'keywords' | 'categorizing' | 'extracting';
+export type ProcessingStage =
+  | 'refining'
+  | 'keywords'
+  | 'categorizing'
+  | 'extracting'
+  | 'smartstore_candidates'
+  | 'smartstore_validation';
 
 export interface CompletedRowStage {
   name: ProcessingStage;
   ms: number;
   mapped_attributes?: Record<string, any>;
+  candidates?: string[];
+  product_name?: string;
+  generation_method?: 'llm' | 'fallback';
 }
 
 export interface CompletedRow {

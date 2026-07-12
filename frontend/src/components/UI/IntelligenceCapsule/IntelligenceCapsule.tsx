@@ -11,6 +11,8 @@ const STAGE_META: Record<string, { label: string; icon: string }> = {
   keywords:     { label: '키워드 생성',      icon: '🔍' },
   categorizing: { label: '카테고리 매핑',    icon: '📂' },
   extracting:   { label: '속성 추출',        icon: '✨' },
+  smartstore_candidates: { label: 'LLM 후보 생성', icon: '💡' },
+  smartstore_validation: { label: 'SEO 검증·최종 선택', icon: '✅' },
 };
 
 const STAGE_ORDER = ['refining', 'keywords', 'categorizing', 'extracting'];
@@ -69,6 +71,25 @@ function StageDetail({ stage }: { stage: any }) {
           </div>
         );
       })()}
+      {stage.name === 'smartstore_candidates' && (
+        stage.candidates?.length > 0 ? (
+          <ol className={styles.candidateList}>
+            {stage.candidates.map((candidate: string, index: number) => (
+              <li key={`${index}-${candidate}`}>{candidate}</li>
+            ))}
+          </ol>
+        ) : (
+          <div className={styles.stageDetail}>LLM 응답 없음 · 규칙 fallback 사용</div>
+        )
+      )}
+      {stage.name === 'smartstore_validation' && stage.product_name && (
+        <div className={styles.validationResult}>
+          <span className={styles.methodBadge}>
+            {stage.generation_method === 'llm' ? 'LLM 선택' : '규칙 fallback'}
+          </span>
+          <strong>{stage.product_name}</strong>
+        </div>
+      )}
     </div>
   );
 }
@@ -154,6 +175,9 @@ function DetailModal({ task, onClose }: { task: Task; onClose: () => void }) {
   const completedRows = task.completedRows ?? [];
   const isProcessing = task.status === 'PROGRESS' || task.status === 'PENDING';
   const total = task.total ?? '?';
+  const processingTime = typeof task.result?.processing_time_ms === 'number'
+    ? formatMs(task.result.processing_time_ms)
+    : null;
 
   return (
     <div className={styles.modalOverlay} onClick={onClose}>
@@ -176,7 +200,11 @@ function DetailModal({ task, onClose }: { task: Task; onClose: () => void }) {
             <div className={styles.modalProgressFill} style={{ width: `${task.progress}%` }} />
           </div>
           <span className={styles.modalProgressText}>
-            {task.kind === 'smartstore-naming' ? `${taskLabel(task)} · ${task.progress}%` : `${completedRows.length} / ${total} 완료 · ${task.progress}%`}
+            {task.kind === 'smartstore-naming'
+              ? processingTime
+                ? `${completedRows.length} / ${total} 완료 · 전체 ${processingTime}`
+                : `${taskLabel(task)} · ${task.progress}%`
+              : `${completedRows.length} / ${total} 완료 · ${task.progress}%`}
           </span>
         </div>
 
@@ -276,6 +304,9 @@ export default function IntelligenceCapsule() {
   const isActive = activeTasks.length > 0;
   const displayTask = isActive ? activeTasks[activeTasks.length - 1] : tasks[tasks.length - 1];
   const selectedTask = selectedTaskId ? tasks.find((t) => t.id === selectedTaskId) : null;
+  const displayTime = typeof displayTask.result?.processing_time_ms === 'number'
+    ? formatMs(displayTask.result.processing_time_ms)
+    : null;
 
   const handleCapsuleClick = () => {
     setIsDrawerOpen((prev) => !prev);
@@ -333,7 +364,11 @@ export default function IntelligenceCapsule() {
                 ) : (
                   <>
                     <span className={styles.capsuleIcon}>✅</span>
-                    <span>{taskLabel(displayTask)} {displayTask.status === 'FAILURE' ? '실패' : '완료'}</span>
+                    <span>
+                      {taskLabel(displayTask)} {displayTask.status === 'FAILURE'
+                        ? '실패'
+                        : `완료${displayTime ? ` · ${displayTime}` : ''}`}
+                    </span>
                   </>
                 )}
               </div>

@@ -115,8 +115,15 @@ async def test_marketplace_name_endpoint_selects_llm_or_deterministic_fallback(
     )
     assert db.committed is True
     assert mapping.product_name == expected
-    assert response == {
-        "generated_count": 1,
-        "items": [{"product_id": product.id, "product_name": expected}],
-    }
+    assert response["generated_count"] == 1
+    assert response["processing_time_ms"] >= 0
+    item = response["items"][0]
+    assert item["product_id"] == product.id
+    assert item["original_name"] == product.original_name
+    assert item["candidates"] == candidates
+    assert item["product_name"] == expected
+    assert item["generation_method"] == ("llm" if candidates else "fallback")
+    assert item["llm_ms"] >= 0
+    assert item["validation_ms"] >= 0
+    assert item["total_ms"] == item["llm_ms"] + item["validation_ms"]
     draft_request.assert_awaited_once_with(product)

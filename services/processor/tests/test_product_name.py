@@ -49,7 +49,7 @@ def test_llm_candidate_prefers_weighted_keyword_coverage_then_front_position():
         ["발판 사다리 접이식 작업", "작업 발판 사다리 접이식", "접이식 작업 발판 사다리"],
         ["작업 발판", "발판 사다리", "접이식"],
         "접이식 작업 발판 사다리",
-    ) == "작업 발판 사다리 접이식"
+    ) == ("작업 발판 사다리 접이식", True)
 
 
 def test_llm_candidate_rejects_hallucinated_and_brand_tokens():
@@ -58,7 +58,7 @@ def test_llm_candidate_rejects_hallucinated_and_brand_tokens():
         ["작업 발판", "발판 사다리"],
         "작업 발판 사다리",
         "acme",
-    ) == "작업 발판 사다리"
+    ) == ("작업 발판 사다리", True)
 
 
 def test_llm_candidate_rejects_bounds_and_repetition_then_falls_back():
@@ -69,12 +69,12 @@ def test_llm_candidate_rejects_bounds_and_repetition_then_falls_back():
         "작업 발판 사다리 작업 발판 사다리 작업 발판 사다리 작업",
         "작업 작업 작업 발판",
     ]
-    assert select_product_name(invalid, keywords, refined) == generate_product_name(keywords, refined)
-    assert select_product_name([], keywords, refined) == generate_product_name(keywords, refined)
+    assert select_product_name(invalid, keywords, refined) == (generate_product_name(keywords, refined), False)
+    assert select_product_name([], keywords, refined) == (generate_product_name(keywords, refined), False)
 
 
 def test_llm_candidate_requires_a_complete_verified_keyword_phrase():
     keywords = ["작업 발판", "발판 사다리"]
     refined = "접이식 작업 발판 사다리"
     candidates = ["작업 접이식", "발판 접이식", "사다리 작업"]
-    assert select_product_name(candidates, keywords, refined) == generate_product_name(keywords, refined)
+    assert select_product_name(candidates, keywords, refined) == (generate_product_name(keywords, refined), False)

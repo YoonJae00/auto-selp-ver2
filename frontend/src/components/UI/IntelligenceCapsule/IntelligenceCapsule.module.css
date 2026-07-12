@@ -509,6 +509,40 @@
   line-height: 1.5;
 }
 
+.candidateList {
+  margin: 4px 0 0;
+  padding-left: 20px;
+  color: var(--ink-muted-80);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.candidateList li {
+  padding: 2px 0;
+  overflow-wrap: anywhere;
+}
+
+.validationResult {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.methodBadge {
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(99, 102, 241, 0.1);
+  color: #4f46e5;
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
 .stageTime {
   font-size: 11px;
   color: var(--ink-muted-48);

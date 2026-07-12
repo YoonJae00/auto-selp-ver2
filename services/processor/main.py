@@ -1,5 +1,6 @@
 import os
 import asyncio
+import time
 import uuid
 import logging
 import pandas as pd
@@ -575,6 +576,7 @@ async def generate_marketplace_names(
     current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    request_started = time.perf_counter()
     product_ids = list(dict.fromkeys(request.product_ids))
     result = await db.execute(
         select(Product)
@@ -616,10 +618,11 @@ async def generate_marketplace_names(
 
     async def generate_candidates(context):
         if llm_client is None:
-            return []
+            return [], 0
         async with semaphore:
+            llm_started = time.perf_counter()
             try:
-                return await llm_client.generate_smartstore_name_candidates(
+                candidates = await llm_client.generate_smartstore_name_candidates(
                     context["refined_name"],
                     context["keywords"],
                     context["brand_name"],
@@ -627,26 +630,38 @@ async def generate_marketplace_names(
                 )
             except Exception as error:
                 logger.error("Smartstore candidate generation failed for %s: %s", context["product"].id, error)
-                return []
+                candidates = []
+            return candidates, int((time.perf_counter() - llm_started) * 1000)
 
-    candidate_lists = await asyncio.gather(*(generate_candidates(context) for context in contexts))
+    candidate_results = await asyncio.gather(*(generate_candidates(context) for context in contexts))
 
     items = []
-    for context, candidates in zip(contexts, candidate_lists):
+    for context, (candidates, llm_ms) in zip(contexts, candidate_results):
         product = context["product"]
         mapping = context["mapping"]
-        product_name = select_product_name(
+        validation_started = time.perf_counter()
+        product_name, used_llm = select_product_name(
             candidates,
             context["keywords"],
             context["refined_name"],
             context["brand_name"],
             context["original_name"],
         )
+        validation_ms = int((time.perf_counter() - validation_started) * 1000)
         if not product_name:
             raise HTTPException(status_code=422, detail="Could not generate a marketplace product name.")
         mapping.product_name = product_name
         product.updated_at = datetime.utcnow()
-        items.append({"product_id": product.id, "product_name": mapping.product_name})
+        items.append({
+            "product_id": product.id,
+            "original_name": product.original_name,
+            "candidates": candidates,
+            "product_name": mapping.product_name,
+            "generation_method": "llm" if used_llm else "fallback",
+            "llm_ms": llm_ms,
+            "validation_ms": validation_ms,
+            "total_ms": llm_ms + validation_ms,
+        })
 
     await db.commit()
 
@@ -657,7 +672,11 @@ async def generate_marketplace_names(
         except Exception as error:
             logger.error("Failed to request marketplace draft generation for %s: %s", product.id, error)
 
-    return {"generated_count": len(items), "items": items}
+    return {
+        "generated_count": len(items),
+        "items": items,
+        "processing_time_ms": int((time.perf_counter() - request_started) * 1000),
+    }
 
 
 @app.get("/internal/products/{product_id}/marketplace-snapshot", response_model=MarketplaceSnapshotResponse)

@@ -181,9 +181,16 @@ class MarketplaceNameRequest(BaseModel):
 
 class MarketplaceNameItem(BaseModel):
     product_id: UUID
+    original_name: str
+    candidates: List[str]
     product_name: str
+    generation_method: Literal["llm", "fallback"]
+    llm_ms: int
+    validation_ms: int
+    total_ms: int
 
 
 class MarketplaceNameResponse(BaseModel):
     generated_count: int
     items: List[MarketplaceNameItem]
+    processing_time_ms: int

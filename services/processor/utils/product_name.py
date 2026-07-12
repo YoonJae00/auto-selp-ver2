@@ -114,7 +114,7 @@ def select_product_name(
     refined_name: object,
     brand_name: object = None,
     original_name: object = None,
-) -> str:
+) -> tuple[str, bool]:
     """Select the strongest grounded LLM candidate, or use the deterministic generator."""
     keyword_tokens = [_tokens(keyword) for keyword in keywords or []]
     keyword_tokens = [tokens for tokens in keyword_tokens if tokens]
@@ -155,8 +155,8 @@ def select_product_name(
         scored.append(((coverage, front, length_score, -candidate_index), " ".join(tokens)))
 
     if scored:
-        return max(scored, key=lambda item: item[0])[1]
-    return generate_product_name(keywords, refined_name, brand_name, original_name)
+        return max(scored, key=lambda item: item[0])[1], True
+    return generate_product_name(keywords, refined_name, brand_name, original_name), False
 
 
 def _contains(container: tuple[str, ...], candidate: tuple[str, ...]) -> bool:

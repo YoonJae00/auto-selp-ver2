@@ -52,6 +52,21 @@ interface ProductListResponse {
   items: Product[];
 }
 
+interface MarketplaceNameResponse {
+  generated_count: number;
+  processing_time_ms: number;
+  items: {
+    product_id: string;
+    original_name: string;
+    candidates: string[];
+    product_name: string;
+    generation_method: 'llm' | 'fallback';
+    llm_ms: number;
+    validation_ms: number;
+    total_ms: number;
+  }[];
+}
+
 const formatPrice = (value: number | null) => {
   if (value === null || value === undefined) return '-';
   return `${value.toLocaleString('ko-KR')}원`;
@@ -386,11 +401,32 @@ export default function ProcessPage() {
     setError(null);
     setSuccess(null);
     try {
-      const response = await api.post<{ generated_count: number; items: { product_id: string; product_name: string }[] }>(
+      const response = await api.post<MarketplaceNameResponse>(
         '/api/processor/products/generate-marketplace-names',
         { product_ids: completedSelectedIds, marketplace: 'smartstore', llm_provider: llmProvider },
       );
-      updateTask(taskId, { progress: 100, status: 'SUCCESS', result: response });
+      updateTask(taskId, {
+        progress: 100,
+        status: 'SUCCESS',
+        result: response,
+        completedRows: response.items.map((item) => ({
+          name: item.original_name,
+          total_ms: item.total_ms,
+          stages: [
+            {
+              name: 'smartstore_candidates',
+              ms: item.llm_ms,
+              candidates: item.candidates,
+            },
+            {
+              name: 'smartstore_validation',
+              ms: item.validation_ms,
+              product_name: item.product_name,
+              generation_method: item.generation_method,
+            },
+          ],
+        })),
+      });
       setSuccess(`스마트스토어 상품명 ${response.generated_count}개를 생성했습니다.`);
       await fetchProducts();
     } catch (err: any) {
