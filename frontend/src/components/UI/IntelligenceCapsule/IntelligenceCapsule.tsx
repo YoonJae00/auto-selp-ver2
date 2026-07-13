@@ -363,7 +363,7 @@ export default function IntelligenceCapsule() {
                   </>
                 ) : (
                   <>
-                    <span className={styles.capsuleIcon}>✅</span>
+                    <span className={styles.capsuleIcon}>{displayTask.status === 'FAILURE' ? '❌' : '✅'}</span>
                     <span>
                       {taskLabel(displayTask)} {displayTask.status === 'FAILURE'
                         ? '실패'
