@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import re
+import time
 import unicodedata
 from collections.abc import Callable, Mapping
 from dataclasses import replace
@@ -40,6 +42,7 @@ from app.ui_qml.models.list_model import ListModel
 from app.ui_qml.viewmodels.base import BaseViewModel, sanitize_diagnostic
 from app.workers.adapter import (
     AdapterRepairRequest, AdapterRepairWorker,
+    AutoAdapterRequest, AutoAdapterWorker,
     AdapterTestRequest, AdapterTestWorker, CategoryMenuProbeRequest, CategoryMenuProbeWorker,
     GenerateRequest, GenerateWorker,
     MappingPreviewJob, MappingPreviewRequest,
@@ -60,6 +63,18 @@ MAPPING_ROLES = (
     "imageUrls", "skipFirst",
 )
 IMAGE_PICKER_FIELD_PATHS = {"adapter.product.detail_content", "adapter.product.extra_image_urls"}
+
+# AI 전체 자동화 진행 스테이지 — 백엔드 event 프로토콜의 stage 값과 순서를 고정한다.
+AUTO_STAGE_ORDER = (
+    ("probe", "사이트 분석"),
+    ("generate", "설정 생성"),
+    ("verify", "라이브 검증"),
+    ("status", "품절 상태"),
+    ("options", "옵션 분석"),
+    ("category", "카테고리"),
+    ("finalize", "마무리"),
+)
+AUTO_FIELD_ROLES = ("key", "fieldPath", "label", "status", "attempt", "cap", "value", "reason")
 
 
 def yaml_content_hash(text: str) -> str:
@@ -95,6 +110,7 @@ class AdapterStudioViewModel(BaseViewModel):
             "category_probe": CategoryMenuProbeWorker,
             "option_parser": OptionTextParserAnalyzeWorker,
             "soldout_compare": SoldoutCompareWorker,
+            "auto_adapter": AutoAdapterWorker,
             **dict(worker_factories or {}),
         }
         self._current_stage = 0
@@ -148,6 +164,20 @@ class AdapterStudioViewModel(BaseViewModel):
         self._soldout_url = ""
         self._soldout_suggestion: dict[str, Any] = {}
         self._soldout_compare_open = False
+        self._auto_unresolved: list[str] = []
+        # 백엔드 finished 페이로드의 필드별 판정 {field_path: {"state","reason"}}
+        self._auto_dispositions: dict[str, Any] = {}
+        # AI 전체 자동화 진행 상태 (event 프로토콜로 갱신)
+        self._auto_stages = self._fresh_auto_stages()
+        self._auto_fields = ListModel(AUTO_FIELD_ROLES, parent=self)
+        self._auto_feed: list[dict[str, Any]] = []
+        self._auto_latest_shot = ""
+        self._auto_running = False
+        self._auto_done = False
+        self._auto_elapsed_sec = 0
+        self._auto_timer = QTimer(self)
+        self._auto_timer.setInterval(1000)
+        self._auto_timer.timeout.connect(self._auto_tick)
         self._inputs = {
             "supplierName": "", "mainUrl": "", "listingUrl": "", "detailUrl": "",
             "needsLogin": False, "loginUrl": "", "username": "", "password": "",
@@ -191,6 +221,148 @@ class AdapterStudioViewModel(BaseViewModel):
     soldoutUrl = Property(str, lambda self: self._soldout_url, notify=stateChanged)
     soldoutSuggestion = Property("QVariantMap", lambda self: dict(self._soldout_suggestion), notify=stateChanged)
     soldoutCompareOpen = Property(bool, lambda self: self._soldout_compare_open, notify=stateChanged)
+    autoUnresolvedFields = Property("QVariantList", lambda self: [
+        {"path": p, "label": self._field_label_for_path(p),
+         "reason": (self._auto_dispositions.get(p) or {}).get("reason", "")}
+        for p in self._auto_unresolved
+    ], notify=stateChanged)
+    # 필드별 판정 — done 요약이 absent/skipped("검증된 스킵")를 조회할 수 있게 노출.
+    autoDispositions = Property("QVariantList", lambda self: [
+        {"fieldPath": path, "label": self._field_label_for_path(path),
+         "state": str((d or {}).get("state") or ""), "reason": str((d or {}).get("reason") or "")}
+        for path, d in self._auto_dispositions.items()
+    ], notify=stateChanged)
+    autoAbsentCount = Property(int, lambda self: sum(
+        1 for d in self._auto_dispositions.values()
+        if (d or {}).get("state") in ("absent", "skipped")
+    ), notify=stateChanged)
+    autoStages = Property("QVariantList", lambda self: [dict(s) for s in self._auto_stages], notify=stateChanged)
+    autoFields = Property(QObject, lambda self: self._auto_fields, constant=True)
+    autoFeed = Property("QVariantList", lambda self: [dict(e) for e in self._auto_feed], notify=stateChanged)
+    autoLatestShot = Property(str, lambda self: self._auto_latest_shot, notify=stateChanged)
+    autoRunning = Property(bool, lambda self: self._auto_running, notify=stateChanged)
+    autoDone = Property(bool, lambda self: self._auto_done, notify=stateChanged)
+    autoElapsedSec = Property(int, lambda self: self._auto_elapsed_sec, notify=stateChanged)
+    autoConfirmedCount = Property(int, lambda self: sum(
+        1 for r in self._auto_fields._rows if r.get("status") == "confirmed"
+    ), notify=stateChanged)
+
+    @staticmethod
+    def _fresh_auto_stages() -> list[dict[str, Any]]:
+        return [{"stage": stage, "label": label, "status": "pending"} for stage, label in AUTO_STAGE_ORDER]
+
+    def _auto_reset_state(self) -> None:
+        self._auto_stages = self._fresh_auto_stages()
+        self._auto_fields.resetRows([])
+        self._auto_feed = []
+        self._auto_latest_shot = ""
+        self._auto_elapsed_sec = 0
+        self._auto_done = False
+        self._auto_running = True
+        self._auto_unresolved = []
+        self._auto_dispositions = {}
+        if not self._auto_timer.isActive():
+            self._auto_timer.start()
+
+    def _auto_stop(self, done: bool) -> None:
+        self._auto_running = False
+        if done:
+            self._auto_done = True
+        if self._auto_timer.isActive():
+            self._auto_timer.stop()
+
+    def _auto_tick(self) -> None:
+        self._auto_elapsed_sec += 1
+        self._emit()
+
+    def _handle_auto_event(self, message: str) -> None:
+        """Parse a `[event:{...}]` progress line into auto-dashboard state.
+        Malformed JSON is silently ignored (contract: never crash the stream)."""
+        end = message.rfind("]")
+        if end <= len("[event:"):
+            return
+        try:
+            data = json.loads(message[len("[event:"):end])
+        except (ValueError, TypeError):
+            return
+        if not isinstance(data, dict):
+            return
+        kind = data.get("kind")
+        if kind == "stage":
+            self._apply_auto_stage(data)
+        elif kind == "field":
+            self._upsert_auto_field(data)
+        elif kind in ("visit", "shot", "note"):
+            self._append_auto_feed(kind, data)
+        else:
+            return
+        self._emit()
+
+    def _apply_auto_stage(self, data: Mapping[str, Any]) -> None:
+        stage = data.get("stage")
+        for entry in self._auto_stages:
+            if entry["stage"] == stage:
+                if data.get("status"):
+                    entry["status"] = str(data["status"])
+                if data.get("label"):
+                    entry["label"] = str(data["label"])
+                break
+
+    def _upsert_auto_field(self, data: Mapping[str, Any]) -> None:
+        key = str(data.get("key") or "")
+        if not key:
+            return
+        rows = list(self._auto_fields._rows)
+        index = next((i for i, row in enumerate(rows) if row["key"] == key), None)
+        base = rows[index] if index is not None else {
+            "key": key, "fieldPath": "", "label": "", "status": "waiting",
+            "attempt": 0, "cap": 0, "value": "", "reason": "",
+        }
+        merged = dict(base)
+        if data.get("field"):
+            merged["fieldPath"] = str(data["field"])
+        merged["label"] = str(
+            data.get("label") or base.get("label") or self._field_label_for_path(merged["fieldPath"] or key)
+        )
+        if data.get("status"):
+            merged["status"] = str(data["status"])
+        if "attempt" in data:
+            merged["attempt"] = int(data.get("attempt") or 0)
+        if "cap" in data:
+            merged["cap"] = int(data.get("cap") or 0)
+        if "value" in data:
+            merged["value"] = str(data.get("value") or "")
+        if "reason" in data:
+            merged["reason"] = str(data.get("reason") or "")
+        if index is not None:
+            rows[index] = merged
+        else:
+            rows.append(merged)
+        self._auto_fields.resetRows(rows)
+
+    def _append_auto_feed(self, kind: str, data: Mapping[str, Any]) -> None:
+        entry = {
+            "kind": kind,
+            "text": self._auto_feed_text(kind, data),
+            "url": str(data.get("url") or ""),
+            "path": str(data.get("path") or ""),
+            "ts": int(time.time()),
+        }
+        self._auto_feed.insert(0, entry)
+        del self._auto_feed[100:]
+        if kind == "shot" and entry["path"]:
+            self._auto_latest_shot = entry["path"]
+
+    def _auto_feed_text(self, kind: str, data: Mapping[str, Any]) -> str:
+        if kind == "visit":
+            purpose = str(data.get("purpose") or "").strip()
+            url = str(data.get("url") or "")
+            return f"페이지 방문 — {purpose or url}"
+        if kind == "shot":
+            field = str(data.get("field") or "")
+            label = self._field_label_for_path(field) if field else ""
+            return f"화면 캡처 — {label}" if label else "화면 캡처"
+        return str(data.get("text") or "")
 
     def _probe_summary_with_checks(self) -> dict:
         result = dict(self._probe_summary)
@@ -297,6 +469,10 @@ class AdapterStudioViewModel(BaseViewModel):
         for key in ("supplierName", "mainUrl", "listingUrl", "detailUrl", "needsLogin"):
             if key in values:
                 self._inputs[key] = values[key]
+        # 품절 상품 URL은 수동 2단계 품절 비교와 상태를 공유한다 (_soldout_url).
+        if "soldoutUrl" in values:
+            self._soldout_url = str(values["soldoutUrl"] or "").strip()
+            self._soldout_suggestion = {}
         self._invalidate_credentials_for_identity_change(previous_identity)
         self._emit()
 
@@ -461,6 +637,10 @@ class AdapterStudioViewModel(BaseViewModel):
             self._task_progress(stage, message)
 
     def _task_progress(self, stage: str, message: str) -> None:
+        if message.startswith("[event:"):
+            # 구조화 이벤트는 자동화 대시보드 상태만 갱신 — 진행 라벨에는 넣지 않는다.
+            self._handle_auto_event(message)
+            return
         progress = -1.0
         clean_message = message
         if message.startswith("[progress:"):
@@ -492,6 +672,8 @@ class AdapterStudioViewModel(BaseViewModel):
 
     def _operation_error(self, message: str) -> None:
         self._busy = False
+        if self._auto_running:
+            self._auto_stop(done=False)
         self._retire_current_worker()
         self._picker_active = False
         self._pending_hint = None
@@ -678,9 +860,123 @@ class AdapterStudioViewModel(BaseViewModel):
     def cancelGenerate(self) -> None:
         self._cancel("설정 생성 취소")
 
+    @Slot(result=bool)
+    def runFullAuto(self) -> bool:
+        """0단계 접속정보만으로 사이트 분석→AI 생성→라이브 검증→재시도를 완전 자동 실행.
+
+        기존 수동 마법사와 병행하는 별도 경로. 끝나면 기존 2/3단계 화면에 결과를 반영하고,
+        미확정 필드는 autoUnresolvedFields 로 노출해 기존 피커로 마저 처리하게 한다.
+        """
+        if not self._guard_operation("adapter-auto"):
+            return False
+        name = str(self._inputs["supplierName"]).strip()
+        url = str(self._inputs["mainUrl"]).strip()
+        errors: dict[str, str] = {}
+        if not name:
+            errors["supplierName"] = "도매처명을 입력하세요."
+        if not url:
+            errors["mainUrl"] = "URL을 입력하세요."
+        elif not url.startswith(("http://", "https://")):
+            errors["mainUrl"] = "URL은 http:// 또는 https://로 시작해야 합니다."
+        detail = str(self._inputs.get("detailUrl") or "").strip()
+        if not detail:
+            errors["detailUrl"] = "샘플 상품 URL을 입력하세요. (필드 매핑에 사용됩니다)"
+        elif not detail.startswith(("http://", "https://")):
+            errors["detailUrl"] = "샘플 상품 URL은 http:// 또는 https://로 시작해야 합니다."
+        soldout = str(self._soldout_url or "").strip()
+        if soldout:
+            if not soldout.startswith(("http://", "https://")):
+                errors["soldoutUrl"] = "품절 상품 URL은 http:// 또는 https://로 시작해야 합니다."
+            elif soldout == detail:
+                errors["soldoutUrl"] = "샘플 상품과 다른 품절 상품 URL을 입력하세요."
+        if self._inputs["needsLogin"]:
+            labels = {"loginUrl": "로그인 URL", "username": "아이디", "password": "비밀번호"}
+            for key in ("loginUrl", "username", "password"):
+                if not str(self._inputs.get(key) or "").strip():
+                    errors[key] = f"{labels[key]}을(를) 입력하세요."
+        if errors:
+            self.set_field_errors(errors)
+            return False
+        login_url = str(self._inputs["loginUrl"] or "").strip() or url
+        credentials = (login_url, self._inputs["username"], self._inputs["password"])
+        if self._inputs["needsLogin"] and all(credentials):
+            self._remember_studio_credentials(str(credentials[1]), str(credentials[2]))
+        config = load_config()
+        request = AutoAdapterRequest(
+            main_url=url, supplier_name=name,
+            listing_url=self._inputs["listingUrl"] or None,
+            detail_url=self._inputs["detailUrl"] or None,
+            login_url=credentials[0] if self._inputs["needsLogin"] else None,
+            username=credentials[1] if self._inputs["needsLogin"] else None,
+            password=credentials[2] if self._inputs["needsLogin"] else None,
+            provider=config.llm_provider, auto_fallback=config.auto_fallback_enabled,
+            supplier_key=self._credential_key() if self._inputs["needsLogin"] else None,
+            soldout_url=soldout or None,
+        )
+        worker = self._factories["auto_adapter"](request)
+        self._inputs["username"] = self._inputs["password"] = ""
+        self.set_field_errors({})
+        self._auto_reset_state()
+        started = self._connect_worker(
+            worker, finished=self._auto_adapter_finished,
+            key="adapter-auto", label="AI 전체 자동화", stage="generate",
+        )
+        if not started:
+            self._auto_stop(done=False)
+            self._emit()
+        return started
+
+    @Slot()
+    def cancelFullAuto(self) -> None:
+        self._cancel("전체 자동화 취소")
+
+    def _auto_adapter_finished(self, result) -> None:
+        self._auto_stop(done=True)
+        data = dict(result or {})
+        probe = data.get("probe")
+        if probe is not None:
+            self._probe_result = probe
+            self._excluded_urls = set()
+            self._extra_test_urls = []
+            self._validation_raw = {}
+            self._probe_summary = {
+                "finalUrl": getattr(probe, "final_url", ""),
+                "encoding": getattr(probe, "encoding", ""),
+                "needsLogin": getattr(probe, "needs_login", False),
+                "categoryCount": len(getattr(probe, "categories", None) or []),
+                "categories": list(getattr(probe, "categories", None) or []),
+                "sampleProducts": list(getattr(probe, "sample_products", None) or []),
+                "hasAllProducts": getattr(probe, "has_all_products", False),
+            }
+            self._category_analysis_ready = bool(
+                getattr(probe, "categories", None) or getattr(probe, "has_all_products", False)
+            )
+            self._category_analysis_message = (
+                "카테고리 분석 완료" if self._category_analysis_ready
+                else "카테고리 자동 분석 실패: 브라우저에서 카테고리 메뉴를 지정하세요."
+            )
+            if getattr(probe, "storage_state", None) and self._inputs["needsLogin"]:
+                try:
+                    save_session_state(self._credential_key(), probe.storage_state)
+                except Exception:
+                    pass
+        self._auto_unresolved = [str(f) for f in data.get("unresolved") or []]
+        self._auto_dispositions = dict(data.get("dispositions") or {})
+        yaml_text = str(data.get("yaml") or "")
+        if yaml_text:
+            self.acceptGeneratedYaml(yaml_text)  # 스테이지 2 + 매핑 행 갱신
+        if self._auto_unresolved:
+            labels = ", ".join(self._field_label_for_path(p) for p in self._auto_unresolved)
+            self.set_field_errors({"form": f"자동 완료 — 확인 필요 {len(self._auto_unresolved)}개: {labels}"})
+        self._operation_done()
+        if yaml_text:
+            QTimer.singleShot(0, self._load_sample_mapping_values)
+
     def _cancel(self, message: str) -> None:
         operation_id = self._operation_id
         self._cancelled_operations.add(operation_id)
+        if self._auto_running:
+            self._auto_stop(done=False)
         if self._worker is not None and hasattr(self._worker, "requestInterruption"):
             self._worker.requestInterruption()
         self._retire_current_worker()
