@@ -120,6 +120,46 @@ def test_verify_product_link_zero_matches_failed():
     assert "product_link" in result["failed_fields"]
 
 
+# ----- 의사요소(::before 등) 새니타이즈 -----
+
+PSEUDO_YAML = """adapter:
+  name: T
+  base_url: https://x.com
+  listing:
+    product_link:
+      selector: a[href*='shopdetail']::before
+  product:
+    raw_product_name:
+      selector: .name::before
+    supply_price:
+      selector: .price::after
+      transform: extract_number
+    origin:
+      selector: span:has-text('원산지')
+"""
+
+
+def test_finalize_strips_pseudo_elements_and_verify_survives():
+    # 크래시 재현: ::before 선택자가 든 LLM 응답으로 finalize → verify 까지 죽지 않아야 한다.
+    yaml_text, adapter = ag._finalize_generated_yaml(PSEUDO_YAML, strip_manual=False)
+    assert adapter.adapter.product.raw_product_name.selector == ".name"
+    assert adapter.adapter.product.supply_price.selector == ".price"
+    assert adapter.adapter.listing.product_link.selector == "a[href*='shopdetail']"
+    # 콜론 1개 Playwright 의사클래스는 보존
+    assert adapter.adapter.product.origin.selector == "span:has-text('원산지')"
+    # NotImplementedError 없이 완주
+    result = verify_adapter_against_probe(adapter, _probe(DETAIL, "<a href='/shopdetail.html'>x</a>"))
+    assert result["values"]["raw_product_name"] == "멋진 상품"
+
+
+def test_apply_repaired_fields_strips_pseudo_elements():
+    base = _adapter({"raw_product_name": {"selector": ".old"}})
+    dumped = __import__("yaml").safe_dump(base.model_dump(mode="json", exclude_none=True), allow_unicode=True, sort_keys=False)
+    out = ag._apply_repaired_fields(dumped, {"raw_product_name": {"selector": ".name::before"}})
+    assert "::before" not in out
+    assert ".name" in out
+
+
 # ----- generate_adapter_yaml 통합 (LLM mock) -----
 
 class _FakeClient:

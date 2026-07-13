@@ -80,6 +80,7 @@ class ProbeResult:
     storage_state: dict | None = None
     platform: str | None = None  # 감지된 쇼핑몰 솔루션 (cafe24/makeshop/godomall/youngcart/wisa)
     structured_data: dict = field(default_factory=dict)  # 상세 페이지 og/JSON-LD 추출값
+    detail_page_url: str = ""  # structured_data/detail_html을 추출한 상세 페이지 URL
 
 
 def normalize_sample_products(base_url: str, products: list[dict], links: list[str] | None = None, limit: int = 15) -> tuple[list[dict], list[str]]:
@@ -128,6 +129,7 @@ async def probe_site(
     login_url: str | None = None,
     username: str | None = None,
     password: str | None = None,
+    storage_state: dict | None = None,
 ) -> ProbeResult:
     def _log(msg: str) -> None:
         if on_progress:
@@ -201,7 +203,7 @@ async def probe_site(
     from app.crawlers.engine import create_engine
 
     async def _do_probe() -> ProbeResult:
-        async with create_engine(headless=headless) as engine:
+        async with create_engine(headless=headless, storage_state=storage_state) as engine:
             page = await engine.new_page()
 
             requests_log: list[dict[str, str]] = []
@@ -219,9 +221,10 @@ async def probe_site(
 
             page.on("request", on_request)
 
-            # Login if credentials provided
-            storage_state: dict | None = None
-            if login_url and username and password:
+            # Login if credentials provided. storage_state(주입된 인증 쿠키)가 있으면
+            # 이미 인증된 것으로 취급하고 로그인 시도를 통째로 건너뛴다.
+            captured_state: dict | None = None
+            if login_url and username and password and not storage_state:
                 success = False
                 try:
                     success = await perform_login(page, login_url, username, password, on_progress=_log)
@@ -256,7 +259,7 @@ async def probe_site(
                         if pw is None:
                             verified = True
                     if verified:
-                        storage_state = await page.context.storage_state()
+                        captured_state = await page.context.storage_state()
                         _log("로그인 세션 저장됨 (storage_state 추출)")
                     else:
                         _log("로그인 성공 여부 미확인 — 세션 저장 생략")
@@ -294,8 +297,8 @@ async def probe_site(
                 _log(f"쇼핑몰 솔루션 감지: {platform}")
 
             _log("로그인 폼 확인 중...")
-            # If user provided login credentials, force needs_login = True
-            needs_login = bool(login_url and username and password)
+            # If user provided login credentials (or a pre-authenticated session), force needs_login = True
+            needs_login = bool((login_url and username and password) or storage_state)
             login_form_html = ""
             if not needs_login:
                 # Only check for password field on main page if user didn't provide login info
@@ -512,6 +515,7 @@ async def probe_site(
             detail_html = ""
             status_indicators: dict = {}
             structured_data: dict = {}
+            detail_page_url = ""
             sample_products, sample_links = normalize_sample_products(main_url, sample_products, sample_links)
 
             detail_url = sample_detail_url or (sample_links[0] if sample_links else None)
@@ -520,6 +524,7 @@ async def probe_site(
                 _log(f"상품 상세 페이지 접속 중: {full_url}")
                 if await _safe_goto(page, full_url):
                     try:
+                        detail_page_url = full_url
                         structured_data = await _extract_structured_data(page)
                         detail_html = reduce_html(await page.content(), drop_chrome=True)
                         # Extract status indicators from detail page
@@ -573,13 +578,14 @@ async def probe_site(
                 categories=categories,
                 sample_products=sample_products,
                 login_url=login_url or "",
-                storage_state=storage_state,
+                storage_state=captured_state or storage_state,
                 total_product_count=total_product_count,
                 products_per_page=products_per_page,
                 total_pages=total_pages,
                 status_indicators=status_indicators,
                 platform=platform,
                 structured_data=structured_data,
+                detail_page_url=detail_page_url,
             )
 
     return await asyncio.wait_for(_do_probe(), timeout=60)

@@ -107,6 +107,66 @@ def extract_url_value(url: str, extractor: "FieldExtractor") -> str | None:
     return None
 
 
+# ── 라벨 오염 자동 정리 (사람처럼 라벨을 떼고 값만 취함) ─────────────────────
+# origin: "브랜드 : VIGA\n원산지 : 중국(외 아시아)" → "중국(외 아시아)". 라벨 뒤 콜론 값을
+# 구분자(개행, /, |, ,) 전까지 취한다.
+_ORIGIN_LABEL_RE = re.compile(r"(?:원산지|제조국가|제조국)\s*[:：]\s*([^\n/|,]+)")
+# 라벨 없이 통째로 "라벨 : 값" 꼴이면 콜론 뒤만 (짧은 선두 라벨 + 구분자 없는 단일 값일 때만).
+_ORIGIN_GENERIC_RE = re.compile(r"^\s*[^\n:：]{1,20}[:：]\s*([^\n/|,]+?)\s*$")
+# 이름/코드/브랜드/제조사/모델명: 선두 라벨 접두만 제거, 값 중간 콜론은 보존.
+_FIELD_LABEL_RE: dict[str, "re.Pattern[str]"] = {
+    "raw_product_name": re.compile(r"^\s*(?:상품명|제품명|상품이름)\s*[:：]\s*(.+)$", re.DOTALL),
+    "supplier_product_code": re.compile(r"^\s*(?:상품코드|제품코드|상품번호|코드)\s*[:：]\s*(.+)$", re.DOTALL),
+    "brand_name": re.compile(r"^\s*(?:브랜드|brand)\s*[:：]\s*(.+)$", re.DOTALL | re.IGNORECASE),
+    "manufacturer": re.compile(r"^\s*(?:제조사|제조원|manufacturer)\s*[:：]\s*(.+)$", re.DOTALL | re.IGNORECASE),
+    "model_name": re.compile(r"^\s*(?:모델명|모델|model)\s*[:：]\s*(.+)$", re.DOTALL | re.IGNORECASE),
+}
+
+# supply_price: 상품정보 패널을 통째로 잡으면 소비자가(취소선)가 맨 앞이라 extract_number가 오추출.
+# 가격 라벨이 2개 이상 섞였으면 진짜 공급가 라벨 값만 남긴다. (판매가는 판매가격의 부분문자열이라
+# 개수 셀 때 부정 lookahead로 이중집계 방지 — 라벨 1개짜리는 무변형이어야 함.)
+_PRICE_LABEL_COUNT_RE = re.compile(r"소비자가|판매가격|판매가(?!격)|공급가|도매가|정가|시중가")
+_PRICE_PRIORITY_LABELS = ("공급가", "도매가", "판매가격", "판매가", "소비자가", "정가", "시중가")
+
+
+def _supply_price_from_labels(value: str) -> str | None:
+    """가격 라벨이 여럿이면 우선순위 라벨(공급가/도매가/판매가격/판매가 우선) 뒤 값만 취한다."""
+    if len(_PRICE_LABEL_COUNT_RE.findall(value)) < 2:
+        return None
+    for label in _PRICE_PRIORITY_LABELS:
+        m = re.search(re.escape(label) + r"\s*[:：]\s*([\d][\d,]*\s*원?)", value)
+        if m:
+            return m.group(1).strip()
+    return None
+
+
+def clean_field_value(field_name: str, value: str | None) -> str | None:
+    """추출값에서 라벨 오염을 사람처럼 제거. transform(extract_number 등)보다 먼저 적용.
+
+    origin은 '원산지 :' 라벨 뒤 값만, 이름/코드/브랜드/제조사/모델명은 선두 라벨 접두만 제거한다.
+    그 외 필드/None/빈값은 그대로 반환.
+    """
+    if not value or not value.strip():
+        return value
+    if field_name == "origin":
+        m = _ORIGIN_LABEL_RE.search(value)
+        if m:
+            return m.group(1).strip()
+        m = _ORIGIN_GENERIC_RE.match(value)
+        if m:
+            return m.group(1).strip()
+        return value
+    if field_name == "supply_price":
+        picked = _supply_price_from_labels(value)
+        return picked if picked is not None else value
+    pattern = _FIELD_LABEL_RE.get(field_name)
+    if pattern:
+        m = pattern.match(value)
+        if m:
+            return m.group(1).strip()
+    return value
+
+
 class StatusMapping(BaseModel):
     mapping: dict[str, str] = Field(default_factory=dict)
     default: str = "available"

@@ -324,6 +324,26 @@ async def test_adapter_test_worker_previews_embedded_option_prices() -> None:
 
 
 @pytest.mark.asyncio
+async def test_adapter_test_worker_flags_soldout_options() -> None:
+    worker = AdapterTestWorker.__new__(AdapterTestWorker)
+    adapter = type("Adapter", (), {
+        "adapter": type("AdapterData", (), {
+            "options": OptionsConfig(groups=[OptionGroupConfig(name="색상", values_selector=".option")])
+        })()
+    })()
+    page = _FakePage({
+        ".option": [
+            _FakeElement("옵션을 선택해 주세요"),   # placeholder → 제외
+            _FakeElement("블랙"),
+            _FakeElement("화이트 (품절)"),           # 텍스트 품절
+            _FakeElement("레드", attrs={"disabled": ""}),  # disabled 품절
+        ],
+    })
+    summary = await worker._extract_test_option(page, adapter, "option_values")
+    assert summary.endswith("(품절 2)")
+
+
+@pytest.mark.asyncio
 async def test_adapter_test_worker_previews_configured_option_text_parser() -> None:
     worker = AdapterTestWorker.__new__(AdapterTestWorker)
     adapter = type("Adapter", (), {

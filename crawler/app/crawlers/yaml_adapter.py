@@ -11,6 +11,7 @@ from app.analyzer.adapter_schema import (
     CategoriesConfig,
     FieldExtractor,
     OptionsConfig,
+    clean_field_value,
     extract_url_value,
 )
 from app.analyzer.option_text_parser import (
@@ -686,7 +687,7 @@ class YAMLAdapter(BaseAdapter):
                 if extractor is None or extractor.optional is False and not extractor.selector:
                     fields[field_name] = None
                     continue
-                fields[field_name] = await self._extract_field(page, extractor)
+                fields[field_name] = await self._extract_field(page, extractor, field_name)
 
             status_value = None
             if product_config.supplier_status:
@@ -764,7 +765,7 @@ class YAMLAdapter(BaseAdapter):
         except Exception:
             return {}
 
-    async def _extract_field(self, page, extractor: FieldExtractor) -> Any:
+    async def _extract_field(self, page, extractor: FieldExtractor, field_name: str = "") -> Any:
         try:
             if extractor.selector:
                 if extractor.multiple:
@@ -783,7 +784,10 @@ class YAMLAdapter(BaseAdapter):
                     if element:
                         raw = await self._read_element(element, extractor)
                         if raw:
-                            return _apply_transform(raw, extractor.transform)
+                            # 라벨 오염 정리(원산지/이름/코드 등)를 transform 전에 적용.
+                            raw = clean_field_value(field_name, raw)
+                            if raw:
+                                return _apply_transform(raw, extractor.transform)
 
             fallback_value = await self._extract_field_fallback_from(page, extractor)
             if fallback_value is not None:
@@ -1110,7 +1114,7 @@ class YAMLAdapter(BaseAdapter):
 
             code = url
             if product_config.supplier_product_code:
-                code_raw = await self._extract_field(page, product_config.supplier_product_code)
+                code_raw = await self._extract_field(page, product_config.supplier_product_code, "supplier_product_code")
                 if code_raw and isinstance(code_raw, str):
                     code = code_raw.strip()
 

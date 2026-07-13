@@ -2,17 +2,19 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import queue
 import re
+import tempfile
 import threading
 from dataclasses import dataclass, field
-from typing import Any, Coroutine
+from typing import Any, Callable, Coroutine
 from urllib.parse import urljoin
 
 from PySide6.QtCore import QObject, QThread, Signal, Slot
 
 from app.analyzer.adapter_generator import generate_adapter_yaml, repair_adapter_fields
-from app.analyzer.adapter_schema import extract_url_value
+from app.analyzer.adapter_schema import clean_field_value, extract_url_value
 from app.analyzer.option_text_parser import is_option_placeholder, parse_option_text, format_option_group
 from app.analyzer.picker_session import PickerSession
 from app.analyzer.site_probe import probe_site
@@ -20,6 +22,7 @@ from app.crawlers.yaml_adapter import (
     _image_key,
     _status_from_maxq_value,
     collect_detail_images,
+    option_is_soldout,
     status_from_cart_button,
     SOLDOUT_MARKER_SELECTOR,
     CART_BUTTON_SELECTOR,
@@ -123,6 +126,21 @@ class SoldoutCompareRequest:
     password: str | None = None
     storage_state: dict | None = None
     supplier_key: str | None = None
+
+
+@dataclass
+class AutoAdapterRequest:
+    main_url: str
+    supplier_name: str
+    listing_url: str | None = None
+    detail_url: str | None = None
+    login_url: str | None = None
+    username: str | None = None
+    password: str | None = None
+    provider: str = "gemini"
+    auto_fallback: bool = True
+    supplier_key: str | None = None
+    soldout_url: str | None = None  # 사용자가 직접 입력한 품절 상품 URL (UI 뷰모델 계약)
 
 
 class _AsyncWorker(QThread):
@@ -954,7 +972,12 @@ class AdapterTestWorker(_AsyncWorker):
         "detail_content", "extra_image_urls", "option_values",
     )
 
-    def __init__(self, request: AdapterTestRequest) -> None:
+    def __init__(
+        self,
+        request: AdapterTestRequest,
+        screenshot_dir: str | None = None,
+        on_screenshot: Callable[[str, str], None] | None = None,  # (url, path)
+    ) -> None:
         super().__init__()
         self.request = request
         self.adapter_yaml = request.adapter_yaml
@@ -966,7 +989,10 @@ class AdapterTestWorker(_AsyncWorker):
         self.fields = tuple(request.fields or self.FIELD_NAMES)
         self.storage_state = request.storage_state
         self.supplier_key = request.supplier_key
+        self.screenshot_dir = screenshot_dir  # None(기본) = 수동 마법사 경로 무변경
+        self.on_screenshot = on_screenshot
         self.raw_results: dict[str, list[dict]] = {}
+        self._shot_seq = 0
 
     def run(self) -> None:
         try:
@@ -1008,6 +1034,16 @@ class AdapterTestWorker(_AsyncWorker):
                 self.progress.emit(f"테스트 페이지 접속: {url}")
                 await page.goto(url, wait_until="domcontentloaded", timeout=15000)
                 await page.wait_for_timeout(1500)
+                if self.screenshot_dir:
+                    # best-effort — 스크린샷 실패가 테스트를 막지 않는다.
+                    try:
+                        self._shot_seq += 1
+                        shot_path = os.path.join(self.screenshot_dir, f"shot_{self._shot_seq}.png")
+                        await page.screenshot(path=shot_path)
+                        if self.on_screenshot:
+                            self.on_screenshot(url, shot_path)
+                    except Exception:
+                        pass
                 main_image_url: str | None = None
                 for field_name in self.fields:
                     fraction = completed_fields / total_fields if total_fields else 0.0
@@ -1073,7 +1109,16 @@ class AdapterTestWorker(_AsyncWorker):
         # 병합 표시: '3개 · S, M, L / +0원, +10,000원, +20,000원' (값 묶음 / 가격 묶음, 개수 항상 일치)
         parsed = [parse_option_text(item, options.option_text_parser) for item in reads]
         summary = format_option_group(parsed)
-        return summary[:200] if summary else None
+        if not summary:
+            return None
+        # 옵션 품절 노출: 라이브 검증/미리보기에 품절 개수 표기 (placeholder 제외).
+        soldout = 0
+        for el, text in zip(elements, reads):
+            if text and not is_option_placeholder(text) and await option_is_soldout(el, text):
+                soldout += 1
+        if soldout:
+            summary = f"{summary} (품절 {soldout})"
+        return summary[:200]
 
     async def _login(self, page) -> None:
         from app.analyzer.login_helper import perform_login as _login_shared
@@ -1103,6 +1148,7 @@ class AdapterTestWorker(_AsyncWorker):
                 if extractor.skip_first:
                     values = values[extractor.skip_first:]
                 if values:
+                    values = [clean_field_value(field_name, item) or item for item in values]
                     preview = ", ".join(item[:50] for item in values[:5])
                     return f"{len(values)}개 · {preview}", None
             else:
@@ -1110,6 +1156,8 @@ class AdapterTestWorker(_AsyncWorker):
                 if element:
                     value = await self._read_test_element(element, extractor)
                     if value:
+                        # 라벨 오염 정리(원산지/이름/코드 등)를 transform 전에 적용.
+                        value = clean_field_value(field_name, value) or value
                         if extractor.transform == "extract_number":
                             match = re.search(r"-?\d[\d,]*", value)
                             value = match.group().replace(",", "") if match else value
@@ -1563,3 +1611,373 @@ class CategoryMenuProbeWorker(_AsyncWorker):
             "selector": self.request.selector,
             "url": self.request.url,
         }
+
+
+# ── 전체 자동화 어댑터 워커 ──────────────────────────────────────────────────
+# auto_adapter.run_auto_adapter 오케스트레이터를 실제 브라우저/LLM 작업으로 감싼다.
+# 사람 개입이 필요한 지점(카테고리/특정 필드 미확정)은 finished 페이로드의 "unresolved"
+# 로 전달해 뷰모델이 기존 피커를 재사용해 후속 처리하게 한다.
+
+_AUTO_REPAIR_FIELD_HINTS = {
+    "supplier_product_code": "상품 고유 코드/상품번호 텍스트",
+    "raw_product_name": "상품명 제목 텍스트",
+    "supply_price": (
+        "공급가/가격 숫자 (attribute 비우고 transform: extract_number). "
+        "가격 라벨이 여러 개인 컨테이너 선택자 금지 — 판매가격·공급가 라벨의 값 요소만 선택. "
+        "취소선 소비자가/정가/시중가 요소는 공급가가 아님"
+    ),
+    "origin": "원산지 텍스트 (예: 국산/중국). 판매가/배송비 컨테이너 금지",
+    "main_image_url": "대표 상품 이미지 img (attribute: src, 없으면 data-src)",
+    "detail_content": "상세 설명 본문 이미지 컨테이너의 img (multiple)",
+    "extra_image_urls": "상품 갤러리 추가 이미지 img (multiple)",
+    "option_values": "옵션값(예: 색상/사이즈) 요소",
+    "option_prices": "옵션 추가금액 요소 (transform: extract_number)",
+}
+
+_AUTO_REPAIR_SYSTEM_PROMPT = (
+    "당신은 웹 스크래핑 CSS 선택자 교정 전문가입니다. 지정된 한 필드의 선택자가 "
+    "실제 페이지에서 실패했습니다. DOM 을 다시 분석해 더 정확한 CSS 선택자를 찾으세요.\n\n"
+    "반드시 다음 JSON 형식으로만 응답하세요 (설명·코드블록 없이):\n"
+    '{"selector": "CSS선택자", "attribute": "src|data-src|value 또는 빈문자열", '
+    '"transform": "extract_number 또는 빈문자열"}\n\n'
+    "규칙:\n"
+    "1. 값을 찾을 수 없으면 selector 를 빈 문자열로 두세요.\n"
+    "2. 이미지 필드는 img 를 가리키고 attribute 는 src(없으면 data-src)로 하세요.\n"
+    "3. 가격/추가금액은 attribute 를 비우고 transform 을 extract_number 로 하세요.\n"
+    "4. JSON 외 텍스트 출력 금지."
+)
+
+_JUDGE_SYSTEM_PROMPT = (
+    "당신은 쇼핑몰 크롤링 추출값 검수자입니다. 각 필드의 샘플 추출값들이 그 필드의 값으로 "
+    "타당한지 사람이 직접 보듯 판정하세요. 각 값이 그 필드명으로 자연스러운지, 그리고 필드끼리 "
+    "교차 비교했을 때 모순이 없는지 함께 보세요.\n\n"
+    "불합격 기준 예시:\n"
+    "- 상품코드가 상품명과 동일한 값이거나, 조사·괄호가 섞인 문장형(예: '비가(VIGA) 쇼핑카트 (V50672)')인 경우 "
+    "— 코드는 보통 짧은 식별자입니다\n"
+    "- 상품명이 사업자번호/통신판매업신고번호/네비게이션/버튼/푸터 고정 문구인 경우\n"
+    "- 가격이 0이거나 전화번호·사업자번호처럼 보이는 경우\n"
+    "- 공급가에 취소선 소비자가/정가/시중가 값이 잡힌 경우 — 판매가격/공급가 라벨의 값이 진짜 공급가입니다\n"
+    "- 원산지에 '원산지 :' 같은 라벨이 남아 있거나 브랜드·판매가·배송 정보가 섞인 경우 "
+    "— 순수 국가/지역명이어야 합니다\n"
+    "- 상품코드가 URL 전체이거나 안내 문구인 경우\n"
+    "- 이미지 URL이 로고/배너/아이콘 파일명인 경우\n\n"
+    "반드시 다음 JSON 형식으로만 응답하세요 (모든 입력 필드키 포함, JSON 외 텍스트 금지):\n"
+    '{"필드키": {"ok": true|false, "reason": "불합격 사유 (합격이면 빈 문자열)"}}'
+)
+
+
+def _classify_status(snap: dict) -> str:
+    """스냅샷 신호로 판매중/품절 분류. auto 모드가 후보 쌍을 스스로 찾는 데 쓴다.
+
+    '품절' 텍스트(explicit_soldout)는 네비/연관상품에서 오탐이 나므로 단독 신호로 쓰지 않는다:
+    sold_out ⟺ maxq==0 또는 (explicit_soldout 이면서 구매 버튼 없음). 신호 충돌은 unknown.
+    """
+    maxq = str(snap.get("maxq_value") or "").strip()
+    explicit = bool(snap.get("explicit_soldout"))
+    has_buy = bool(snap.get("has_buy_button"))
+    if maxq == "0" or (explicit and not has_buy):
+        return "sold_out"
+    if has_buy and not explicit:
+        return "available"
+    return "unknown"  # explicit + 구매버튼 동시 존재 등 신호 충돌
+
+
+_MANUAL_LOGIN_TIMEOUT_SEC = 300  # 수동 로그인 대기 상한 (PickerJob과 동일 관례)
+
+
+class AutoAdapterWorker(_AsyncWorker):
+    finished = Signal(dict)
+    login_required = Signal()
+
+    def __init__(self, request: AutoAdapterRequest) -> None:
+        super().__init__()
+        self.request = request
+        self._state: dict | None = None
+        self._detail_dom: str = ""
+        self._shots_dir: str | None = None
+        self._manual_login_event: asyncio.Event | None = None
+        self._manual_login_cancelled = False
+
+    def run(self) -> None:
+        try:
+            self._run_async(self._orchestrate(), self.finished.emit)
+        finally:
+            self.request.password = None
+
+    @Slot()
+    def confirmManualLogin(self) -> None:
+        """User confirmed they logged in manually in the headful browser — resume."""
+        self._wake_manual_login()
+
+    @Slot()
+    def cancelManualLogin(self) -> None:
+        """User cancelled the manual-login prompt — abort the run."""
+        self._manual_login_cancelled = True
+        self._wake_manual_login()
+
+    def _wake_manual_login(self) -> None:
+        # GUI 스레드에서 호출됨 — asyncio.Event를 워커 루프에서 스레드 안전하게 set.
+        loop, event = self._loop, self._manual_login_event
+        if loop is not None and event is not None and loop.is_running():
+            loop.call_soon_threadsafe(event.set)
+
+    async def _manual_login_probe(self):
+        """자동 로그인 실패 시: 헤드풀 브라우저로 사람이 직접 로그인하게 하고,
+        확인되면 획득한 세션으로 자격증명 없이 probe_site를 재실행한다."""
+        from app.analyzer.login_helper import (
+            _check_logout_indicators,
+            _has_visible_password_input,
+            _safe_goto,
+        )
+        from app.analyzer.site_probe import probe_site
+        from app.crawlers.engine import create_engine
+
+        self._manual_login_cancelled = False
+        self._manual_login_event = asyncio.Event()
+        async with create_engine(headless=False) as engine:
+            page = await engine.new_page()
+            await _safe_goto(page, self.request.login_url)
+            self.login_required.emit()
+            self.progress.emit("자동 로그인 실패 — 브라우저에서 직접 로그인 후 확인 버튼을 눌러주세요.")
+            try:
+                await asyncio.wait_for(
+                    self._manual_login_event.wait(), timeout=_MANUAL_LOGIN_TIMEOUT_SEC
+                )
+            except asyncio.TimeoutError:
+                raise RuntimeError("수동 로그인 대기 시간이 초과되었습니다 (5분).")
+            if self._manual_login_cancelled:
+                raise RuntimeError("수동 로그인이 취소되었습니다.")
+            logged_in = await _check_logout_indicators(page) or not await _has_visible_password_input(page)
+            if not logged_in:
+                raise RuntimeError("로그인이 완료되지 않은 것 같습니다. 다시 시도해주세요.")
+            storage_state = await page.context.storage_state()
+
+        self.progress.emit("[progress:0.00] 로그인 세션으로 사이트 재분석 중...")
+        return await probe_site(
+            self.request.main_url, self.request.listing_url, self.request.detail_url,
+            headless=True, on_progress=self.progress.emit, storage_state=storage_state,
+        )
+
+    def _emit_event(self, kind: str, **payload) -> None:
+        from app.analyzer.auto_adapter import _event_line
+        self.progress.emit(_event_line(kind, **payload))
+
+    async def _orchestrate(self) -> dict:
+        from app.analyzer.auto_adapter import AutoAdapterDeps, run_auto_adapter
+        from app.analyzer.site_probe import probe_site
+
+        self._emit_event("stage", stage="probe", status="active", label="사이트 분석")
+        self.progress.emit("[progress:0.00] 사이트 분석 중...")
+        try:
+            probe = await probe_site(
+                self.request.main_url, self.request.listing_url, self.request.detail_url,
+                headless=True, on_progress=self.progress.emit,
+                login_url=self.request.login_url, username=self.request.username,
+                password=self.request.password,
+            )
+        except RuntimeError:
+            # 자동 로그인(폼 휴리스틱 + LLM)이 모두 실패. 자격증명이 있을 때만
+            # 사람에게 헤드풀 브라우저 직접 로그인을 딱 한 번 요청한다.
+            has_login = bool(
+                self.request.login_url and self.request.username and self.request.password
+            )
+            if not has_login:
+                raise
+            probe = await self._manual_login_probe()
+        self._emit_event("stage", stage="probe", status="done", label="사이트 분석")
+        self._state = getattr(probe, "storage_state", None)
+        self._detail_dom = getattr(probe, "detail_html", "") or ""
+        if self._state and self.request.supplier_key:
+            try:
+                from app.analyzer.session_store import save_session_state
+                save_session_state(self.request.supplier_key, self._state)
+            except Exception:
+                pass
+
+        urls = [str(item["url"]) for item in (probe.sample_products or []) if item.get("url")]
+        detail = str(self.request.detail_url or "").strip()
+        if detail and detail not in urls:
+            urls = [detail, *urls]
+
+        deps = AutoAdapterDeps(
+            generate=lambda: self._dep_generate(probe),
+            test_fields=self._dep_test_fields,
+            repair_field=self._dep_repair_field,
+            find_status_pair=self._dep_find_status_pair,
+            compare_status=self._dep_compare_status,
+            analyze_options=self._dep_analyze_options,
+            judge_values=self._dep_judge_values,
+        )
+        result = await run_auto_adapter(
+            probe, self.request.supplier_name, deps,
+            test_urls=urls, on_progress=self.progress.emit,
+        )
+        return {
+            "yaml": result.yaml_text,
+            "unresolved": list(result.unresolved_fields),
+            "log": list(result.log),
+            "status_pair": list(result.status_pair) if result.status_pair else None,
+            "dispositions": dict(result.dispositions),
+            "needs_login": bool(getattr(probe, "needs_login", False)),
+            "probe": probe,
+        }
+
+    async def _dep_generate(self, probe) -> str:
+        res = await generate_adapter_yaml(
+            probe, self.request.supplier_name,
+            llm_provider=self.request.provider, auto_fallback=self.request.auto_fallback,
+            on_progress=self.progress.emit, include_manual_fields=True,
+        )
+        return res.yaml_text
+
+    async def _dep_test_fields(self, yaml_text, urls, fields):
+        req = AdapterTestRequest(
+            yaml_text, list(urls), "", self.request.login_url,
+            self.request.username, self.request.password, tuple(fields),
+            storage_state=self._state, supplier_key=self.request.supplier_key,
+        )
+        if self._shots_dir is None:
+            self._shots_dir = tempfile.mkdtemp(prefix="auto_adapter_shots_")
+
+        def _on_shot(url: str, path: str) -> None:
+            self._emit_event("visit", url=url, purpose="라이브 검증")
+            self._emit_event("shot", path=path, url=url, field="")
+
+        result = await AdapterTestWorker(
+            req, screenshot_dir=self._shots_dir, on_screenshot=_on_shot,
+        )._run_test()
+        return result.get("__raw_results__", {})
+
+    async def _dep_judge_values(self, samples: dict[str, list[str]]) -> dict[str, dict]:
+        """1차 통과 필드들의 추출값 타당성 LLM 검수. 예외는 오케스트레이터가 통과로 처리."""
+        from app.analyzer.llm_client import QuotaExceededError, get_llm_client
+
+        user = "필드별 샘플 추출값:\n" + json.dumps(samples, ensure_ascii=False, indent=1)
+        provider = self.request.provider
+        try:
+            resp = await get_llm_client(provider).generate(_JUDGE_SYSTEM_PROMPT, user)
+        except QuotaExceededError:
+            if not self.request.auto_fallback:
+                raise
+            provider = "openai" if provider == "gemini" else "gemini"
+            resp = await get_llm_client(provider).generate(_JUDGE_SYSTEM_PROMPT, user)
+        verdicts = json.loads(_strip_json_response(resp))
+        return verdicts if isinstance(verdicts, dict) else {}
+
+    async def _dep_repair_field(self, yaml_text, field, feedback) -> str:
+        import yaml as _yaml
+        from app.analyzer.adapter_generator import _strip_empty_selectors
+        from app.analyzer.adapter_schema import Adapter
+        from app.analyzer.llm_client import QuotaExceededError, get_llm_client
+        from app.analyzer.mapping_hints import MappingHint, apply_locked_hints_to_yaml_dict
+
+        if not self._detail_dom:
+            return yaml_text
+        hint_desc = _AUTO_REPAIR_FIELD_HINTS.get(field.test_key, field.field_path)
+        user = (
+            f"필드: {field.field_path}\n설명: {hint_desc}\n\n{feedback}\n\n"
+            f"## 상품 상세 페이지 DOM\n{self._detail_dom[:12000]}"
+        )
+        provider = self.request.provider
+        try:
+            resp = await get_llm_client(provider).generate(_AUTO_REPAIR_SYSTEM_PROMPT, user)
+        except QuotaExceededError:
+            if not self.request.auto_fallback:
+                return yaml_text
+            provider = "openai" if provider == "gemini" else "gemini"
+            resp = await get_llm_client(provider).generate(_AUTO_REPAIR_SYSTEM_PROMPT, user)
+        try:
+            spec = json.loads(_strip_json_response(resp))
+        except json.JSONDecodeError:
+            return yaml_text
+        if not isinstance(spec, dict):
+            return yaml_text
+        selector = str(spec.get("selector") or "").strip()
+        if not selector:
+            return yaml_text
+        kwargs: dict = {
+            "page_kind": field.page_kind, "field_path": field.field_path,
+            "chosen_selector": selector, "locked": True,
+        }
+        for key in ("attribute", "transform"):
+            value = str(spec.get(key) or "").strip()
+            if value:
+                kwargs[key] = value
+        if field.test_key in ("detail_content", "extra_image_urls"):
+            kwargs["multiple"] = True
+        try:
+            hint = MappingHint(**kwargs)
+        except ValueError:
+            return yaml_text
+        raw = _yaml.safe_load(yaml_text) or {}
+        try:
+            apply_locked_hints_to_yaml_dict(raw, [hint])
+            _strip_empty_selectors(raw)
+            adapter = Adapter.model_validate(raw)
+        except Exception:
+            return yaml_text
+        return _yaml.safe_dump(adapter.model_dump(mode="json", exclude_none=True), allow_unicode=True, sort_keys=False)
+
+    async def _dep_find_status_pair(self, urls):
+        from app.analyzer.auto_adapter import AUTO_STATUS_SCAN_MAX
+        from app.analyzer.html_reducer import reduce_html
+        from app.analyzer.login_helper import perform_login as _login_shared
+        from app.crawlers.engine import create_engine
+
+        snap = SoldoutCompareWorker(SoldoutCompareRequest(
+            "", "", "", None, None, None, self._state, self.request.supplier_key,
+        ))
+        # 사용자가 품절 URL을 직접 준 경우: 자동 탐색을 건너뛰고 (판매중, 품절) 쌍을 고정한다.
+        fixed_soldout = str(self.request.soldout_url or "").strip()
+        available = soldout = None
+        async with create_engine(headless=True, storage_state=self._state) as engine:
+            page = await engine.new_page()
+            if (self.request.login_url and self.request.username and self.request.password
+                    and self._state is None):
+                await _login_shared(
+                    page, self.request.login_url, self.request.username, self.request.password,
+                    on_progress=self.progress.emit,
+                )
+            if fixed_soldout:
+                available = str(self.request.detail_url or "").strip() or (urls[0] if urls else None)
+                soldout = fixed_soldout
+                # 입력한 품절 URL이 실제 품절 신호를 보이는지 확인 (없어도 compare는 진행).
+                try:
+                    snapshot = await snap._snapshot(page, fixed_soldout, reduce_html)
+                    if _classify_status(snapshot) != "sold_out":
+                        self.progress.emit("입력한 품절 상품에서 품절 신호를 찾지 못했습니다.")
+                except Exception:
+                    pass
+            else:
+                for url in list(urls)[:AUTO_STATUS_SCAN_MAX]:
+                    try:
+                        snapshot = await snap._snapshot(page, url, reduce_html)
+                    except Exception:
+                        continue
+                    cls = _classify_status(snapshot)
+                    if cls == "available" and available is None:
+                        available = url
+                    elif cls == "sold_out" and soldout is None:
+                        soldout = url
+                    if available and soldout:
+                        break
+            await page.close()
+        return (available, soldout) if available and soldout else None
+
+    async def _dep_compare_status(self, yaml_text, available, soldout) -> dict:
+        req = SoldoutCompareRequest(
+            yaml_text, available, soldout, self.request.login_url,
+            self.request.username, self.request.password, self._state, self.request.supplier_key,
+        )
+        return await SoldoutCompareWorker(req)._compare()
+
+    async def _dep_analyze_options(self, yaml_text, url):
+        req = OptionTextParserAnalyzeRequest(
+            yaml_text, url, self.request.login_url,
+            self.request.username, self.request.password, self._state, self.request.supplier_key,
+        )
+        try:
+            result = await OptionTextParserAnalyzeWorker(req)._analyze()
+            return result.get("parser")
+        except Exception:
+            return None
