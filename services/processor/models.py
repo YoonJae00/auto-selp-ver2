@@ -43,6 +43,15 @@ class ProductImport(Base):
     # relationship
     products = relationship("Product", back_populates="import_run", cascade="all, delete-orphan")
 
+class ProcessingTask(Base):
+    __tablename__ = "processing_tasks"
+
+    task_id: Mapped[str] = mapped_column(String, primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())
+
+    # ponytail: retain ownership rows; add TTL cleanup when table growth becomes measurable.
+
 class Product(Base):
     __tablename__ = "products"
 

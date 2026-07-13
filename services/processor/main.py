@@ -21,7 +21,7 @@ from datetime import datetime
 from tasks import process_excel_task, process_db_products_task
 from celery_app import celery_app
 from database import get_db, engine, Base
-from models import Prompt, ProductImport, Product, ProductPlatformMapping, WholesaleSite
+from models import Prompt, ProcessingTask, ProductImport, Product, ProductPlatformMapping, WholesaleSite
 from schemas import (
     ProcessRequest, 
     PromptUpdate, 
@@ -118,6 +118,16 @@ async def get_current_user(
         raise HTTPException(status_code=401, detail="User not found")
     
     return {"id": user.id, "username": user.username, "is_admin": user.is_admin}
+
+
+async def require_task_owner(task_id: str, user_id: uuid.UUID, db: AsyncSession):
+    result = await db.execute(
+        select(ProcessingTask.task_id).where(
+            and_(ProcessingTask.task_id == task_id, ProcessingTask.user_id == user_id)
+        )
+    )
+    if result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=404, detail="Task not found.")
 
 
 def require_internal_service_token(
@@ -438,6 +448,8 @@ async def start_db_processing(
         None,
         request.vision_llm_provider,
     )
+    db.add(ProcessingTask(task_id=task.id, user_id=current_user["id"]))
+    await db.commit()
     
     return {
         "task_id": task.id,
@@ -505,6 +517,8 @@ async def start_selected_products_processing(
         product_ids or None,
         request.vision_llm_provider,
     )
+    db.add(ProcessingTask(task_id=task.id, user_id=current_user["id"]))
+    await db.commit()
 
     return {
         "task_id": task.id,
@@ -888,7 +902,12 @@ async def list_imports(
 # --- Celery Task Control & Status ---
 
 @app.get("/status/{task_id}")
-async def get_status(task_id: str):
+async def get_status(
+    task_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await require_task_owner(task_id, current_user["id"], db)
     res = AsyncResult(task_id, app=celery_app)
     if res.state == 'PENDING':
         return {"state": res.state, "status": "Waiting for worker..."}
@@ -901,7 +920,12 @@ async def get_status(task_id: str):
     return {"state": res.state}
 
 @app.get("/download/{task_id}")
-async def download_result(task_id: str):
+async def download_result(
+    task_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await require_task_owner(task_id, current_user["id"], db)
     res = AsyncResult(task_id, app=celery_app)
     if res.state == 'SUCCESS':
         output_path = res.result.get("output_path")
