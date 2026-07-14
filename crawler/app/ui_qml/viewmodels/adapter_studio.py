@@ -473,6 +473,8 @@ class AdapterStudioViewModel(BaseViewModel):
         if "soldoutUrl" in values:
             self._soldout_url = str(values["soldoutUrl"] or "").strip()
             self._soldout_suggestion = {}
+        if "optionUrl" in values:
+            self._inputs["optionUrl"] = str(values["optionUrl"] or "").strip()
         self._invalidate_credentials_for_identity_change(previous_identity)
         self._emit()
 
@@ -889,6 +891,9 @@ class AdapterStudioViewModel(BaseViewModel):
                 errors["soldoutUrl"] = "품절 상품 URL은 http:// 또는 https://로 시작해야 합니다."
             elif soldout == detail:
                 errors["soldoutUrl"] = "샘플 상품과 다른 품절 상품 URL을 입력하세요."
+        option = str(self._inputs.get("optionUrl") or "").strip()
+        if option and not option.startswith(("http://", "https://")):
+            errors["optionUrl"] = "옵션 상품 URL은 http:// 또는 https://로 시작해야 합니다."
         if self._inputs["needsLogin"]:
             labels = {"loginUrl": "로그인 URL", "username": "아이디", "password": "비밀번호"}
             for key in ("loginUrl", "username", "password"):
@@ -912,6 +917,7 @@ class AdapterStudioViewModel(BaseViewModel):
             provider=config.llm_provider, auto_fallback=config.auto_fallback_enabled,
             supplier_key=self._credential_key() if self._inputs["needsLogin"] else None,
             soldout_url=soldout or None,
+            option_url=option or None,
         )
         worker = self._factories["auto_adapter"](request)
         self._inputs["username"] = self._inputs["password"] = ""

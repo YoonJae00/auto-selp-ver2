@@ -66,6 +66,7 @@ Item {
                 AppTextField { id: autoMainUrl; Layout.fillWidth: true; text: "http://localhost:9000/index.html"; placeholderText: "https://example.com"; Accessible.name: "자동 메인 URL"; size: "compact" }
                 AppTextField { id: autoDetailUrl; Layout.fillWidth: true; text: "http://localhost:9000/detail.html?product_no=101"; placeholderText: "샘플 상품 URL (필드 매핑에 사용)"; Accessible.name: "자동 샘플 상품 URL"; size: "compact" }
                 AppTextField { id: autoSoldoutUrl; Layout.fillWidth: true; placeholderText: "품절 상품 URL (권장 — 품절 감지 정확도를 높입니다)"; Accessible.name: "자동 품절 상품 URL"; size: "compact" }
+                AppTextField { id: autoOptionUrl; Layout.fillWidth: true; placeholderText: "옵션 상품 URL (선택 — 옵션이 있는 상품이면 입력)"; Accessible.name: "자동 옵션 상품 URL"; size: "compact" }
                 CheckBox { id: autoNeedsLogin; checked: true; text: "로그인 필요"; Accessible.name: text }
                 AppTextField { id: autoLoginUrl; visible: autoNeedsLogin.checked; Layout.fillWidth: true; text: "http://localhost:9000/login.html"; placeholderText: "로그인 URL"; Accessible.name: "자동 로그인 URL"; size: "compact" }
                 AppTextField { id: autoUsername; visible: autoNeedsLogin.checked; Layout.fillWidth: true; text: "test"; placeholderText: "아이디"; Accessible.name: "자동 로그인 아이디"; size: "compact" }
@@ -77,7 +78,7 @@ Item {
                     selected: true
                     enabled: !root.viewModel.busy
                     onClicked: {
-                        root.viewModel.setConnectionInputs({supplierName: autoSupplierName.text, mainUrl: autoMainUrl.text, soldoutUrl: autoSoldoutUrl.text, detailUrl: autoDetailUrl.text, needsLogin: autoNeedsLogin.checked})
+                        root.viewModel.setConnectionInputs({supplierName: autoSupplierName.text, mainUrl: autoMainUrl.text, soldoutUrl: autoSoldoutUrl.text, optionUrl: autoOptionUrl.text, detailUrl: autoDetailUrl.text, needsLogin: autoNeedsLogin.checked})
                         root.viewModel.setLoginInputs({loginUrl: autoLoginUrl.text, username: autoUsername.text, password: autoPassword.text})
                         root.viewModel.runFullAuto()
                         autoUsername.text = ""

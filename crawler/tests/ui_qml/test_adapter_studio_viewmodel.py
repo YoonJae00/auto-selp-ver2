@@ -2427,3 +2427,30 @@ def test_run_full_auto_rejects_soldout_equal_to_or_invalid_sample() -> None:
     assert vm.runFullAuto() is False
     assert "soldoutUrl" in vm.fieldErrors
     assert made == []
+
+
+def test_run_full_auto_forwards_option_url() -> None:
+    made: list = []
+    vm = _auto_vm(made)
+    vm.setConnectionInputs({"optionUrl": "https://shop.example/p/opt"})
+
+    assert vm.runFullAuto() is True
+    assert made[0].args[0].option_url == "https://shop.example/p/opt"
+
+
+def test_run_full_auto_option_url_is_optional() -> None:
+    made: list = []
+    vm = _auto_vm(made)  # optionUrl 미입력
+
+    assert vm.runFullAuto() is True
+    assert made[0].args[0].option_url is None
+
+
+def test_run_full_auto_rejects_invalid_option_url() -> None:
+    made: list = []
+    vm = _auto_vm(made)
+
+    vm.setConnectionInputs({"optionUrl": "not-a-url"})
+    assert vm.runFullAuto() is False
+    assert "optionUrl" in vm.fieldErrors
+    assert made == []
