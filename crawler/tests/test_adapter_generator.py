@@ -231,6 +231,77 @@ def test_generate_excludes_locked_hint_from_repair(monkeypatch):
     assert ".live-only-price" in result.yaml_text  # 잠금 선택자 유지
 
 
+# ----- jQuery :contains() → Playwright :has-text() 변환 -----
+
+CONTAINS_YAML = """adapter:
+  name: T
+  base_url: https://x.com
+  listing:
+    product_link:
+      selector: a[href*='shopdetail']
+  product:
+    raw_product_name:
+      selector: .name
+    origin:
+      selector: dt:contains("원산지")
+"""
+
+
+def test_finalize_converts_jquery_contains_to_has_text():
+    _, adapter = ag._finalize_generated_yaml(CONTAINS_YAML, strip_manual=False)
+    # jQuery 전용 :contains() 는 Playwright query_selector가 SyntaxError → :has-text() 로 변환.
+    assert adapter.adapter.product.origin.selector == 'dt:has-text("원산지")'
+
+
+# ----- 비전: 상세 스크린샷을 LLM 호출에 전달 -----
+
+class _VisionCapturingClient:
+    def __init__(self, gen_yaml: str, seen: dict):
+        self._gen = gen_yaml
+        self._seen = seen
+
+    async def generate(self, system: str, user: str, image_paths=None) -> str:
+        self._seen["image_paths"] = image_paths
+        self._seen["system"] = system
+        return self._gen
+
+
+GEN_YAML_OK = """
+adapter:
+  name: T
+  base_url: https://x.com
+  listing:
+    product_link:
+      selector: a[href*='shopdetail']
+  product:
+    raw_product_name:
+      selector: .name
+"""
+
+
+def test_generate_passes_screenshot_to_client(monkeypatch):
+    seen: dict = {}
+    monkeypatch.setattr(ag, "get_llm_client", lambda provider: _VisionCapturingClient(GEN_YAML_OK, seen))
+    probe = _probe(DETAIL, "<a href='/shopdetail.html'>x</a>")
+    probe.detail_screenshot_path = "/tmp/probe_shots_x/detail.png"
+
+    asyncio.run(generate_adapter_yaml(probe, "테스트몰", llm_provider="gemini"))
+
+    assert seen["image_paths"] == ["/tmp/probe_shots_x/detail.png"]  # 스크린샷 전달됨
+    assert "스크린샷" in seen["system"]  # 화면 대조 지시 접미됨
+
+
+def test_generate_omits_image_kwarg_without_screenshot(monkeypatch):
+    seen: dict = {}
+    monkeypatch.setattr(ag, "get_llm_client", lambda provider: _VisionCapturingClient(GEN_YAML_OK, seen))
+    probe = _probe(DETAIL, "<a href='/shopdetail.html'>x</a>")  # detail_screenshot_path 기본 ""
+
+    asyncio.run(generate_adapter_yaml(probe, "테스트몰", llm_provider="gemini"))
+
+    assert seen["image_paths"] is None  # 스크린샷 없으면 kwarg 미전달(기존 호출부 호환)
+    assert "스크린샷" not in seen["system"]
+
+
 if __name__ == "__main__":
     import sys
     sys.exit(pytest.main([__file__, "-q"]))

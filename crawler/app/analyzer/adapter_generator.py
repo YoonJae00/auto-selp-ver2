@@ -125,6 +125,18 @@ AUTO_SYSTEM_PROMPT = SYSTEM_PROMPT.replace(_MANUAL_DIRECTIVE_BLOCK, _AUTO_DIRECT
 assert AUTO_SYSTEM_PROMPT != SYSTEM_PROMPT, "SYSTEM_PROMPT의 manual 지시 블록이 바뀌었습니다 — _MANUAL_DIRECTIVE_BLOCK 갱신 필요"
 
 
+_VISION_DIRECTIVE = (
+    "\n\n첨부된 스크린샷은 상품 상세 페이지 화면입니다. "
+    "화면에서 각 필드의 실제 위치를 확인하고 DOM과 대조해 정확한 선택자를 고르세요."
+)
+
+
+def _screenshot_images(probe_result: ProbeResult) -> list[str]:
+    """상세 스크린샷 경로 리스트(있을 때만). 비전 LLM 호출에 넘긴다."""
+    path = getattr(probe_result, "detail_screenshot_path", "") or ""
+    return [path] if path else []
+
+
 @dataclass
 class GenerationResult:
     yaml_text: str
@@ -159,7 +171,9 @@ _PSEUDO_ELEMENT_RE = re.compile(r"::[\w-]+(?:\([^)]*\))?")
 def _strip_pseudo_elements(selector: str | None) -> str:
     if not selector:
         return selector or ""
-    return _PSEUDO_ELEMENT_RE.sub("", str(selector)).strip()
+    cleaned = _PSEUDO_ELEMENT_RE.sub("", str(selector)).strip()
+    # jQuery 전용 :contains() → Playwright 지원 :has-text() (query_selector SyntaxError 방지, 인자 보존).
+    return cleaned.replace(":contains(", ":has-text(")
 
 
 def _sanitize_pseudo_elements(node: Any) -> None:
@@ -463,6 +477,11 @@ async def generate_adapter_yaml(
     user_prompt = _build_user_prompt(probe_result, supplier_name, mapping_hints)
     # 전체 자동화 모드: manual-only 필드까지 후보 선택자를 받도록 프롬프트/스트립을 전환.
     system_prompt = AUTO_SYSTEM_PROMPT if include_manual_fields else SYSTEM_PROMPT
+    # 상세 스크린샷이 있으면 비전 첨부 + 화면 대조 지시를 붙인다(계약: 비어있지 않을 때만 전달).
+    images = _screenshot_images(probe_result)
+    img_kwargs = {"image_paths": images} if images else {}
+    if images:
+        system_prompt = system_prompt + _VISION_DIRECTIVE
 
     def _log(msg: str) -> None:
         if on_progress:
@@ -538,6 +557,7 @@ async def generate_adapter_yaml(
             raw_response = await client.generate(
                 system_prompt,
                 _build_prompt(last_error if attempt > 0 else ""),
+                **img_kwargs,
             )
         except QuotaExceededError:
             if not auto_fallback or used_fallback:
@@ -550,7 +570,7 @@ async def generate_adapter_yaml(
             used_fallback = True
             # Try fallback immediately (one attempt, no retries)
             client = get_llm_client(provider)
-            raw_response = await client.generate(system_prompt, user_prompt)
+            raw_response = await client.generate(system_prompt, user_prompt, **img_kwargs)
             return await _succeed(raw_response, provider, retries=0)
 
         try:
@@ -571,7 +591,7 @@ async def generate_adapter_yaml(
         provider = "openai" if provider == "gemini" else "gemini"
         client = get_llm_client(provider)
         raw_response = await client.generate(
-            system_prompt, _build_prompt(last_error)
+            system_prompt, _build_prompt(last_error), **img_kwargs
         )
         return await _succeed(raw_response, provider, retries=max_retries)
 
@@ -690,16 +710,21 @@ async def repair_adapter_fields(
     field_lines = "\n".join(f"- {f}: {_REPAIR_FIELD_HINTS.get(f, '')}" for f in targets)
     user_prompt = f"## 다시 선택자를 찾을 필드\n{field_lines}\n\n{dom}"
 
+    # 수리도 화면을 보고 고르게 스크린샷 첨부 + 대조 지시(있을 때만).
+    images = _screenshot_images(probe_result)
+    img_kwargs = {"image_paths": images} if images else {}
+    system_prompt = REPAIR_SYSTEM_PROMPT + (_VISION_DIRECTIVE if images else "")
+
     _log(f"빈 값 필드 {len(targets)}개 자동 재매핑 중...")
     provider = llm_provider
     try:
-        response = await get_llm_client(provider).generate(REPAIR_SYSTEM_PROMPT, user_prompt)
+        response = await get_llm_client(provider).generate(system_prompt, user_prompt, **img_kwargs)
     except QuotaExceededError:
         if not auto_fallback:
             return yaml_text
         provider = "openai" if provider == "gemini" else "gemini"
         _log(f"할당량 초과, {provider}로 재매핑 전환...")
-        response = await get_llm_client(provider).generate(REPAIR_SYSTEM_PROMPT, user_prompt)
+        response = await get_llm_client(provider).generate(system_prompt, user_prompt, **img_kwargs)
 
     text = response.strip()
     if text.startswith("```"):

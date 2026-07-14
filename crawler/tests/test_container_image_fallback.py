@@ -61,6 +61,22 @@ def test_buttons_and_icons_dropped_by_size() -> None:
     assert _extract(html, extractor) == ["/big1.jpg", "/big2.jpg"]
 
 
+def test_quickmenu_icons_dropped_by_src_token() -> None:
+    # 사이드바 퀵메뉴 아이콘/버튼(품절리스트·엑셀주문·적립금충전 등)은 세로로 길어 크기 필터를
+    # 통과할 수 있으나 파일명 토큰(btn_/quick/icon)으로 제외되고, 진짜 상세 이미지만 남아야 한다.
+    html = """
+      <div class="detail">
+        <img src="/big1.jpg" width="600" height="800">
+        <img src="/btn_excel_order.png" width="120" height="400">
+        <img src="/quick_soldout.png" width="90" height="400">
+        <img src="/sidebar/icon_cash.png" width="80" height="400">
+        <img src="/big2.jpg" width="700" height="900">
+      </div>
+    """
+    extractor = FieldExtractor(selector="div.detail", attribute="src", multiple=True)
+    assert _extract(html, extractor) == ["/big1.jpg", "/big2.jpg"]
+
+
 def test_unknown_size_lazy_image_preserved() -> None:
     # 회귀 방지: 크기 불명(로드 전 lazy, natural=0/속성없음)은 버리지 않고 보존.
     html = '<div class="detail"><img src="/lazy_detail.jpg"></div>'

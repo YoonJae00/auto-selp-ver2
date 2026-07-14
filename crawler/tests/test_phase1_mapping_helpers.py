@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from app.analyzer.adapter_schema import FieldExtractor, OptionGroupConfig, OptionsConfig, get_product_field_mappings
-from app.analyzer.site_probe import normalize_sample_products
+from app.analyzer.site_probe import _capture_detail_screenshot, normalize_sample_products
 from app.crawlers.yaml_adapter import (
     YAMLAdapter,
     _image_csv,
@@ -383,6 +383,143 @@ def test_normalize_sample_products_deduplicates_and_prefers_quality() -> None:
     ]
     assert normalized[0]["name"] == "좋은상품"
     assert normalized[0]["image_url"] == "https://example.com/img.jpg"
+
+
+def test_normalize_sample_products_reference_keeps_only_products() -> None:
+    base = "https://shop.com"
+    products = [
+        {"url": "/shop/shopdetail.html?branduid=1", "name": "상품1", "image_url": ""},
+        {"url": "/shop/shopdetail.html?branduid=2", "name": "상품2", "image_url": ""},
+        {"url": "/shop/shopdetail.html?branduid=3", "name": "상품3", "image_url": ""},
+        {"url": "/shop/shopdetail.html?branduid=4", "name": "상품4", "image_url": ""},
+        {"url": "/shop/shopdetail.html?branduid=5", "name": "상품5", "image_url": ""},
+        {"url": "/shop/shopbrand.html?xcode=001", "name": "카테고리A", "image_url": ""},
+        {"url": "/shop/shopbrand.html?xcode=002", "name": "카테고리B", "image_url": ""},
+        {"url": "/member/mileage_charge.html", "name": "적립금충전", "image_url": ""},
+        {"url": "/board/notice.html", "name": "공지", "image_url": ""},
+    ]
+    ref = "https://shop.com/shop/shopdetail.html?branduid=999"
+    normalized, links = normalize_sample_products(base, products, reference_url=ref)
+
+    assert len(links) == 5
+    assert all("shopdetail" in u and "shopbrand" not in u for u in links)
+
+
+def test_normalize_sample_products_reference_relaxes_via_code_param() -> None:
+    base = "https://shop.com"
+    products = [
+        {"url": "/view.php?goodsno=100", "name": "정확일치", "image_url": ""},
+        {"url": "/detail/goods?goodsno=200", "name": "다른경로1", "image_url": ""},
+        {"url": "/detail/goods?goodsno=300", "name": "다른경로2", "image_url": ""},
+    ]
+    ref = "https://shop.com/view.php?goodsno=100"
+    normalized, links = normalize_sample_products(base, products, reference_url=ref)
+
+    # 경로 일치는 1개뿐 → goodsno 공유 후보까지 완화되어 3개 모두 생존
+    assert len(links) == 3
+    assert set(links) == {
+        "https://shop.com/view.php?goodsno=100",
+        "https://shop.com/detail/goods?goodsno=200",
+        "https://shop.com/detail/goods?goodsno=300",
+    }
+
+
+def test_normalize_sample_products_no_reference_keeps_majority_path() -> None:
+    base = "https://shop.com"
+    products = [
+        {"url": "/goods/view?no=1", "name": "상품1", "image_url": ""},
+        {"url": "/goods/view?no=2", "name": "상품2", "image_url": ""},
+        {"url": "/goods/view?no=3", "name": "상품3", "image_url": ""},
+        {"url": "/goods/view?no=4", "name": "상품4", "image_url": ""},
+        {"url": "/some/odd/link?x=1", "name": "이탈링크", "image_url": ""},
+    ]
+    normalized, links = normalize_sample_products(base, products)
+
+    # /goods/view 최다 그룹(4/5, 과반)만 유지, 이탈 링크 제거
+    assert len(links) == 4
+    assert all("/goods/view" in u for u in links)
+
+
+def test_normalize_sample_products_blacklist_only_fallback() -> None:
+    base = "https://shop.com"
+    products = [
+        {"url": "/catalog/item?sku=1", "name": "상품1", "image_url": ""},
+        {"url": "/catalog/item?sku=2", "name": "상품2", "image_url": ""},
+        {"url": "/board/notice", "name": "공지", "image_url": ""},
+    ]
+    # reference 경로가 후보 중 어디에도 없고 코드 파라미터도 공유되지 않음 → 블랙리스트만 적용된 폴백
+    ref = "https://shop.com/product/detail.html?pid=9"
+    normalized, links = normalize_sample_products(base, products, reference_url=ref)
+
+    assert set(links) == {
+        "https://shop.com/catalog/item?sku=1",
+        "https://shop.com/catalog/item?sku=2",
+    }
+
+
+@pytest.mark.asyncio
+async def test_capture_detail_screenshot_returns_path() -> None:
+    calls = []
+
+    class _Page:
+        async def screenshot(self, path, full_page=False):
+            calls.append(full_page)
+            with open(path, "wb") as f:
+                f.write(b"png")
+
+    path = await _capture_detail_screenshot(_Page())
+    assert path.endswith("detail.png")
+    assert calls == [True]  # full_page 우선 시도
+
+
+@pytest.mark.asyncio
+async def test_capture_detail_screenshot_falls_back_to_viewport() -> None:
+    calls = []
+
+    class _Page:
+        async def screenshot(self, path, full_page=False):
+            calls.append(full_page)
+            if full_page:
+                raise RuntimeError("full_page unsupported")
+            with open(path, "wb") as f:
+                f.write(b"png")
+
+    path = await _capture_detail_screenshot(_Page())
+    assert path.endswith("detail.png")
+    assert calls == [True, False]  # full_page 실패 → viewport 폴백
+
+
+@pytest.mark.asyncio
+async def test_capture_detail_screenshot_swallows_all_failures() -> None:
+    class _Page:
+        async def screenshot(self, path, full_page=False):
+            raise RuntimeError("boom")
+
+    assert await _capture_detail_screenshot(_Page()) == ""  # 완전 실패 시 ""
+
+
+def test_normalize_sample_products_excludes_reward_pseudo_product() -> None:
+    # 정도매: 적립금 충전이 진짜 상품과 같은 goods_view.php 경로를 써 경로 필터를 통과 → 이름으로 제외.
+    base = "https://jd.com"
+    products = [
+        {"url": "/goods/goods_view.php?goodsNo=1", "name": "예쁜 원피스", "image_url": "/a.jpg"},
+        {"url": "/goods/goods_view.php?goodsNo=9", "name": "적립금 충전", "image_url": "/b.jpg"},
+    ]
+    ref = "https://jd.com/goods/goods_view.php?goodsNo=1"
+    normalized, links = normalize_sample_products(base, products, reference_url=ref)
+
+    assert links == ["https://jd.com/goods/goods_view.php?goodsNo=1"]  # 적립금 유사상품 제외
+    assert all("적립금" not in p["name"] for p in normalized)
+
+
+def test_normalize_sample_products_keeps_unnamed_candidate() -> None:
+    # 이름이 비어 있으면 이름 블랙리스트를 통과(URL 필터만 적용).
+    base = "https://jd.com"
+    normalized, links = normalize_sample_products(
+        base, [], links=["/goods/goods_view.php?goodsNo=5"],
+        reference_url="https://jd.com/goods/goods_view.php?goodsNo=1",
+    )
+    assert links == ["https://jd.com/goods/goods_view.php?goodsNo=5"]
 
 
 def test_status_snapshot_suggestion_prefers_maxq_difference() -> None:

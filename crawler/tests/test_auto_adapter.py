@@ -81,6 +81,8 @@ class FakeDeps(AutoAdapterDeps):
         self.feedbacks: list[str] = []
         self.tested: list[tuple[str, ...]] = []
         self.judge_calls: list[dict] = []
+        self.tested_urls: list[tuple[tuple[str, ...], tuple[str, ...]]] = []
+        self.analyze_url: str | None = None
         self._status_pair = status_pair
         self._status_suggestion = status_suggestion
         self._option_parser = option_parser
@@ -100,6 +102,7 @@ class FakeDeps(AutoAdapterDeps):
 
     async def _test_fields(self, yaml_text, urls, fields):
         self.tested.append(tuple(fields))
+        self.tested_urls.append((tuple(fields), tuple(urls)))
         product = (yaml.safe_load(yaml_text).get("adapter") or {}).get("product") or {}
         out = {}
         for key in fields:
@@ -147,6 +150,7 @@ class FakeDeps(AutoAdapterDeps):
         return self._status_suggestion
 
     async def _analyze_options(self, yaml_text, url):
+        self.analyze_url = url
         return self._option_parser
 
     async def _judge_values(self, samples):
@@ -544,6 +548,43 @@ def test_disposition_status_confirmed_when_pair_found():
     )
     result = _run(deps)
     assert result.dispositions["adapter.product.supplier_status"]["state"] == "confirmed"
+
+
+# ── option_url 배선: 옵션 필드만 option_test_urls로, 나머지는 기존 urls ────────
+_OPT_URLS = ["https://x.com/opt/withoptions"]
+
+
+def test_option_url_routes_only_option_fields_to_option_urls():
+    deps = FakeDeps(OPTION_YAML)  # 옵션 후보 있음 → 확정 경로
+    result = _run(deps, option_dom=OPTION_EVIDENCE_HTML, option_test_urls=_OPT_URLS)
+    for fields, urls in deps.tested_urls:
+        if "option_values" in fields or "option_prices" in fields:
+            assert list(urls) == _OPT_URLS          # 옵션 필드는 옵션 URL로 검증
+            assert "option_values" not in fields or set(fields) <= {"option_values", "option_prices"}
+        else:
+            assert _OPT_URLS[0] not in urls          # 다른 필드는 옵션 URL 미사용
+    # 옵션 파서 분석도 옵션 URL 기준
+    assert deps.analyze_url == _OPT_URLS[0]
+    assert "adapter.options.groups.0.values_selector" in {h.field_path for h in result.mapping_hints}
+
+
+def test_option_dom_drives_evidence_not_detail_html():
+    # detail_html 비어 있어도 option_dom에 select 증거가 있으면 옵션 추적을 강제한다.
+    deps = FakeDeps(fail_first=["option_values"])
+    result = _run(deps, detail_html="", option_dom=OPTION_EVIDENCE_HTML, option_test_urls=_OPT_URLS)
+    assert "adapter.options.groups.0.values_selector" in deps.repair_calls
+    assert "adapter.options.groups.0.values_selector" not in result.unresolved_fields
+    # 옵션 필드 재검증도 옵션 URL로
+    opt_calls = [urls for fields, urls in deps.tested_urls if "option_values" in fields]
+    assert opt_calls and all(list(u) == _OPT_URLS for u in opt_calls)
+
+
+def test_no_option_url_keeps_single_batch_and_default_urls():
+    deps = FakeDeps(OPTION_YAML)  # option_test_urls 미지정 → 기존 동작
+    _run(deps)
+    # 옵션 필드가 다른 필드와 같은 배치(단일 test_fields 호출)에 포함된다
+    assert any("option_values" in fields and "raw_product_name" in fields for fields in deps.tested)
+    assert deps.analyze_url == "https://x.com/p/0"  # 기존 urls[0]
 
 
 if __name__ == "__main__":

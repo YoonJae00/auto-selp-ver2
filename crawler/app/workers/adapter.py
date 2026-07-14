@@ -141,6 +141,7 @@ class AutoAdapterRequest:
     auto_fallback: bool = True
     supplier_key: str | None = None
     soldout_url: str | None = None  # 사용자가 직접 입력한 품절 상품 URL (UI 뷰모델 계약)
+    option_url: str | None = None   # 옵션 있는 상품 URL — 옵션 evidence/검증을 이 페이지 기준으로 (UI 뷰모델 계약)
 
 
 class _AsyncWorker(QThread):
@@ -1694,6 +1695,8 @@ class AutoAdapterWorker(_AsyncWorker):
         self.request = request
         self._state: dict | None = None
         self._detail_dom: str = ""
+        self._option_dom: str = ""              # 옵션 페이지 축약 DOM (option_url 지정 시)
+        self._detail_screenshot_path: str = ""  # probe가 저장한 상세 페이지 스크린샷 경로
         self._shots_dir: str | None = None
         self._manual_login_event: asyncio.Event | None = None
         self._manual_login_cancelled = False
@@ -1787,6 +1790,7 @@ class AutoAdapterWorker(_AsyncWorker):
         self._emit_event("stage", stage="probe", status="done", label="사이트 분석")
         self._state = getattr(probe, "storage_state", None)
         self._detail_dom = getattr(probe, "detail_html", "") or ""
+        self._detail_screenshot_path = getattr(probe, "detail_screenshot_path", "") or ""
         if self._state and self.request.supplier_key:
             try:
                 from app.analyzer.session_store import save_session_state
@@ -1798,6 +1802,15 @@ class AutoAdapterWorker(_AsyncWorker):
         detail = str(self.request.detail_url or "").strip()
         if detail and detail not in urls:
             urls = [detail, *urls]
+
+        # 옵션 있는 상품 URL을 받았으면 그 페이지 DOM을 확보해 옵션 evidence/검증/재선택 기준으로 쓴다.
+        option_url = str(self.request.option_url or "").strip()
+        option_dom: str | None = None
+        option_test_urls: list[str] | None = None
+        if option_url:
+            option_dom = await self._fetch_option_dom(option_url)
+            self._option_dom = option_dom or ""
+            option_test_urls = [option_url]
 
         deps = AutoAdapterDeps(
             generate=lambda: self._dep_generate(probe),
@@ -1811,6 +1824,7 @@ class AutoAdapterWorker(_AsyncWorker):
         result = await run_auto_adapter(
             probe, self.request.supplier_name, deps,
             test_urls=urls, on_progress=self.progress.emit,
+            option_dom=option_dom, option_test_urls=option_test_urls,
         )
         return {
             "yaml": result.yaml_text,
@@ -1821,6 +1835,22 @@ class AutoAdapterWorker(_AsyncWorker):
             "needs_login": bool(getattr(probe, "needs_login", False)),
             "probe": probe,
         }
+
+    async def _fetch_option_dom(self, option_url: str) -> str | None:
+        """옵션 있는 상품 페이지에 헤드리스로 접속해 축약 DOM을 확보. 실패 시 None + note."""
+        from app.analyzer.html_reducer import reduce_html
+        from app.crawlers.engine import create_engine
+        try:
+            async with create_engine(headless=True, storage_state=self._state) as engine:
+                page = await engine.new_page()
+                await page.goto(option_url, wait_until="domcontentloaded", timeout=15000)
+                await page.wait_for_timeout(1200)
+                content = await page.content()
+                await page.close()
+            return reduce_html(content)
+        except Exception as exc:
+            self.progress.emit(f"옵션 페이지 DOM 확보 실패, 기본 상세 DOM 사용: {exc}")
+            return None
 
     async def _dep_generate(self, probe) -> str:
         res = await generate_adapter_yaml(
@@ -1871,21 +1901,30 @@ class AutoAdapterWorker(_AsyncWorker):
         from app.analyzer.llm_client import QuotaExceededError, get_llm_client
         from app.analyzer.mapping_hints import MappingHint, apply_locked_hints_to_yaml_dict
 
-        if not self._detail_dom:
+        is_option = field.test_key in ("option_values", "option_prices")
+        # 옵션 필드는 옵션 페이지 DOM 기준으로 재선택 (있으면), 나머지는 상세 DOM.
+        dom = self._option_dom if (is_option and self._option_dom) else self._detail_dom
+        if not dom:
             return yaml_text
         hint_desc = _AUTO_REPAIR_FIELD_HINTS.get(field.test_key, field.field_path)
         user = (
             f"필드: {field.field_path}\n설명: {hint_desc}\n\n{feedback}\n\n"
-            f"## 상품 상세 페이지 DOM\n{self._detail_dom[:12000]}"
+            f"## 상품 상세 페이지 DOM\n{dom[:12000]}"
+        )
+        # 비전 계약 선반영: 상세 스크린샷이 있으면 image_paths로 넘긴다 (옵션 필드는 상세 스크린샷
+        # 무관하므로 생략). kwarg는 값이 있을 때만 — 기존 generate 시그니처와도 호환되게.
+        img_kw = (
+            {"image_paths": [self._detail_screenshot_path]}
+            if self._detail_screenshot_path and not is_option else {}
         )
         provider = self.request.provider
         try:
-            resp = await get_llm_client(provider).generate(_AUTO_REPAIR_SYSTEM_PROMPT, user)
+            resp = await get_llm_client(provider).generate(_AUTO_REPAIR_SYSTEM_PROMPT, user, **img_kw)
         except QuotaExceededError:
             if not self.request.auto_fallback:
                 return yaml_text
             provider = "openai" if provider == "gemini" else "gemini"
-            resp = await get_llm_client(provider).generate(_AUTO_REPAIR_SYSTEM_PROMPT, user)
+            resp = await get_llm_client(provider).generate(_AUTO_REPAIR_SYSTEM_PROMPT, user, **img_kw)
         try:
             spec = json.loads(_strip_json_response(resp))
         except json.JSONDecodeError:

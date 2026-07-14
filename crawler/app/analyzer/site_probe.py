@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import re
+import tempfile
 from dataclasses import dataclass, field
 from typing import Any, Callable
-from urllib.parse import urljoin
+from urllib.parse import parse_qs, urljoin, urlparse
 
 from app.analyzer.html_reducer import reduce_html
 from app.analyzer.login_helper import _check_logout_indicators, _safe_goto, perform_login
@@ -48,6 +51,19 @@ _STRUCTURED_DATA_JS = r"""
 """
 
 
+async def _capture_detail_screenshot(page) -> str:
+    """상세 화면 전체 스크린샷을 임시 경로에 저장하고 경로 반환. best-effort — 실패 시 ""."""
+    try:
+        shot_path = os.path.join(tempfile.mkdtemp(prefix="probe_shots_"), "detail.png")
+        try:
+            await page.screenshot(path=shot_path, full_page=True)
+        except Exception:
+            await page.screenshot(path=shot_path)  # full_page 실패 시 viewport로 폴백
+        return shot_path
+    except Exception:
+        return ""
+
+
 async def _extract_structured_data(page) -> dict:
     """상세 페이지의 og meta + JSON-LD Product 구조화 데이터 추출. 실패 시 빈 dict."""
     try:
@@ -81,9 +97,84 @@ class ProbeResult:
     platform: str | None = None  # 감지된 쇼핑몰 솔루션 (cafe24/makeshop/godomall/youngcart/wisa)
     structured_data: dict = field(default_factory=dict)  # 상세 페이지 og/JSON-LD 추출값
     detail_page_url: str = ""  # structured_data/detail_html을 추출한 상세 페이지 URL
+    detail_screenshot_path: str = ""  # 상세 페이지 전체 스크린샷 경로 (비전 어댑터 생성용, best-effort)
 
 
-def normalize_sample_products(base_url: str, products: list[dict], links: list[str] | None = None, limit: int = 15) -> tuple[list[dict], list[str]]:
+# 비상품 URL(회원/적립금/카테고리 목록 등)을 샘플에서 걷어내는 경로/쿼리 키워드.
+_NONPRODUCT_KEYWORDS = (
+    "member", "login", "join", "cart", "basket", "order", "deposit",
+    "charge", "point", "mileage", "board", "notice", "event", "company",
+    "guide", "mypage", "wish", "faq", "qna", "search",
+    # 카테고리/목록성 경로
+    "shopbrand", "goods_list", "list.php", "category", "brand.html",
+)
+
+# 상품코드로 보이는 쿼리 파라미터 이름 (auto_adapter._CODE_PARAM_NAMES와 동형).
+_CODE_PARAM_NAMES = frozenset({
+    "branduid", "goodsno", "goods_no", "product_no", "productno",
+    "prdno", "prd_no", "pid", "itemid", "item_id", "it_id",
+    "pcode", "p_code", "code", "uid", "idx", "no", "id",
+})
+
+
+# 진짜 상품과 같은 URL을 가진 유사상품(적립금 충전 등)을 이름으로 걸러내는 키워드.
+_NONPRODUCT_NAME_RE = re.compile(r"적립금|예치금|충전|쿠폰|상품권|배송비|샘플구매|묶음배송")
+
+
+def _norm_path(url: str) -> str:
+    return urlparse(url).path.rstrip("/").lower()
+
+
+def _path_query(url: str) -> str:
+    parts = urlparse(url)
+    return f"{parts.path}?{parts.query}".lower()
+
+
+def _code_param_names(url: str) -> set[str]:
+    """URL에서 상품코드로 보이는 쿼리 파라미터 이름 집합. 알려진 이름 또는 유일 파라미터."""
+    qs = {k: (v[0] if v else "") for k, v in parse_qs(urlparse(url).query).items()}
+    if not qs:
+        return set()
+    known = {k for k in qs if k.lower() in _CODE_PARAM_NAMES}
+    if known:
+        return known
+    return set(qs) if len(qs) == 1 else set()
+
+
+def _filter_candidates(candidates: list[dict], reference_url: str | None) -> list[dict]:
+    """결정적 필터: 비상품 키워드 제거 + reference 상품 URL 모양 기준 선별."""
+    if not candidates:
+        return candidates
+    # reference 자체가 키워드를 포함하는 특이 사이트면 그 키워드는 블랙리스트에서 제외(오탐 방지).
+    ref_lc = _path_query(reference_url) if reference_url else ""
+    blacklist = [kw for kw in _NONPRODUCT_KEYWORDS if kw not in ref_lc]
+    filtered = [c for c in candidates if not any(kw in _path_query(c["url"]) for kw in blacklist)]
+
+    if reference_url:
+        ref_path = _norm_path(reference_url)
+        result = [c for c in filtered if _norm_path(c["url"]) == ref_path]
+        if len(result) >= 2:
+            return result
+        # 완화: reference의 상품코드 파라미터를 공유하는 후보까지 허용.
+        ref_codes = _code_param_names(reference_url)
+        if ref_codes:
+            seen = {id(c) for c in result}
+            for c in filtered:
+                if id(c) not in seen and ref_codes & _code_param_names(c["url"]):
+                    result.append(c)
+        return result or filtered  # 전멸 시 블랙리스트만 적용된 폴백
+
+    # reference 없음: path별 최다 그룹만 유지(과반일 때). 아니면 블랙리스트만.
+    groups: dict[str, list[dict]] = {}
+    for c in filtered:
+        groups.setdefault(_norm_path(c["url"]), []).append(c)
+    if not groups:
+        return filtered
+    largest = max(groups.values(), key=len)
+    return largest if len(largest) * 2 >= len(filtered) else filtered
+
+
+def normalize_sample_products(base_url: str, products: list[dict], links: list[str] | None = None, limit: int = 15, reference_url: str | None = None) -> tuple[list[dict], list[str]]:
     """Normalize, score, and deduplicate probe sample product links."""
     candidates: list[dict] = []
     for product in products:
@@ -97,6 +188,14 @@ def normalize_sample_products(base_url: str, products: list[dict], links: list[s
     for href in links or []:
         if str(href).strip():
             candidates.append({"url": urljoin(base_url, str(href).strip()), "image_url": "", "name": ""})
+
+    candidates = _filter_candidates(candidates, reference_url)
+    # 유사상품(적립금 충전/쿠폰 등)은 진짜 상품과 같은 URL 경로를 써 경로 필터를 통과하므로
+    # 이름으로 걸러낸다. 이름이 비어 있으면 통과(URL 필터만 적용).
+    candidates = [
+        c for c in candidates
+        if not _NONPRODUCT_NAME_RE.search(str(c.get("name") or ""))
+    ]
 
     def score(item: dict) -> int:
         name = str(item.get("name") or "").strip()
@@ -516,7 +615,10 @@ async def probe_site(
             status_indicators: dict = {}
             structured_data: dict = {}
             detail_page_url = ""
-            sample_products, sample_links = normalize_sample_products(main_url, sample_products, sample_links)
+            detail_screenshot_path = ""
+            sample_products, sample_links = normalize_sample_products(
+                main_url, sample_products, sample_links, reference_url=sample_detail_url or None,
+            )
 
             detail_url = sample_detail_url or (sample_links[0] if sample_links else None)
             if detail_url:
@@ -527,6 +629,8 @@ async def probe_site(
                         detail_page_url = full_url
                         structured_data = await _extract_structured_data(page)
                         detail_html = reduce_html(await page.content(), drop_chrome=True)
+                        # 상세 화면 스크린샷 — 비전 어댑터 생성용 보강(best-effort).
+                        detail_screenshot_path = await _capture_detail_screenshot(page)
                         # Extract status indicators from detail page
                         status_indicators: dict = {}
                         try:
@@ -586,6 +690,7 @@ async def probe_site(
                 platform=platform,
                 structured_data=structured_data,
                 detail_page_url=detail_page_url,
+                detail_screenshot_path=detail_screenshot_path,
             )
 
     return await asyncio.wait_for(_do_probe(), timeout=60)

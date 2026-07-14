@@ -2,11 +2,27 @@ from __future__ import annotations
 
 from app.crawlers.yaml_adapter import (
     _image_csv,
+    _image_key,
     _image_values,
     _is_placeholder_src,
     _supported_image_url,
     _without_images,
 )
+
+
+def test_image_key_merges_size_variants() -> None:
+    # 같은 그림의 썸네일/원본이 같은 키가 되어야 dedup이 성립.
+    assert _image_key("https://x.com/big/103.jpg") == _image_key("https://x.com/small/103_s.jpg")
+    assert _image_key("/img/103.jpg?w=200") == _image_key("/img/thumb_103.jpg")
+    assert _image_key("https://x.com/a/103_thumb.png") == _image_key("https://x.com/b/103.png")
+    # 사이즈 디렉토리만 다른 동일 파일명도 같은 키.
+    assert _image_key("https://x.com/goods/big/9.jpg") == _image_key("https://x.com/goods/thumb/9.jpg")
+
+
+def test_image_key_keeps_distinct_numeric_parts() -> None:
+    # 숫자 식별부가 다르면 과잉 병합하지 않는다.
+    assert _image_key("https://x.com/103.jpg") != _image_key("https://x.com/104.jpg")
+    assert _image_key("/p/103_s.jpg") != _image_key("/p/104_s.jpg")
 
 
 def test_supported_image_url_extensions() -> None:

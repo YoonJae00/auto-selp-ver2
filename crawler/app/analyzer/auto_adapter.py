@@ -413,6 +413,7 @@ def _judge_rejection(verdicts: dict[str, dict], test_key: str) -> str | None:
 
 
 _QTY_TOKENS = ("qty", "quantity", "수량")
+_OPTION_TEST_KEYS = {"option_values", "option_prices"}  # 옵션 URL 기준으로 검증할 필드
 
 
 def detect_option_evidence(detail_html: str) -> bool:
@@ -457,6 +458,8 @@ async def run_auto_adapter(
     deps: AutoAdapterDeps,
     test_urls: list[str] | None = None,
     on_progress: Callable[[str], None] | None = None,
+    option_dom: str | None = None,
+    option_test_urls: list[str] | None = None,
 ) -> AutoAdapterResult:
     log: list[str] = []
 
@@ -496,6 +499,13 @@ async def run_auto_adapter(
         _log("검증할 샘플 상품 URL이 없습니다.", 1.0)
         return AutoAdapterResult(yaml_text="", unresolved_fields=[], log=log)
 
+    # 옵션 필드(option_values/option_prices)는 옵션 있는 상품 URL 기준으로 검증한다.
+    # option_test_urls 미지정 시 기존 샘플 URL(urls)을 그대로 쓴다 (동일 객체 → 단일 배치 유지).
+    option_urls = option_test_urls or urls
+
+    def _urls_for(test_key: str) -> list[str]:
+        return option_urls if test_key in _OPTION_TEST_KEYS else urls
+
     _emit("stage", stage="generate", status="active", label="수집 설정 생성")
     _log("확장 프롬프트로 수집 설정 초안 생성 중...", 0.05)
     working_yaml = await deps.generate()
@@ -513,7 +523,8 @@ async def run_auto_adapter(
     # 옵션 강제 추적: 1차 YAML에 후보가 없어도 상세 DOM에 옵션 <select> 증거가 있으면 대상 포함.
     option_field = next(f for f in _MANUAL_FIELDS if f.field_path == OPTION_VALUES_FIELD_PATH)
     detail_html_text = getattr(probe_result, "detail_html", "") or ""
-    if option_field not in targets and detect_option_evidence(detail_html_text):
+    option_dom_text = option_dom or detail_html_text  # 옵션 증거는 옵션 페이지 DOM 우선
+    if option_field not in targets and detect_option_evidence(option_dom_text):
         targets.append(option_field)
         _note("상세 DOM에서 옵션 select 증거 발견 — 옵션값 선택자 탐색을 강제합니다.")
     # 이미지 강제 추적: 1차 YAML에 후보가 없어도 상세 DOM에 <img> 증거가 있으면 대상 포함.
@@ -534,7 +545,16 @@ async def run_auto_adapter(
     all_keys = tuple(f.test_key for f in targets)
     _emit("stage", stage="verify", status="active", label="라이브 검증")
     _log(f"{len(urls)}개 샘플에서 {len(all_keys)}개 필드 라이브 검증 중...", 0.20)
-    results = await deps.test_fields(working_yaml, urls, all_keys)
+    if option_urls is urls:  # 옵션 전용 URL 없음 — 단일 배치
+        results = await deps.test_fields(working_yaml, urls, all_keys)
+    else:  # 옵션 필드는 옵션 URL, 나머지는 기존 샘플 URL로 분리 호출
+        main_keys = tuple(k for k in all_keys if k not in _OPTION_TEST_KEYS)
+        opt_keys = tuple(k for k in all_keys if k in _OPTION_TEST_KEYS)
+        results = {}
+        if main_keys:
+            results.update(await deps.test_fields(working_yaml, urls, main_keys))
+        if opt_keys:
+            results.update(await deps.test_fields(working_yaml, option_urls, opt_keys))
 
     # 1차 종합 판정(과반+판별력+구조화) 후, 통과 필드들만 모아 한 번에 AI 값 검수.
     failures: dict[str, str] = {}
@@ -604,7 +624,7 @@ async def run_auto_adapter(
                 break  # LLM이 개선 못 함 — 더 돌려도 같음
             working_yaml = new_yaml
             base = yaml.safe_load(working_yaml) or {}
-            entries = (await deps.test_fields(working_yaml, urls, (field.test_key,))).get(field.test_key, [])
+            entries = (await deps.test_fields(working_yaml, _urls_for(field.test_key), (field.test_key,))).get(field.test_key, [])
             failure = _live_failure(field, entries, structured, detail_page_url, _note)
             if failure is None and field.test_key not in _JUDGE_EXCLUDE:
                 # 재시도 성공 후에도 AI 값 검수를 다시 통과해야 확정.
@@ -669,7 +689,7 @@ async def run_auto_adapter(
         _emit("stage", stage="options", status="active", label="옵션 분석")
         _log("옵션 텍스트 파서 자동 설계 중...", 0.92)
         try:
-            parser = await deps.analyze_options(working_yaml, urls[0])
+            parser = await deps.analyze_options(working_yaml, option_urls[0])
         except Exception as exc:  # 파서 실패는 치명적 아님 — 옵션값은 원문으로 수집됨
             parser = None
             _log(f"옵션 파서 자동 설계 실패, 건너뜀: {exc}", 0.92)
