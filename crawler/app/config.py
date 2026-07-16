@@ -15,6 +15,9 @@ class AppConfig:
     check_updates_on_start: bool = True
     app_version: str = "0.1.0"
     auto_fallback_enabled: bool = True
+    # 어댑터 스튜디오 전용 LLM 모델 오버라이드. 빈 문자열이면 llm_client 기본값(프론티어급)을 쓴다.
+    gemini_model: str = ""
+    openai_model: str = ""
 
 
 def _config_file() -> Path:

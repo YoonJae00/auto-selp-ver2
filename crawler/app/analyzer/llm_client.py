@@ -77,12 +77,31 @@ class LLMClient(ABC):
         raise NotImplementedError
 
 
-# 하드코딩 모델 상수. gemini 2.x flash / gpt-5.x mini 모두 비전 지원.
-# 모델을 텍스트 전용으로 바꾸면 아래 플래그를 False로 내려 이미지가 조용히 무시되게 한다.
-_GEMINI_MODEL = "gemini-2.0-flash-lite"
-_GEMINI_VISION = "flash" in _GEMINI_MODEL or "-pro-vision" in _GEMINI_MODEL or "gemini-1.5" in _GEMINI_MODEL
-_OPENAI_MODEL = "gpt-5.4-mini"
-_OPENAI_VISION = _OPENAI_MODEL.startswith(("gpt-4o", "gpt-4.1", "gpt-5", "o1", "o3", "o4"))
+# 어댑터 스튜디오 전용 모델. 어댑터 생성은 1회성 고비용 허용 작업이라 프론티어급을 쓴다.
+# (get_llm_client 사용처는 전부 어댑터 스튜디오 경로 — 대량 크롤 런타임은 LLM을 쓰지 않는다.)
+# config.gemini_model/openai_model 로 오버라이드 가능. 비어 있으면 아래 기본값.
+_GEMINI_MODEL_DEFAULT = "gemini-2.5-pro"
+_OPENAI_MODEL_DEFAULT = "gpt-5.4"
+
+
+def _gemini_model() -> str:
+    from app.config import load_config
+    return (load_config().gemini_model or "").strip() or _GEMINI_MODEL_DEFAULT
+
+
+def _openai_model() -> str:
+    from app.config import load_config
+    return (load_config().openai_model or "").strip() or _OPENAI_MODEL_DEFAULT
+
+
+def _gemini_vision(model: str) -> bool:
+    # 현대 Gemini(1.5, 2.x, 2.5 pro/flash)는 전부 멀티모달. 텍스트 전용은 -8b/embedding 정도.
+    m = model.lower()
+    return ("flash" in m or "pro" in m or "gemini-1.5" in m or "gemini-2" in m) and "8b" not in m
+
+
+def _openai_vision(model: str) -> bool:
+    return model.startswith(("gpt-4o", "gpt-4.1", "gpt-5", "o1", "o3", "o4"))
 
 
 class GeminiClient(LLMClient):
@@ -92,9 +111,10 @@ class GeminiClient(LLMClient):
         import google.generativeai as genai
 
         genai.configure(api_key=self.api_key)
-        model = genai.GenerativeModel(_GEMINI_MODEL)
+        model_name = _gemini_model()
+        model = genai.GenerativeModel(model_name)
         full_prompt = f"{system_prompt}\n\n{user_prompt}"
-        images = _read_images(image_paths) if _GEMINI_VISION else []
+        images = _read_images(image_paths) if _gemini_vision(model_name) else []
         # 0.8.6: content part로 {"mime_type", "data": bytes} blob dict을 받는다(inline_data).
         contents: Any = (
             [full_prompt, *({"mime_type": "image/png", "data": b} for b in images)]
@@ -119,7 +139,8 @@ class OpenAIClient(LLMClient):
     ) -> str:
         from openai import AsyncOpenAI
 
-        images = _read_images(image_paths) if _OPENAI_VISION else []
+        model_name = _openai_model()
+        images = _read_images(image_paths) if _openai_vision(model_name) else []
         if images:
             user_content: Any = [{"type": "text", "text": user_prompt}]
             for b in images:
@@ -131,7 +152,7 @@ class OpenAIClient(LLMClient):
         try:
             async with AsyncOpenAI(api_key=self.api_key, max_retries=3, timeout=60.0) as client:
                 response = await client.chat.completions.create(
-                    model=_OPENAI_MODEL,
+                    model=model_name,
                     messages=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_content},

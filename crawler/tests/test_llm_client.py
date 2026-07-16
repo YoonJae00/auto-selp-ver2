@@ -4,7 +4,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.analyzer.llm_client import GeminiClient, OpenAIClient, _read_images
+from app.analyzer.llm_client import (
+    GeminiClient,
+    OpenAIClient,
+    _gemini_model,
+    _gemini_vision,
+    _openai_model,
+    _openai_vision,
+    _read_images,
+)
+from app.config import AppConfig
 
 
 def _png(path, size: int = 100) -> str:
@@ -124,6 +133,29 @@ async def test_openai_missing_image_falls_back_to_text(tmp_path) -> None:
 
     # 파일 없음 → 텍스트 폴백(문자열 content)
     assert api.chat.completions.create.await_args.kwargs["messages"][1]["content"] == "usr"
+
+
+# ----- 모델 선택: 프론티어 기본값 + config 오버라이드 -----
+
+def test_default_models_are_frontier_and_vision_capable() -> None:
+    with patch("app.config.load_config", return_value=AppConfig()):
+        assert _gemini_model() == "gemini-2.5-pro"
+        assert _openai_model() == "gpt-5.4"
+    assert _gemini_vision(_gemini_model()) is True  # 어댑터 생성은 비전 필수
+    assert _openai_vision("gpt-5.4") is True
+
+
+def test_config_overrides_model_names() -> None:
+    cfg = AppConfig(gemini_model="gemini-2.5-flash", openai_model="gpt-4.1")
+    with patch("app.config.load_config", return_value=cfg):
+        assert _gemini_model() == "gemini-2.5-flash"
+        assert _openai_model() == "gpt-4.1"
+
+
+def test_gemini_vision_flag_excludes_text_only_variant() -> None:
+    assert _gemini_vision("gemini-1.5-pro") is True
+    assert _gemini_vision("gemini-2.0-flash-lite") is True
+    assert _gemini_vision("gemini-1.5-flash-8b") is False  # 8b는 텍스트 전용
 
 
 @pytest.mark.asyncio

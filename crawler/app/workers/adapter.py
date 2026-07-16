@@ -1049,7 +1049,7 @@ class AdapterTestWorker(_AsyncWorker):
                 for field_name in self.fields:
                     fraction = completed_fields / total_fields if total_fields else 0.0
                     extractor = getattr(product, field_name, None)
-                    value = error = image_urls = None
+                    value = error = image_urls = rendered = None
                     if field_name in {"option_values", "option_prices"}:
                         self.progress.emit(f"[progress:{fraction:.2f}] 테스트 중: {field_name}")
                         try:
@@ -1062,6 +1062,8 @@ class AdapterTestWorker(_AsyncWorker):
                             value, image_urls = await self._extract_test_field(page, extractor, field_name)
                             if field_name == "main_image_url" and value:
                                 main_image_url = urljoin(url, value)
+                                # 확장자 없는 CDN 이미지 오판 방지용 결정적 신호 — 실패는 무시.
+                                rendered = await self._image_rendered(page, extractor.selector)
                             # 추가이미지/상세이미지에 대표이미지가 섞여 세어지는 것 방지 (크롤 시 _without_images와 동일 기준)
                             if field_name in self.IMAGE_PREVIEW_FIELDS and image_urls and main_image_url:
                                 main_key = _image_key(main_image_url)
@@ -1069,6 +1071,8 @@ class AdapterTestWorker(_AsyncWorker):
                         except Exception as exc:
                             error = str(exc)
                     entry = {"url": url, "value": value, "ok": bool(value), "error": error}
+                    if rendered is not None:
+                        entry["rendered"] = rendered
                     if image_urls is not None:
                         # 인식 개수와 썸네일 개수가 일치하도록 전부 전달 (상한만 안전장치)
                         entry["imageUrls"] = image_urls[:20]
@@ -1170,6 +1174,19 @@ class AdapterTestWorker(_AsyncWorker):
             match = re.search(r"-?\d[\d,]*", value)
             value = match.group().replace(",", "") if match else value
         return (value.strip()[:100] if value else None), None
+
+    async def _image_rendered(self, page, selector: str) -> bool | None:
+        """대표 이미지가 실제로 렌더됐는지(naturalWidth>0). best-effort — 실패 시 None."""
+        if not selector:
+            return None
+        try:
+            element = await page.query_selector(selector)
+            if not element:
+                return None
+            width = await element.evaluate("e => e.naturalWidth || 0")
+            return bool(width and width > 0)
+        except Exception:
+            return None
 
     async def _read_test_element(self, element, extractor) -> str | None:
         if extractor.html:
@@ -1662,8 +1679,16 @@ _JUDGE_SYSTEM_PROMPT = (
     "— 순수 국가/지역명이어야 합니다\n"
     "- 상품코드가 URL 전체이거나 안내 문구인 경우\n"
     "- 이미지 URL이 로고/배너/아이콘 파일명인 경우\n\n"
+    "이미지 URL 규칙: 이미지 URL은 확장자(.jpg/.png 등)가 없어도 유효합니다 "
+    "(CDN 경로형, 예: /goods/1000000094/image). URL 문자열 형태(확장자 없음·경로형)만으로 "
+    "불합격시키지 마세요. 값 뒤에 '[렌더링 확인됨]' 표기가 있으면 실제로 화면에 그려진 이미지이므로 "
+    "그 신호를 신뢰하세요.\n\n"
+    "일부 샘플만 이상할 때: 샘플 대다수는 정상인데 일부만 무관한 값(예: 특정 샘플만 적립금/예치금 "
+    "안내 문구)이면 ok:false 대신 그 샘플 번호(1부터)를 bad_samples 배열로 지목하세요. "
+    "나머지 샘플이 정상이면 ok는 true로 두세요.\n\n"
     "반드시 다음 JSON 형식으로만 응답하세요 (모든 입력 필드키 포함, JSON 외 텍스트 금지):\n"
-    '{"필드키": {"ok": true|false, "reason": "불합격 사유 (합격이면 빈 문자열)"}}'
+    '{"필드키": {"ok": true|false, "reason": "불합격 사유 (합격이면 빈 문자열)", '
+    '"bad_samples": [무관한 샘플 번호들 (없으면 생략 가능)]}}'
 )
 
 
@@ -1697,6 +1722,7 @@ class AutoAdapterWorker(_AsyncWorker):
         self._detail_dom: str = ""
         self._option_dom: str = ""              # 옵션 페이지 축약 DOM (option_url 지정 시)
         self._detail_screenshot_path: str = ""  # probe가 저장한 상세 페이지 스크린샷 경로
+        self._option_screenshot_path: str = ""  # 옵션 페이지 전체 스크린샷 경로 (옵션 재수리 비전용)
         self._shots_dir: str | None = None
         self._manual_login_event: asyncio.Event | None = None
         self._manual_login_cancelled = False
@@ -1803,6 +1829,9 @@ class AutoAdapterWorker(_AsyncWorker):
         if detail and detail not in urls:
             urls = [detail, *urls]
 
+        # 사전 스크리닝: 라이브 검증 전에 유사상품(적립금/예치금 등) 샘플을 이름 신호로 걸러낸다.
+        urls = await self._screen_samples(urls)
+
         # 옵션 있는 상품 URL을 받았으면 그 페이지 DOM을 확보해 옵션 evidence/검증/재선택 기준으로 쓴다.
         option_url = str(self.request.option_url or "").strip()
         option_dom: str | None = None
@@ -1836,15 +1865,64 @@ class AutoAdapterWorker(_AsyncWorker):
             "probe": probe,
         }
 
+    async def _screen_samples(self, urls: list[str]) -> list[str]:
+        """라이브 검증 전 각 샘플의 제목 신호를 읽어 유사상품(적립금/예치금 등)을 걸러낸다.
+
+        제목을 못 읽는 페이지는 유지(과잉 제거 방지). 걸러낸 뒤 2개 미만이면 롤백하고 note만 남긴다.
+        """
+        if len(urls) < 2:
+            return urls
+        from app.analyzer.site_probe import _NONPRODUCT_NAME_RE
+        from app.crawlers.engine import create_engine
+
+        title_js = (
+            "() => {"
+            "const og = document.querySelector(\"meta[property='og:title']\");"
+            "if (og && og.content) return og.content.trim();"
+            "if (document.title) return document.title.trim();"
+            "const h = document.querySelector('h1, h2');"
+            "return h ? h.textContent.trim() : '';}"
+        )
+        kept: list[str] = []
+        excluded: list[tuple[str, str]] = []
+        try:
+            async with create_engine(headless=True, storage_state=self._state) as engine:
+                for url in urls:
+                    title = ""
+                    try:
+                        page = await engine.new_page()
+                        await page.goto(url, wait_until="domcontentloaded", timeout=15000)
+                        await page.wait_for_timeout(500)
+                        title = str(await page.evaluate(title_js) or "").strip()
+                        await page.close()
+                    except Exception:
+                        title = ""
+                    if title and _NONPRODUCT_NAME_RE.search(title):
+                        excluded.append((url, title))
+                    else:
+                        kept.append(url)
+        except Exception:
+            return urls  # 스크리닝 자체 실패 시 원본 유지 (검증 불가 방지)
+        if len(kept) < 2:  # 과잉 제거 방지 — 롤백, note만
+            for _url, title in excluded:
+                self._emit_event("note", text=f"유사상품 의심(검증 유지): {title[:80]}")
+            return urls
+        for _url, title in excluded:
+            self._emit_event("note", text=f"유사상품 샘플 제외: {title[:80]}")
+        return kept
+
     async def _fetch_option_dom(self, option_url: str) -> str | None:
         """옵션 있는 상품 페이지에 헤드리스로 접속해 축약 DOM을 확보. 실패 시 None + note."""
         from app.analyzer.html_reducer import reduce_html
+        from app.analyzer.site_probe import _capture_detail_screenshot
         from app.crawlers.engine import create_engine
         try:
             async with create_engine(headless=True, storage_state=self._state) as engine:
                 page = await engine.new_page()
                 await page.goto(option_url, wait_until="domcontentloaded", timeout=15000)
                 await page.wait_for_timeout(1200)
+                # 옵션 재수리 비전용 스크린샷 (커스텀 드롭다운은 DOM 텍스트만으론 안 잡힌다).
+                self._option_screenshot_path = await _capture_detail_screenshot(page)
                 content = await page.content()
                 await page.close()
             return reduce_html(content)
@@ -1911,12 +1989,15 @@ class AutoAdapterWorker(_AsyncWorker):
             f"필드: {field.field_path}\n설명: {hint_desc}\n\n{feedback}\n\n"
             f"## 상품 상세 페이지 DOM\n{dom[:12000]}"
         )
-        # 비전 계약 선반영: 상세 스크린샷이 있으면 image_paths로 넘긴다 (옵션 필드는 상세 스크린샷
-        # 무관하므로 생략). kwarg는 값이 있을 때만 — 기존 generate 시그니처와도 호환되게.
-        img_kw = (
-            {"image_paths": [self._detail_screenshot_path]}
-            if self._detail_screenshot_path and not is_option else {}
-        )
+        # 비전: 옵션 필드는 옵션 페이지 스크린샷, 그 외는 상세 페이지 스크린샷을 넘긴다.
+        # (커스텀 드롭다운 옵션은 DOM 텍스트만으론 안 잡혀 스크린샷이 필수적일 수 있다.)
+        # kwarg는 값이 있을 때만 — 기존 generate 시그니처와도 호환되게.
+        if is_option and self._option_screenshot_path:
+            img_kw = {"image_paths": [self._option_screenshot_path]}
+        elif not is_option and self._detail_screenshot_path:
+            img_kw = {"image_paths": [self._detail_screenshot_path]}
+        else:
+            img_kw = {}
         provider = self.request.provider
         try:
             resp = await get_llm_client(provider).generate(_AUTO_REPAIR_SYSTEM_PROMPT, user, **img_kw)

@@ -207,6 +207,84 @@ def test_no_soldout_url_runs_auto_scan(monkeypatch):
     assert calls == ["http://s/a", "http://s/b"]
 
 
+class _ScreenPage:
+    def __init__(self, titles):
+        self._titles = titles
+        self.url = None
+
+    async def goto(self, url, **k):
+        self.url = url
+
+    async def wait_for_timeout(self, ms):
+        pass
+
+    async def evaluate(self, js):
+        return self._titles.get(self.url, "")
+
+    async def close(self):
+        pass
+
+
+def _wire_screen(monkeypatch, titles):
+    class _Engine:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def new_page(self):
+            return _ScreenPage(titles)
+
+    monkeypatch.setattr("app.crawlers.engine.create_engine", lambda **k: _Engine())
+
+
+def test_screen_samples_excludes_nonproduct_and_keeps_unreadable(monkeypatch):
+    _wire_screen(monkeypatch, {
+        "u1": "멋진 상품 A",
+        "u2": "적립금 / 예치금 10,000원",  # 유사상품 → 제외
+        "u3": "",                          # 제목 못 읽음 → 유지
+    })
+    worker = AutoAdapterWorker(AutoAdapterRequest(main_url="http://s", supplier_name="s"))
+    kept = asyncio.run(worker._screen_samples(["u1", "u2", "u3"]))
+    assert kept == ["u1", "u3"]
+
+
+def test_screen_samples_rolls_back_when_fewer_than_two_remain(monkeypatch):
+    _wire_screen(monkeypatch, {"u1": "적립금 충전", "u2": "쿠폰", "u3": "상품권"})  # 전부 유사상품
+    worker = AutoAdapterWorker(AutoAdapterRequest(main_url="http://s", supplier_name="s"))
+    kept = asyncio.run(worker._screen_samples(["u1", "u2", "u3"]))
+    assert kept == ["u1", "u2", "u3"]  # 롤백 — 검증 자체가 불가능해지면 안 됨
+
+
+def test_option_repair_passes_option_screenshot(monkeypatch, tmp_path):
+    from app.analyzer.auto_adapter import AutoField
+
+    worker = AutoAdapterWorker(AutoAdapterRequest(main_url="http://s", supplier_name="s"))
+    shot = tmp_path / "opt.png"
+    shot.write_bytes(b"\x89PNG\r\n\x1a\n0000")
+    worker._option_screenshot_path = str(shot)
+    worker._option_dom = "<select><option>A</option><option>B</option></select>"
+
+    captured: dict = {}
+
+    class _FakeClient:
+        async def generate(self, system, user, **kw):
+            captured.update(kw)
+            return '{"selector": "", "attribute": "", "transform": ""}'  # 원본 유지, kwargs만 확인
+
+    monkeypatch.setattr("app.analyzer.llm_client.get_llm_client", lambda p: _FakeClient())
+
+    field = AutoField("option_values", "adapter.options.groups.0.values_selector", manual_only=True)
+    yaml_text = (
+        "adapter:\n  name: T\n  base_url: https://x.com\n"
+        "  options:\n    groups:\n      - values_selector: .old\n"
+    )
+    asyncio.run(worker._dep_repair_field(yaml_text, field, "실패"))
+    # 옵션 필드 재수리는 옵션 페이지 스크린샷을 비전 입력으로 넘긴다 (커스텀 드롭다운 대응).
+    assert captured.get("image_paths") == [str(shot)]
+
+
 if __name__ == "__main__":
     import sys
     sys.exit(pytest.main([__file__, "-q"]))

@@ -302,6 +302,43 @@ def _entry_values(entries: list[dict]) -> list[str]:
     return [str(e.get("value") or "").strip() for e in entries if isinstance(e, dict)]
 
 
+def _judge_sample_values(test_key: str, entries: list[dict]) -> list[str]:
+    """judge 입력용 값 목록. entries와 길이·순서 보존(1-based bad_samples 인덱스 정합).
+
+    main_image_url은 확장자 없는 CDN URL 오판 방지를 위해 렌더 확인 신호를 값에 덧붙인다.
+    """
+    out: list[str] = []
+    for e in entries:
+        if not isinstance(e, dict):
+            out.append("")
+            continue
+        value = str(e.get("value") or "").strip()
+        if test_key == "main_image_url" and "rendered" in e:
+            value = f"{value} [{'렌더링 확인됨' if e['rendered'] else '렌더링 실패'}]"
+        out.append(value)
+    return out
+
+
+def _bad_sample_urls(verdicts: dict[str, dict], results: dict[str, list[dict]]) -> set[str]:
+    """judge가 지목한 bad_samples(1-based)를 퇴출 대상 URL 집합으로 변환."""
+    urls: set[str] = set()
+    for test_key, verdict in verdicts.items():
+        if not isinstance(verdict, dict):
+            continue
+        bad = verdict.get("bad_samples")
+        if not isinstance(bad, list):
+            continue
+        entries = results.get(test_key, [])
+        for num in bad:
+            if isinstance(num, bool):  # bool은 int 서브클래스 — 인덱스로 쓰지 않는다
+                continue
+            if isinstance(num, int) and 1 <= num <= len(entries):
+                url = entries[num - 1].get("url")
+                if url:
+                    urls.add(str(url))
+    return urls
+
+
 def _value_preview(entries: list[dict]) -> str:
     for value in _entry_values(entries):
         if value:
@@ -556,28 +593,53 @@ async def run_auto_adapter(
         if opt_keys:
             results.update(await deps.test_fields(working_yaml, option_urls, opt_keys))
 
-    # 1차 종합 판정(과반+판별력+구조화) 후, 통과 필드들만 모아 한 번에 AI 값 검수.
-    failures: dict[str, str] = {}
-    for field in targets:
-        reason = _live_failure(field, results.get(field.test_key, []), structured, detail_page_url, _note)
-        if reason is not None:
-            failures[field.test_key] = reason
-    # 교차 필드 검사: 상품코드가 상품명과 과반 동일하면 코드 선택자가 상품명 요소를 잡은 것.
-    # 실패 처리하면 아래 repair 루프에서 URL 파라미터 유도(branduid 등)가 먼저 시도돼 해결된다.
-    if "supplier_product_code" not in failures and _code_equals_name(
-        results.get("supplier_product_code", []), results.get("raw_product_name", []),
-    ):
-        failures["supplier_product_code"] = (
-            "상품코드 선택자가 상품명과 같은 요소를 잡았습니다. "
-            "코드는 보통 별도 셀이나 URL 파라미터에 있습니다."
-        )
+    # 1차 종합 판정(과반+판별력+구조화). 샘플 퇴출 후 재판정에도 재사용하려 함수로 묶는다.
+    def _compute_failures() -> dict[str, str]:
+        f: dict[str, str] = {}
+        for field in targets:
+            reason = _live_failure(field, results.get(field.test_key, []), structured, detail_page_url, _note)
+            if reason is not None:
+                f[field.test_key] = reason
+        # 교차 필드 검사: 상품코드가 상품명과 과반 동일하면 코드 선택자가 상품명 요소를 잡은 것.
+        # 실패 처리하면 아래 repair 루프에서 URL 파라미터 유도(branduid 등)가 먼저 시도돼 해결된다.
+        if "supplier_product_code" not in f and _code_equals_name(
+            results.get("supplier_product_code", []), results.get("raw_product_name", []),
+        ):
+            f["supplier_product_code"] = (
+                "상품코드 선택자가 상품명과 같은 요소를 잡았습니다. "
+                "코드는 보통 별도 셀이나 URL 파라미터에 있습니다."
+            )
+        return f
+
+    failures = _compute_failures()
+    # 통과 필드들만 모아 한 번에 AI 값 검수.
     judge_samples = {
-        f.test_key: _entry_values(results.get(f.test_key, []))
+        f.test_key: _judge_sample_values(f.test_key, results.get(f.test_key, []))
         for f in targets
         if f.test_key not in failures and f.test_key not in _JUDGE_EXCLUDE
     }
     verdicts = await _judge_or_pass(deps.judge_values, judge_samples, _note)
+    # judge 샘플 퇴출: 일부 샘플만 무관하면 그 URL을 전체 풀에서 빼고 남은 엔트리로 재판정.
+    bad_urls = _bad_sample_urls(verdicts, results)
+    picked_fields = {k for k, v in verdicts.items() if isinstance(v, dict) and v.get("bad_samples")}
+    if bad_urls and len(urls) - len(bad_urls & set(urls)) >= 2:
+        for u in bad_urls:
+            if u in urls:
+                urls.remove(u)
+            if option_urls is not urls and u in option_urls:
+                option_urls.remove(u)
+            _note(f"judge 지목으로 샘플 퇴출: {u}")
+        for field in targets:  # 모든 필드 공통으로 퇴출 URL 엔트리 제거
+            results[field.test_key] = [
+                e for e in results.get(field.test_key, []) if str(e.get("url") or "") not in bad_urls
+            ]
+        failures = _compute_failures()  # 재판정 (재시도 카운트·재테스트 없음)
+    elif bad_urls:
+        _note("judge가 일부 샘플을 지목했으나 남은 샘플이 2개 미만이라 퇴출하지 않았습니다.")
+        picked_fields = set()  # 퇴출 안 했으니 일반 ok 판정을 그대로 적용
     for field in targets:
+        if field.test_key in picked_fields:
+            continue  # 지목 필드는 퇴출로 정상화됨 — ok:false 재적용하지 않는다
         rejection = _judge_rejection(verdicts, field.test_key)
         if rejection and field.test_key not in failures:
             failures[field.test_key] = rejection
@@ -629,7 +691,7 @@ async def run_auto_adapter(
             if failure is None and field.test_key not in _JUDGE_EXCLUDE:
                 # 재시도 성공 후에도 AI 값 검수를 다시 통과해야 확정.
                 retry_verdicts = await _judge_or_pass(
-                    deps.judge_values, {field.test_key: _entry_values(entries)}, _note,
+                    deps.judge_values, {field.test_key: _judge_sample_values(field.test_key, entries)}, _note,
                 )
                 failure = _judge_rejection(retry_verdicts, field.test_key)
             if failure is None:

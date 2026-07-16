@@ -281,6 +281,57 @@ def test_judge_exception_does_not_block_pipeline():
     assert len(result.mapping_hints) == 5
 
 
+# ── judge bad_samples: 지목 샘플을 URL 풀에서 퇴출 후 필드 자동 확정 ──────────
+def test_judge_bad_samples_ejects_url_and_confirms_field():
+    # 이번 케이스 재현: 상품명 2번 샘플만 적립금 안내 → ok는 유지, 번호만 지목.
+    def judge(samples):
+        return {
+            key: ({"ok": True, "reason": "", "bad_samples": [2]}
+                  if key == "raw_product_name" else {"ok": True, "reason": ""})
+            for key in samples
+        }
+
+    deps = FakeDeps(judge=judge)
+    result = _run(deps)  # 기본 5개 샘플 p/0..p/4
+    assert deps.repair_calls == []  # 퇴출로 자동 확정 — 재시도 없음
+    assert "adapter.product.raw_product_name" in {h.field_path for h in result.mapping_hints}
+    # 2번 샘플(1-based) = 엔트리 인덱스 1 = url p/1 이 풀에서 제거됨.
+    assert any("샘플 퇴출: https://x.com/p/1" in line for line in result.log)
+
+
+def test_judge_bad_samples_not_ejected_when_too_few_remain():
+    # 5개 중 4개를 지목 → 남으면 1개(2개 미만)라 퇴출하지 않는다.
+    def judge(samples):
+        return {
+            key: ({"ok": True, "reason": "", "bad_samples": [1, 2, 3, 4]}
+                  if key == "raw_product_name" else {"ok": True, "reason": ""})
+            for key in samples
+        }
+
+    deps = FakeDeps(judge=judge)
+    result = _run(deps)
+    assert not any("샘플 퇴출" in line for line in result.log)
+    assert any("2개 미만" in line for line in result.log)
+    assert "adapter.product.raw_product_name" in {h.field_path for h in result.mapping_hints}
+
+
+def test_judge_sample_values_annotates_rendered_only_for_image():
+    from app.analyzer.auto_adapter import _judge_sample_values
+
+    entries = [
+        {"url": "u1", "value": "https://cdn/goods/1/image", "rendered": True},
+        {"url": "u2", "value": "https://cdn/goods/2/image", "rendered": False},
+        {"url": "u3", "value": "https://cdn/goods/3/image"},  # rendered 신호 없음
+    ]
+    vals = _judge_sample_values("main_image_url", entries)
+    assert "[렌더링 확인됨]" in vals[0]
+    assert "[렌더링 실패]" in vals[1]
+    assert vals[2] == "https://cdn/goods/3/image"  # 신호 없으면 원값 그대로
+    assert len(vals) == 3  # 길이·순서 보존 (bad_samples 인덱스 정합)
+    # 이미지 외 필드는 렌더 주석을 붙이지 않는다.
+    assert _judge_sample_values("raw_product_name", entries) == [e["value"] for e in entries]
+
+
 # ── supplier_status 위생: 1차 YAML에 있어도 무조건 제거 ─────────────────────
 STATUS_YAML = BASE_YAML + """    supplier_status:
       selector: .soldout-banner
