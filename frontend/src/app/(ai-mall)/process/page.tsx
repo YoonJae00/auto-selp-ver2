@@ -52,6 +52,15 @@ interface ProductListResponse {
   items: Product[];
 }
 
+interface ProcessorStats {
+  total: number;
+  pending: number;
+  processing: number;
+  completed: number;
+  failed: number;
+  smartstore_named: number;
+}
+
 interface MarketplaceNameResponse {
   generated_count: number;
   processing_time_ms: number;
@@ -173,6 +182,7 @@ export default function ProcessPage() {
   const [wholesaleSites, setWholesaleSites] = useState<WholesaleSite[]>([]);
   const [activeSiteId, setActiveSiteId] = useState('');
   const [products, setProducts] = useState<Product[]>([]);
+  const [stats, setStats] = useState<ProcessorStats | null>(null);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -265,6 +275,23 @@ export default function ProcessPage() {
     fetchProducts();
   }, [fetchProducts]);
 
+  const fetchStats = useCallback(async () => {
+    if (!activeSiteId) {
+      setStats(null);
+      return;
+    }
+    try {
+      const data = await api.get<ProcessorStats>(`/api/processor/products/stats?wholesale_site_id=${activeSiteId}`);
+      setStats(data);
+    } catch {
+      setStats(null); // ponytail: 404/fail → stage cards render without counts
+    }
+  }, [activeSiteId]);
+
+  useEffect(() => {
+    fetchStats();
+  }, [fetchStats]);
+
   useEffect(() => {
     setSelectedIds(new Set());
     setPage(1);
@@ -336,10 +363,11 @@ export default function ProcessPage() {
 
     if (justFinished) {
       fetchProducts();
+      fetchStats();
     }
 
     prevActiveTaskIdsRef.current = activeIds;
-  }, [tasks, fetchProducts]);
+  }, [tasks, fetchProducts, fetchStats]);
 
   const toggleProduct = (productId: string, checked: boolean) => {
     setSelectedIds((current) => {
@@ -455,9 +483,9 @@ export default function ProcessPage() {
     <div className={styles.container}>
       <div className={styles.pageHeader}>
         <div>
-          <p className={styles.eyebrow}>Catalog Operations</p>
+          <p className={styles.eyebrow}>AI Processing Studio</p>
           <h1 className={styles.title}>상품 가공</h1>
-          <p className={styles.subtitle}>도매처를 선택한 뒤 DB에 저장된 상품 중 필요한 것만 골라 가공합니다.</p>
+          <p className={styles.subtitle}>도매 상품을 선택해 AI로 가공하고, 마켓별 판매 준비를 단계별로 진행하세요.</p>
         </div>
       </div>
 
@@ -493,62 +521,104 @@ export default function ProcessPage() {
             </div>
           </div>
 
-          <div className={styles.workbench}>
-            <div className={styles.modeTabs} role="tablist" aria-label="상품 가공 방식">
+          <div className={styles.pipeline}>
+            <div className={styles.stageRail} role="tablist" aria-label="상품 가공 단계">
               <button
                 type="button"
                 role="tab"
                 aria-selected={workMode === 'ai'}
-                className={workMode === 'ai' ? styles.activeModeTab : ''}
+                className={`${styles.stageCard} ${workMode === 'ai' ? styles.activeStage : ''}`}
                 onClick={() => setWorkMode('ai')}
               >
-                기본 AI 가공
+                <span className={styles.stageNum}>1</span>
+                <span className={styles.stageBody}>
+                  <span className={styles.stageName}>AI 기본 가공</span>
+                  <span className={styles.stageDesc}>상품명 정제 · 키워드 · 카테고리 · 속성</span>
+                  {stats && (
+                    <span className={styles.stageStats}>
+                      대기 {stats.pending} · 완료 {stats.completed}
+                      {stats.processing > 0 && (
+                        <span className={styles.stageLive}>
+                          <span className={styles.liveDot} aria-hidden="true" />가공 중 {stats.processing}
+                        </span>
+                      )}
+                    </span>
+                  )}
+                </span>
               </button>
+
+              <span className={styles.connector} aria-hidden="true" />
+
               <button
                 type="button"
                 role="tab"
                 aria-selected={workMode === 'marketplace'}
-                className={workMode === 'marketplace' ? styles.activeModeTab : ''}
+                className={`${styles.stageCard} ${workMode === 'marketplace' ? styles.activeStage : ''}`}
                 onClick={() => setWorkMode('marketplace')}
               >
-                마켓 상품명
-              </button>
-            </div>
-            <div className={styles.modePanel} role="tabpanel">
-              {workMode === 'ai' ? (
-                <div>
-                  <strong>판매에 필요한 기본 정보를 한 번에 준비합니다</strong>
-                  <p>AI가 상품명을 정제하고 키워드, 카테고리, 속성을 만듭니다. 상품을 선택하면 아래에서 바로 시작할 수 있어요.</p>
-                </div>
-              ) : (
-                <>
-                  <div>
-                    <strong>판매할 마켓을 선택하세요</strong>
-                    <p>기본 AI 가공이 완료된 상품만 마켓별 상품명을 만들 수 있습니다.</p>
-                  </div>
-                  <div className={styles.marketOptions} aria-label="마켓 선택">
-                    <label className={styles.marketOption}>
-                      <input
-                        type="checkbox"
-                        checked={smartstoreSelected}
-                        onChange={(event) => setSmartstoreSelected(event.target.checked)}
-                      />
-                      <span><strong>스마트스토어</strong><small>네이버 검색 규칙에 맞춘 상품명</small></span>
-                    </label>
-                    <label className={`${styles.marketOption} ${styles.disabledMarketOption}`}>
-                      <input type="checkbox" disabled />
-                      <span><strong>쿠팡 <em>준비 중</em></strong><small>지원 시 이곳에서 함께 선택할 수 있어요</small></span>
-                    </label>
-                  </div>
-                  {selectedIds.size > 0 && (
-                    <p className={styles.eligibilityNote}>
-                      선택 {selectedIds.size}개 중 <strong>AI 가공 완료 {completedSelectedIds.length}개</strong>만 대상
-                      {selectedIds.size > completedSelectedIds.length && ` · 미완료 ${selectedIds.size - completedSelectedIds.length}개 제외`}
-                    </p>
+                <span className={styles.stageNum}>2</span>
+                <span className={styles.stageBody}>
+                  <span className={styles.stageName}>마켓 상품명</span>
+                  <span className={styles.stageDesc}>스마트스토어 검색 최적화 상품명</span>
+                  {stats && (
+                    <span className={styles.stageStats}>
+                      생성 완료 {stats.smartstore_named} · 생성 가능 {Math.max(0, stats.completed - stats.smartstore_named)}
+                    </span>
                   )}
-                </>
-              )}
+                </span>
+              </button>
+
+              <span className={styles.connector} aria-hidden="true" />
+
+              <div className={`${styles.stageCard} ${styles.disabledStage}`} aria-disabled="true">
+                <span className={styles.stageNum}>3</span>
+                <span className={styles.stageBody}>
+                  <span className={styles.stageName}>
+                    대표이미지 AI
+                    <span className={styles.comingBadge}>출시 예정</span>
+                  </span>
+                  <span className={styles.stageDesc}>대표 이미지 자동 생성</span>
+                </span>
+              </div>
+
+              <span className={styles.connector} aria-hidden="true" />
+
+              <div className={`${styles.stageCard} ${styles.disabledStage}`} aria-disabled="true">
+                <span className={styles.stageNum}>4</span>
+                <span className={styles.stageBody}>
+                  <span className={styles.stageName}>
+                    상세페이지 가공
+                    <span className={styles.comingBadge}>출시 예정</span>
+                  </span>
+                  <span className={styles.stageDesc}>상세페이지 자동 구성</span>
+                </span>
+              </div>
             </div>
+
+            {workMode === 'marketplace' && (
+              <div className={styles.marketPanel} role="tabpanel">
+                <div className={styles.marketOptions} aria-label="마켓 선택">
+                  <label className={styles.marketOption}>
+                    <input
+                      type="checkbox"
+                      checked={smartstoreSelected}
+                      onChange={(event) => setSmartstoreSelected(event.target.checked)}
+                    />
+                    <span><strong>스마트스토어</strong><small>네이버 검색 규칙에 맞춘 상품명</small></span>
+                  </label>
+                  <label className={`${styles.marketOption} ${styles.disabledMarketOption}`}>
+                    <input type="checkbox" disabled />
+                    <span><strong>쿠팡 <em>준비 중</em></strong><small>지원 시 이곳에서 함께 선택할 수 있어요</small></span>
+                  </label>
+                </div>
+                {selectedIds.size > 0 && (
+                  <p className={styles.eligibilityNote}>
+                    선택 {selectedIds.size}개 중 <strong>AI 가공 완료 {completedSelectedIds.length}개</strong>만 대상
+                    {selectedIds.size > completedSelectedIds.length && ` · 미완료 ${selectedIds.size - completedSelectedIds.length}개 제외`}
+                  </p>
+                )}
+              </div>
+            )}
           </div>
 
           <div className={styles.filterBar} aria-label="상품 필터">
@@ -642,47 +712,12 @@ export default function ProcessPage() {
 
           </div>
 
-          {selectedIds.size > 0 && (
-            <div className={styles.selectionToolbar}>
-              <div className={styles.selectionSummary} aria-live="polite">
-                <span className={styles.selectionIcon} aria-hidden="true">✓</span>
-                <div className={styles.selectionCopy}>
-                  {workMode === 'ai' ? (
-                    <strong>선택한 {selectedIds.size}개 상품을 기본 AI 가공합니다</strong>
-                  ) : (
-                    <strong>선택 {selectedIds.size}개 중 AI 가공 완료 {completedSelectedIds.length}개가 대상입니다</strong>
-                  )}
-                  <span>{workMode === 'ai' ? '상품명, 키워드, 카테고리와 속성을 만듭니다' : '선택한 마켓에 맞는 상품명을 만듭니다'}</span>
-                </div>
-              </div>
-              <div className={styles.selectionActions}>
-                <button
-                  type="button"
-                  className={styles.clearSelectionButton}
-                  onClick={() => setSelectedIds(new Set())}
-                >
-                  선택 취소
-                </button>
-                {workMode === 'ai' ? (
-                  <PillButton
-                    variant="primary"
-                    onClick={handleStartSelectedProcessing}
-                    disabled={isStarting || isGeneratingMarketplaceNames}
-                    type="button"
-                  >
-                    {isStarting ? '가공 시작 중...' : `선택 상품 가공 (${selectedIds.size})`}
-                  </PillButton>
-                ) : (
-                  <PillButton
-                    variant="primary"
-                    onClick={handleGenerateMarketplaceNames}
-                    disabled={!smartstoreSelected || completedSelectedIds.length === 0 || isGeneratingMarketplaceNames || isStarting}
-                    type="button"
-                  >
-                    {isGeneratingMarketplaceNames ? '상품명 만드는 중...' : `상품명 만들기 (${completedSelectedIds.length})`}
-                  </PillButton>
-                )}
-              </div>
+          {selectedIds.size === 0 && (
+            <div className={styles.hintStrip}>
+              <span className={styles.hintDot} aria-hidden="true" />
+              {workMode === 'ai'
+                ? '아래 목록에서 가공할 상품을 선택하세요 — 선택하면 시작 버튼이 나타납니다'
+                : 'AI 가공이 완료된 상품을 선택하세요'}
             </div>
           )}
 
@@ -731,7 +766,7 @@ export default function ProcessPage() {
                   const smartstoreProductName = product.platform_mappings?.find((mapping) => mapping.platform_name === 'naver')?.product_name;
                   const hasAiResult = displayStatus === 'completed' && (!!displayRefinedName || (displayKeywords?.length ?? 0) > 0);
                   return (
-                    <tr key={product.id} className={selectedIds.has(product.id) ? styles.selectedRow : ''}>
+                    <tr key={product.id} className={`${selectedIds.has(product.id) ? styles.selectedRow : ''} ${displayStatus === 'processing' ? styles.processingRow : ''}`.trim()}>
                       <td className={styles.checkboxCell}>
                         <input
                           type="checkbox"
@@ -847,6 +882,50 @@ export default function ProcessPage() {
               다음
             </button>
           </div>
+
+          {selectedIds.size > 0 && (
+            <div className={styles.selectionToolbar}>
+              <div className={styles.selectionSummary} aria-live="polite">
+                <span className={styles.selectionIcon} aria-hidden="true">✓</span>
+                <div className={styles.selectionCopy}>
+                  {workMode === 'ai' ? (
+                    <strong>선택한 {selectedIds.size}개 상품을 기본 AI 가공합니다</strong>
+                  ) : (
+                    <strong>선택 {selectedIds.size}개 중 AI 가공 완료 {completedSelectedIds.length}개가 대상입니다</strong>
+                  )}
+                  <span>{workMode === 'ai' ? '상품명, 키워드, 카테고리와 속성을 만듭니다' : '선택한 마켓에 맞는 상품명을 만듭니다'}</span>
+                </div>
+              </div>
+              <div className={styles.selectionActions}>
+                <button
+                  type="button"
+                  className={styles.clearSelectionButton}
+                  onClick={() => setSelectedIds(new Set())}
+                >
+                  선택 취소
+                </button>
+                {workMode === 'ai' ? (
+                  <PillButton
+                    variant="primary"
+                    onClick={handleStartSelectedProcessing}
+                    disabled={isStarting || isGeneratingMarketplaceNames}
+                    type="button"
+                  >
+                    {isStarting ? '가공 시작 중...' : `선택 상품 가공 (${selectedIds.size})`}
+                  </PillButton>
+                ) : (
+                  <PillButton
+                    variant="primary"
+                    onClick={handleGenerateMarketplaceNames}
+                    disabled={!smartstoreSelected || completedSelectedIds.length === 0 || isGeneratingMarketplaceNames || isStarting}
+                    type="button"
+                  >
+                    {isGeneratingMarketplaceNames ? '상품명 만드는 중...' : `상품명 만들기 (${completedSelectedIds.length})`}
+                  </PillButton>
+                )}
+              </div>
+            </div>
+          )}
         </section>
       )}
 

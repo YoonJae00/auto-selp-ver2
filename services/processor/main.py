@@ -27,8 +27,9 @@ from schemas import (
     PromptUpdate, 
     PromptResponse, 
     DBProcessRequest, 
-    ProductListResponse, 
-    ProductResponse, 
+    ProductListResponse,
+    ProductStatsResponse,
+    ProductResponse,
     ProductImportResponse,
     WholesaleSiteCreate,
     WholesaleSiteUpdate,
@@ -581,6 +582,45 @@ async def list_products(
         "page": page,
         "size": size,
         "items": items
+    }
+
+
+@app.get("/products/stats", response_model=ProductStatsResponse)
+async def product_stats(
+    wholesale_site_id: Optional[uuid.UUID] = None,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    site_filter = [Product.wholesale_site_id == wholesale_site_id] if wholesale_site_id else []
+
+    status_stmt = (
+        select(Product.status, func.count())
+        .where(Product.user_id == current_user["id"], *site_filter)
+        .group_by(Product.status)
+    )
+    status_result = await db.execute(status_stmt)
+    counts = {status: count for status, count in status_result.all()}
+
+    named_stmt = (
+        select(func.count())
+        .select_from(ProductPlatformMapping)
+        .join(Product, ProductPlatformMapping.product_id == Product.id)
+        .where(
+            ProductPlatformMapping.platform_name == "naver",
+            ProductPlatformMapping.product_name.isnot(None),
+            Product.user_id == current_user["id"],
+            *site_filter
+        )
+    )
+    named_result = await db.execute(named_stmt)
+
+    return {
+        "total": sum(counts.values()),
+        "pending": counts.get("pending", 0),
+        "processing": counts.get("processing", 0),
+        "completed": counts.get("completed", 0),
+        "failed": counts.get("failed", 0),
+        "smartstore_named": named_result.scalar() or 0
     }
 
 

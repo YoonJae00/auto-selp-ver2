@@ -110,62 +110,164 @@
   color: var(--ink-muted-48);
 }
 
-.workbench {
-  margin-bottom: 10px;
+.pipeline {
+  margin-bottom: 12px;
+}
+
+/* ─── Pipeline stage rail ─────────────────────────────────────────── */
+.stageRail {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+}
+
+.stageCard {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  text-align: left;
+  padding: 12px 14px;
   border: 1px solid var(--hairline);
   border-radius: 10px;
-  overflow: hidden;
-  background: var(--canvas-parchment);
-}
-
-.modeTabs {
-  display: flex;
-  gap: 3px;
-  padding: 4px;
-  border-bottom: 1px solid var(--hairline);
   background: var(--canvas);
-}
-
-.modeTabs button {
-  border: 0;
-  border-radius: 8px;
-  padding: 7px 12px;
-  background: transparent;
-  color: var(--ink-muted-48);
-  font-size: 13px;
-  font-weight: 700;
   cursor: pointer;
+  font: inherit;
+  transition: border-color 0.2s, box-shadow 0.2s, transform 0.2s, background 0.2s;
 }
 
-.modeTabs button.activeModeTab {
-  background: var(--ink);
-  color: var(--canvas);
+.stageCard:hover:not(.disabledStage):not(.activeStage) {
+  transform: translateY(-1px);
+  border-color: var(--primary);
 }
 
-.modePanel {
+.stageCard:focus-visible {
+  outline: 3px solid rgba(0, 102, 204, 0.16);
+  outline-offset: 2px;
+}
+
+.activeStage {
+  border-color: var(--primary);
+  background: rgba(0, 102, 204, 0.04);
+  box-shadow: 0 8px 24px rgba(0, 102, 204, 0.08);
+}
+
+.disabledStage {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.stageNum {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  border: 1px solid var(--hairline);
+  background: var(--canvas-parchment);
+  color: var(--ink-muted-80);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.activeStage .stageNum {
+  border-color: var(--primary);
+  background: var(--primary);
+  color: #fff;
+}
+
+.stageBody {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.stageName {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 750;
+  letter-spacing: -0.01em;
+}
+
+.stageDesc {
+  color: var(--ink-muted-48);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.stageStats {
+  margin-top: 2px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: var(--ink-muted-80);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.stageLive {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #ea580c;
+}
+
+.liveDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: #ea580c;
+}
+
+.comingBadge {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: var(--canvas-parchment);
+  color: var(--ink-muted-48);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+.connector {
+  flex: 0 0 24px;
+  align-self: center;
+  height: 1px;
+  background: var(--hairline);
+}
+
+.marketPanel {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  gap: 10px;
+  margin-top: 10px;
   padding: 10px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  background: var(--canvas-parchment);
 }
 
-.modePanel > div:first-child strong {
-  color: var(--ink);
-  font-size: 13px;
-}
-
-.modePanel p {
-  margin: 3px 0 0;
-  color: var(--ink-muted-48);
-  font-size: 13px;
+.eligibilityNote {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--ink-muted-80);
+  font-size: 12px;
 }
 
 .marketOptions {
   display: flex;
   gap: 8px;
-  margin-left: auto;
 }
 
 .marketOption {
@@ -206,13 +308,6 @@
 .disabledMarketOption {
   cursor: not-allowed;
   opacity: 0.58;
-}
-
-.modePanel .eligibilityNote {
-  flex-basis: 100%;
-  margin: 0;
-  color: var(--ink-muted-80);
-  text-align: right;
 }
 
 .selectAllControl {
@@ -654,6 +749,37 @@
   color: #ea580c;
 }
 
+@media (prefers-reduced-motion: no-preference) {
+  .status_processing {
+    animation: statusPulse 1.6s ease-in-out infinite;
+  }
+
+  .processingRow td {
+    position: relative;
+  }
+
+  .processingRow td:first-child::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 3px;
+    background: #ea580c;
+    animation: edgePulse 1.6s ease-in-out infinite;
+  }
+}
+
+@keyframes statusPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(234, 88, 12, 0.35); }
+  50% { box-shadow: 0 0 0 4px rgba(234, 88, 12, 0); }
+}
+
+@keyframes edgePulse {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
+}
+
 .status_completed {
   background: #ecfdf3;
   color: #14833b;
@@ -794,23 +920,55 @@
   color: var(--ink);
 }
 
+.hintStrip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  padding: 8px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  background: var(--canvas-parchment);
+  color: var(--ink-muted-80);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.hintDot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--primary);
+}
+
 .selectionToolbar {
+  position: sticky;
+  bottom: 16px;
+  z-index: 3;
   min-height: 56px;
+  margin-top: 12px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 10px;
-  padding: 9px 12px;
+  padding: 10px 14px;
   border: 1px solid rgba(0, 102, 204, 0.16);
-  border-bottom: 0;
-  border-radius: 10px 10px 0 0;
-  background: linear-gradient(90deg, #f5faff 0%, var(--canvas) 70%);
+  border-radius: 12px;
+  background: var(--canvas);
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.14);
 }
 
-.selectionToolbar + .sheetFrame {
-  border-top-left-radius: 0;
-  border-top-right-radius: 0;
+@media (prefers-reduced-motion: no-preference) {
+  .selectionToolbar {
+    animation: dockSlideUp 200ms ease-out;
+  }
+}
+
+@keyframes dockSlideUp {
+  from { transform: translateY(12px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
 }
 
 .selectionSummary,
@@ -944,20 +1102,22 @@
   .filterBar {
     align-items: stretch;
   }
-  .modePanel,
+  .stageRail {
+    flex-direction: column;
+  }
+  .connector {
+    display: none;
+  }
+  .marketPanel,
   .marketOptions {
     align-items: stretch;
     flex-direction: column;
   }
   .marketOptions {
     width: 100%;
-    margin-left: 0;
   }
   .marketOption {
     min-width: 0;
-  }
-  .modePanel .eligibilityNote {
-    text-align: left;
   }
   .filterLeft {
     flex-direction: column;
