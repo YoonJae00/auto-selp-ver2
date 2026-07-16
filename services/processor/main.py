@@ -1,5 +1,6 @@
 import os
 import asyncio
+import json
 import time
 import uuid
 import logging
@@ -317,6 +318,12 @@ async def suggest_wholesale_site_mapping(
         logger.error("OpenAI wholesale mapping suggestion failed: %s", error)
         raise HTTPException(status_code=502, detail="Could not generate a mapping suggestion.")
 
+    logger.info(
+        "Wholesale mapping suggestion for site %s (instruction=%r): %s",
+        site_id,
+        request.instruction,
+        json.dumps(suggestion["column_mapping"], ensure_ascii=False),
+    )
     proposed_mapping = {**current_mapping, **suggestion["column_mapping"]}
     sanitized, mapping_warnings = sanitize_column_mapping(
         proposed_mapping,
