@@ -21,7 +21,7 @@ export default function SettingsPage() {
             onChange={(e) => setLlmProvider(e.target.value)}
           >
             <option value="gemini">Gemini 3.1 Flash-Lite (추천)</option>
-            <option value="openai">gpt-5.4-nano (고성능)</option>
+            <option value="openai">gpt-5.6-luna (고성능)</option>
           </select>
           <p className={styles.hint}>
             상품명 정제 및 키워드 생성에 사용될 기본 인공지능 모델을 선택합니다.
@@ -36,7 +36,7 @@ export default function SettingsPage() {
             onChange={(e) => setVisionLlmProvider(e.target.value)}
           >
             <option value="gemini">Gemini 3.1 Flash-Lite (추천)</option>
-            <option value="openai">gpt-5.4-mini (고성능)</option>
+            <option value="openai">gpt-5.6-luna (고성능)</option>
           </select>
           <p className={styles.hint}>
             상품 상세 이미지로부터 속성 및 사양 정보를 해독하고 추출하는 데 사용될 비전 AI 모델을 선택합니다.

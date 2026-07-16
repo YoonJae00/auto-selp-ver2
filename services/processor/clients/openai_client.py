@@ -11,7 +11,7 @@ from utils.prompt_manager import PromptManager
 logger = logging.getLogger(__name__)
 
 class OpenAIClient(LLMClient):
-    def __init__(self, prompt_manager: PromptManager = None, model: str = 'gpt-5.4-nano'):
+    def __init__(self, prompt_manager: PromptManager = None, model: str = 'gpt-5.6-luna'):
         self.client = openai.AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
         self.model = model
         self.prompt_manager = prompt_manager
