@@ -85,6 +85,14 @@ class ProductListResponse(BaseModel):
     size: int
     items: List[ProductResponse]
 
+class ProductStatsResponse(BaseModel):
+    total: int
+    pending: int
+    processing: int
+    completed: int
+    failed: int
+    smartstore_named: int
+
 class ProductImportResponse(BaseModel):
     id: UUID
     filename: str
