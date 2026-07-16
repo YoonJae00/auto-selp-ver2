@@ -32,16 +32,38 @@ class ProductImport(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(index=True)
+    wholesale_site_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("wholesale_sites.id", ondelete="SET NULL"), nullable=True)
     filename: Mapped[str] = mapped_column(String)
     total_count: Mapped[int] = mapped_column(Integer, default=0)
     success_count: Mapped[int] = mapped_column(Integer, default=0)
     failed_count: Mapped[int] = mapped_column(Integer, default=0)
+    new_count: Mapped[int] = mapped_column(Integer, default=0)
+    updated_count: Mapped[int] = mapped_column(Integer, default=0)
+    removed_count: Mapped[int] = mapped_column(Integer, default=0)
+    unchanged_count: Mapped[int] = mapped_column(Integer, default=0)
     status: Mapped[str] = mapped_column(String, default="pending") # 'pending', 'processing', 'completed', 'failed'
     created_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=func.now(), onupdate=func.now())
 
     # relationship
     products = relationship("Product", back_populates="import_run", cascade="all, delete-orphan")
+
+
+class ProductChangeLog(Base):
+    __tablename__ = "product_change_logs"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(index=True)
+    import_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("product_imports.id", ondelete="CASCADE"), index=True)
+    product_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("products.id", ondelete="SET NULL"), nullable=True)
+    wholesale_site_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("wholesale_sites.id", ondelete="SET NULL"), nullable=True)
+
+    product_code: Mapped[str | None] = mapped_column(String, nullable=True)
+    original_name: Mapped[str] = mapped_column(String)  # snapshot, survives product deletion
+    change_type: Mapped[str] = mapped_column(String)  # 'new' | 'updated' | 'removed'
+    changed_fields: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    field_changes: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())
 
 class ProcessingTask(Base):
     __tablename__ = "processing_tasks"

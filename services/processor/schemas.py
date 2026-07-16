@@ -102,10 +102,33 @@ class ProductImportResponse(BaseModel):
     total_count: int
     success_count: int
     failed_count: int
+    wholesale_site_id: Optional[UUID] = None
+    wholesale_site_name: Optional[str] = None
+    new_count: int = 0
+    updated_count: int = 0
+    removed_count: int = 0
+    unchanged_count: int = 0
     status: str
     created_at: datetime
     updated_at: datetime
     model_config = ConfigDict(from_attributes=True)
+
+
+class ProductChangeLogResponse(BaseModel):
+    id: UUID
+    product_id: Optional[UUID] = None
+    product_code: Optional[str] = None
+    original_name: str
+    change_type: Literal["new", "updated", "removed"]
+    changed_fields: List[str] = Field(default_factory=list)
+    field_changes: Optional[dict] = None
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ProductChangeLogListResponse(BaseModel):
+    total: int
+    items: List[ProductChangeLogResponse]
 
 class DBProcessRequest(BaseModel):
     import_id: Optional[UUID] = None

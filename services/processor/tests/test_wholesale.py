@@ -15,7 +15,7 @@ import main as processor_main
 from utils.wholesale_upload import parse_wholesale_row
 
 # Import models
-from models import WholesaleSite, Product, ProductPlatformMapping, ProductImport
+from models import WholesaleSite, Product, ProductPlatformMapping, ProductImport, ProductChangeLog
 
 @pytest.fixture(scope="module")
 def anyio_backend():
@@ -57,7 +57,13 @@ async def test_db():
         await conn.execute(text("ALTER TABLE product_platform_mappings ADD COLUMN IF NOT EXISTS last_synced_status VARCHAR"))
         await conn.execute(text("ALTER TABLE product_platform_mappings ADD COLUMN IF NOT EXISTS last_synced_at TIMESTAMP"))
         await conn.execute(text("ALTER TABLE product_platform_mappings ADD COLUMN IF NOT EXISTS last_changed_at TIMESTAMP"))
-    
+
+        await conn.execute(text("ALTER TABLE product_imports ADD COLUMN IF NOT EXISTS wholesale_site_id UUID REFERENCES wholesale_sites(id) ON DELETE SET NULL"))
+        await conn.execute(text("ALTER TABLE product_imports ADD COLUMN IF NOT EXISTS new_count INTEGER DEFAULT 0"))
+        await conn.execute(text("ALTER TABLE product_imports ADD COLUMN IF NOT EXISTS updated_count INTEGER DEFAULT 0"))
+        await conn.execute(text("ALTER TABLE product_imports ADD COLUMN IF NOT EXISTS removed_count INTEGER DEFAULT 0"))
+        await conn.execute(text("ALTER TABLE product_imports ADD COLUMN IF NOT EXISTS unchanged_count INTEGER DEFAULT 0"))
+
     async_session = async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
     
     yield async_session
@@ -694,3 +700,91 @@ async def test_process_db_name_change_triggers_reprocess(test_db, tmp_path, monk
         product = (await session.execute(select(Product).where(Product.product_code == "NAME-1", Product.user_id == user_id))).scalar_one()
         assert product.status == "pending"
         assert "original_name" in product.changed_fields
+
+
+@pytest.mark.anyio
+async def test_process_db_writes_change_logs_and_import_counts(test_db, tmp_path, monkeypatch):
+    user_id = uuid.uuid4()
+    site_id = uuid.uuid4()
+    updated_row = {"상태": "판매중", "제품번호": "W-1", "상품코드": "UPD-1", "상품명": "가격변경", "가격": "1000", "원산지": "국내", "목록이미지1": "u1", "상세이미지": "d1"}
+    removed_row = {"상태": "판매중", "제품번호": "W-2", "상품코드": "RMV-1", "상품명": "단종예정", "가격": "2000", "원산지": "국내", "목록이미지1": "u2", "상세이미지": "d2"}
+    new_row = {"상태": "판매중", "제품번호": "W-3", "상품코드": "NEW-1", "상품명": "신상품", "가격": "3000", "원산지": "국내", "목록이미지1": "u3", "상세이미지": "d3"}
+
+    async with test_db() as session:
+        session.add(WholesaleSite(id=site_id, user_id=user_id, name="공급처", column_mapping=_LEDGER_MAPPING))
+        session.add(_seed_product(user_id, site_id, updated_row))
+        removed = _seed_product(user_id, site_id, removed_row)
+        session.add(removed)
+        await session.flush()
+        removed_id = removed.id
+        await session.commit()
+
+    # New ledger: UPD-1 price changed, NEW-1 added, RMV-1 gone.
+    changed_updated_row = {**updated_row, "가격": "1500"}
+    response = await _run_ledger_upload(test_db, tmp_path, monkeypatch, user_id, site_id, [changed_updated_row, new_row])
+    import_id = response["import_id"]
+
+    assert response["new_count"] == 1
+    assert response["updated_count"] == 1
+    assert response["removed_count"] == 1
+
+    async with test_db() as session:
+        import_run = await session.get(ProductImport, import_id)
+        assert import_run.wholesale_site_id == site_id
+        assert (import_run.new_count, import_run.updated_count, import_run.removed_count, import_run.unchanged_count) == (1, 1, 1, 0)
+
+        logs = (await session.execute(
+            select(ProductChangeLog).where(ProductChangeLog.import_id == import_id)
+        )).scalars().all()
+        by_type = {log.change_type: log for log in logs}
+        assert set(by_type) == {"new", "updated", "removed"}
+        assert by_type["new"].product_code == "NEW-1"
+        assert by_type["new"].changed_fields == []
+        assert by_type["new"].field_changes is None
+        assert by_type["updated"].product_code == "UPD-1"
+        assert by_type["updated"].field_changes["price_wholesale"] == {"old": 1000, "new": 1500}
+        assert by_type["removed"].product_code == "RMV-1"
+        assert by_type["removed"].field_changes["wholesale_status"] == {"old": "판매중", "new": "단종"}
+
+        # Removed log carries import_id, but the removed product row keeps import_id None.
+        removed_product = await session.get(Product, removed_id)
+        assert removed_product.change_type == "removed"
+        assert removed_product.import_id is None
+
+
+@pytest.mark.anyio
+async def test_list_import_changes_endpoint(test_db, tmp_path, monkeypatch):
+    user_id = uuid.uuid4()
+    site_id = uuid.uuid4()
+    updated_row = {"상태": "판매중", "제품번호": "W-1", "상품코드": "C-UPD", "상품명": "가격변경", "가격": "1000", "원산지": "국내", "목록이미지1": "u1", "상세이미지": "d1"}
+    new_row = {"상태": "판매중", "제품번호": "W-3", "상품코드": "C-NEW", "상품명": "신상품", "가격": "3000", "원산지": "국내", "목록이미지1": "u3", "상세이미지": "d3"}
+
+    async with test_db() as session:
+        session.add(WholesaleSite(id=site_id, user_id=user_id, name="공급처", column_mapping=_LEDGER_MAPPING))
+        session.add(_seed_product(user_id, site_id, updated_row))
+        await session.commit()
+
+    response = await _run_ledger_upload(test_db, tmp_path, monkeypatch, user_id, site_id, [{**updated_row, "가격": "1500"}, new_row])
+    import_id = response["import_id"]
+
+    async with test_db() as session:
+        result = await processor_main.list_import_changes(
+            import_id, change_type=None, page=1, page_size=50,
+            current_user={"id": user_id}, db=session,
+        )
+        assert result["total"] == 2
+        assert {item.change_type for item in result["items"]} == {"new", "updated"}
+
+        filtered = await processor_main.list_import_changes(
+            import_id, change_type="new", page=1, page_size=50,
+            current_user={"id": user_id}, db=session,
+        )
+        assert filtered["total"] == 1
+        assert filtered["items"][0].change_type == "new"
+
+        with pytest.raises(HTTPException) as exc_info:
+            await processor_main.list_import_changes(
+                import_id, change_type=None, page=1, page_size=50,
+                current_user={"id": uuid.uuid4()}, db=session,
+            )
+        assert exc_info.value.status_code == 404

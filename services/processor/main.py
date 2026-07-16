@@ -23,7 +23,7 @@ from datetime import datetime
 from tasks import process_excel_task, process_db_products_task
 from celery_app import celery_app
 from database import get_db, engine, Base
-from models import Prompt, ProcessingTask, ProductImport, Product, ProductPlatformMapping, WholesaleSite
+from models import Prompt, ProcessingTask, ProductImport, Product, ProductPlatformMapping, WholesaleSite, ProductChangeLog
 from schemas import (
     ProcessRequest, 
     PromptUpdate, 
@@ -33,6 +33,7 @@ from schemas import (
     ProductStatsResponse,
     ProductResponse,
     ProductImportResponse,
+    ProductChangeLogListResponse,
     WholesaleSiteCreate,
     WholesaleSiteUpdate,
     WholesaleSiteResponse,
@@ -514,12 +515,15 @@ async def start_db_processing(
     import_run = ProductImport(
         id=import_id,
         user_id=current_user["id"],
+        wholesale_site_id=request.wholesale_site_id,
         filename=filename,
         total_count=0,
         status="pending",
     )
     db.add(import_run)
     new_count = updated_count = unchanged_count = reprocess_count = 0
+    # (product, change_type, changed_fields, field_changes) — logs built after flush so new product ids resolve.
+    change_specs = []
 
     for product_data, product_warnings in parsed_rows:
         product_code = product_data["product_code"]
@@ -569,6 +573,7 @@ async def start_db_processing(
                 if "wholesale_status" in changed_fields:
                     platform_mapping.stock_changed = True
             updated_count += 1
+            change_specs.append((existing_product, "updated", changed_fields, field_changes))
             if needs_reprocess:
                 reprocess_count += 1
         else:
@@ -590,6 +595,7 @@ async def start_db_processing(
             if product_code:
                 existing_by_code[product_code] = product
             new_count += 1
+            change_specs.append((product, "new", [], None))
             reprocess_count += 1
 
     # 단종(discontinued): supplier-scoped products absent from this ledger.
@@ -609,7 +615,8 @@ async def start_db_processing(
         )
         removed_at = datetime.utcnow()
         for product in removed_result.scalars().all():
-            product.field_changes = {"wholesale_status": {"old": product.wholesale_status, "new": "단종"}}
+            removed_field_changes = {"wholesale_status": {"old": product.wholesale_status, "new": "단종"}}
+            product.field_changes = removed_field_changes
             product.wholesale_status = "단종"
             product.change_type = "removed"
             product.changed_fields = ["wholesale_status"]
@@ -617,9 +624,29 @@ async def start_db_processing(
                 platform_mapping.sync_status = "pending_update"
                 platform_mapping.stock_changed = True
                 platform_mapping.last_changed_at = removed_at
+            change_specs.append((product, "removed", ["wholesale_status"], removed_field_changes))
             removed_count += 1
 
+    # Flush so newly-added products get ids, then snapshot one change log per changed product.
+    await db.flush()
+    for product, change_type, changed_fields, field_changes in change_specs:
+        db.add(ProductChangeLog(
+            user_id=current_user["id"],
+            import_id=import_id,
+            product_id=product.id,
+            wholesale_site_id=product.wholesale_site_id,
+            product_code=product.product_code,
+            original_name=product.original_name,
+            change_type=change_type,
+            changed_fields=changed_fields,
+            field_changes=field_changes,
+        ))
+
     import_run.total_count = reprocess_count
+    import_run.new_count = new_count
+    import_run.updated_count = updated_count
+    import_run.removed_count = removed_count
+    import_run.unchanged_count = unchanged_count
 
     if not request.start_processing:
         import_run.status = "imported"
@@ -1148,11 +1175,47 @@ async def list_imports(
     db: AsyncSession = Depends(get_db)
 ):
     result = await db.execute(
-        select(ProductImport)
+        select(ProductImport, WholesaleSite.name)
+        .outerjoin(WholesaleSite, ProductImport.wholesale_site_id == WholesaleSite.id)
         .where(ProductImport.user_id == current_user["id"])
         .order_by(ProductImport.created_at.desc())
     )
-    return result.scalars().all()
+    imports = []
+    for imp, site_name in result.all():
+        imp.wholesale_site_name = site_name  # unmapped attr; picked up by from_attributes
+        imports.append(imp)
+    return imports
+
+
+@app.get("/imports/{import_id}/changes", response_model=ProductChangeLogListResponse)
+async def list_import_changes(
+    import_id: uuid.UUID,
+    change_type: Optional[str] = None,
+    page: int = 1,
+    page_size: int = 50,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    import_run = await db.get(ProductImport, import_id)
+    if not import_run or import_run.user_id != current_user["id"]:
+        raise HTTPException(status_code=404, detail="Import not found")
+
+    page = max(page, 1)
+    page_size = max(1, min(page_size, 200))
+
+    conditions = [ProductChangeLog.import_id == import_id]
+    if change_type in ("new", "updated", "removed"):
+        conditions.append(ProductChangeLog.change_type == change_type)
+
+    total = await db.scalar(select(func.count()).select_from(ProductChangeLog).where(*conditions))
+    result = await db.execute(
+        select(ProductChangeLog)
+        .where(*conditions)
+        .order_by(ProductChangeLog.change_type, ProductChangeLog.original_name)
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    )
+    return {"total": total or 0, "items": result.scalars().all()}
 
 
 # --- Celery Task Control & Status ---
