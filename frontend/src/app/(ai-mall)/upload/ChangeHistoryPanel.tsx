@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { fieldChangeLines, FieldChanges } from '@/lib/fieldChanges';
-import styles from './updates.module.css';
+import styles from './changeHistory.module.css';
 
 interface ProductImport {
   id: string;
@@ -73,7 +73,7 @@ function formatDateTime(value: string): string {
   });
 }
 
-export default function UpdatesPage() {
+export default function ChangeHistoryPanel() {
   const [imports, setImports] = useState<ProductImport[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [changes, setChanges] = useState<ChangeLog[]>([]);

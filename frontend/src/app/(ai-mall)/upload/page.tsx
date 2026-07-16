@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { api } from '@/lib/api';
 import PillButton from '@/components/UI/PillButton/PillButton';
+import ChangeHistoryPanel from './ChangeHistoryPanel';
 import styles from './upload.module.css';
 
 interface WholesaleSite {
@@ -304,6 +305,9 @@ export default function UploadPage() {
   const [isValidating, setIsValidating] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isPreviewOpen, setIsPreviewOpen] = useState(true); // Added for accordion toggle
+  const [isStudioOpen, setIsStudioOpen] = useState(true); // collapse mapping studio for auto-validated mapped suppliers
+  const [activeTab, setActiveTab] = useState<'upload' | 'history'>('upload');
+  const [savedRun, setSavedRun] = useState(false); // show 업로드 이력 link after a successful save
   
   // Feedback
   const [error, setError] = useState<string | null>(null);
@@ -313,6 +317,7 @@ export default function UploadPage() {
   const missingRequiredFields = REQUIRED_MAPPING_FIELDS.filter(field => !isMappingConfigured(columnMapping[field.key]));
   const configuredMappingCount = SYSTEM_FIELDS.filter(field => isMappingConfigured(columnMapping[field.key])).length;
   const recentlyChangedFieldKeys = new Set(aiCorrectionResult?.changes.map(change => change.fieldKey) || []);
+  const hadSavedMapping = Object.values(activeSite?.column_mapping || {}).some(isMappingConfigured);
 
   // Fetch Wholesale Sites
   const fetchSites = useCallback(async () => {
@@ -335,18 +340,31 @@ export default function UploadPage() {
     fetchSites();
   }, [fetchSites]);
 
-  // Best-effort standard-format preview; 매핑 검증 still fetches it explicitly.
-  const fetchMappingPreview = useCallback(async (siteId: string, fileId: string, mapping: Record<string, MappingValue>) => {
-    try {
-      const result = await api.post<MappingPreviewResponse>(
-        `/api/processor/wholesale-sites/${siteId}/mapping-preview`,
-        { file_id: fileId, column_mapping: mapping },
-      );
-      setMappingResult(result);
-    } catch {
-      // preview only — upload/editing flow keeps working without it
+  // Core mapping validation shared by 매핑 검증, upload auto-validate, and draft restore.
+  // Sets columnMapping/mappingResult/isMappingValidated/mappingError; returns success. Throws on network error.
+  const validateMapping = useCallback(async (fileId: string, mapping: Record<string, MappingValue>): Promise<boolean> => {
+    if (!activeSite) return false;
+    const missing = REQUIRED_MAPPING_FIELDS.filter(field => !isMappingConfigured(mapping[field.key]));
+    if (missing.length > 0) {
+      setMappingError(`필수 매핑 ${missing.length}개를 연결하거나 고정값을 지정해 주세요.`);
+      setIsMappingValidated(false);
+      return false;
     }
-  }, []);
+    const result = await api.post<MappingPreviewResponse>(
+      `/api/processor/wholesale-sites/${activeSite.id}/mapping-preview`,
+      { file_id: fileId, column_mapping: mapping },
+    );
+    setColumnMapping(result.column_mapping);
+    setMappingResult(result);
+    const invalid = REQUIRED_MAPPING_FIELDS.filter(field => !isMappingConfigured(result.column_mapping[field.key]));
+    setIsMappingValidated(invalid.length === 0);
+    if (invalid.length > 0) {
+      setMappingError(`검증 결과 필수 매핑 ${invalid.length}개가 유효하지 않습니다. 컬럼 또는 고정값을 다시 확인해 주세요.`);
+      return false;
+    }
+    setMappingError(null);
+    return true;
+  }, [activeSite]);
 
   useEffect(() => {
     const siteId = activeSite?.id || null;
@@ -361,9 +379,19 @@ export default function UploadPage() {
     setInitialMappingNotes([]);
     setAiCorrectionResult(null);
     setIsMappingValidated(false);
+    setIsStudioOpen(true);
+    setSavedRun(false);
     setDraftSiteId(siteId);
-    if (draft && siteId) void fetchMappingPreview(siteId, draft.uploadData.file_id, draft.columnMapping);
-  }, [activeSite, draftSiteId, fetchMappingPreview]);
+    if (draft && siteId) {
+      void (async () => {
+        try {
+          setIsStudioOpen(!(await validateMapping(draft.uploadData.file_id, draft.columnMapping)));
+        } catch {
+          setIsStudioOpen(true);
+        }
+      })();
+    }
+  }, [activeSite, draftSiteId, validateMapping]);
 
   useEffect(() => {
     if (!activeSite || draftSiteId !== activeSite.id || !uploadData) return;
@@ -453,8 +481,10 @@ export default function UploadPage() {
     setInitialMappingNotes([]);
     setAiCorrectionResult(null);
     setIsMappingValidated(false);
+    setIsStudioOpen(true);
+    setSavedRun(false);
     setSuccess(null);
-    
+
     try {
       const data = await api.post<UploadResponse>('/api/processor/upload', formData);
       setUploadData(data);
@@ -463,8 +493,14 @@ export default function UploadPage() {
       const savedMapping = activeSite.column_mapping || {};
       if (Object.values(savedMapping).some(isMappingConfigured)) {
         setColumnMapping(savedMapping);
-        await fetchMappingPreview(activeSite.id, data.file_id, savedMapping);
-        setSuccess('저장된 도매처 매핑 규칙을 적용했습니다. 상품 저장 전에 매핑을 검증해 주세요.');
+        try {
+          const ok = await validateMapping(data.file_id, savedMapping);
+          setIsStudioOpen(!ok);
+          if (ok) setSuccess('저장된 매핑으로 자동 검증까지 완료했습니다. 바로 업데이트를 실행하세요.');
+        } catch (validateError: any) {
+          setIsStudioOpen(true);
+          setError(validateError.message || '저장된 매핑 자동 검증에 실패했습니다. 매핑을 확인해 주세요.');
+        }
       } else {
         setIsSuggesting(true);
         try {
@@ -526,30 +562,12 @@ export default function UploadPage() {
 
   const handleValidateMapping = async () => {
     if (!activeSite || !uploadData) return;
-    const missing = REQUIRED_MAPPING_FIELDS.filter(field => !isMappingConfigured(columnMapping[field.key]));
-    if (missing.length > 0) {
-      setError(null);
-      setMappingError(`필수 매핑 ${missing.length}개를 연결하거나 고정값을 지정해 주세요.`);
-      return;
-    }
-
     setError(null);
     setMappingError(null);
     setSuccess(null);
     setIsValidating(true);
     try {
-      const result = await api.post<MappingPreviewResponse>(
-        `/api/processor/wholesale-sites/${activeSite.id}/mapping-preview`,
-        { file_id: uploadData.file_id, column_mapping: columnMapping },
-      );
-      setColumnMapping(result.column_mapping);
-      setMappingResult(result);
-      const invalid = REQUIRED_MAPPING_FIELDS.filter(field => !isMappingConfigured(result.column_mapping[field.key]));
-      setIsMappingValidated(invalid.length === 0);
-      if (invalid.length > 0) {
-        setMappingError(`검증 결과 필수 매핑 ${invalid.length}개가 유효하지 않습니다. 컬럼 또는 고정값을 다시 확인해 주세요.`);
-      } else {
-        setMappingError(null);
+      if (await validateMapping(uploadData.file_id, columnMapping)) {
         setSuccess('매핑 검증이 완료되었습니다. 표준 형식 미리보기와 경고를 확인해 주세요.');
       }
     } catch (err: any) {
@@ -621,6 +639,7 @@ export default function UploadPage() {
       });
 
       setSuccess(`신규 ${res.new_count}개, 변동 ${res.updated_count}개, 단종 ${res.removed_count}개, 변경 없음 ${res.unchanged_count}개입니다. AI 재가공 대상 ${res.total}개만 상품 가공으로 보냈고, 나머지 변동은 상품 관리에 바로 반영했습니다.`);
+      setSavedRun(true);
       removeUploadDraft(activeSite.id);
       setDraftMappingCounts(current => {
         const next = { ...current };
@@ -649,9 +668,43 @@ export default function UploadPage() {
         </PillButton>
       </div>
 
+      <div className={styles.tabBar} role="tablist">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'upload'}
+          className={`${styles.tab} ${activeTab === 'upload' ? styles.tabActive : ''}`}
+          onClick={() => setActiveTab('upload')}
+        >
+          상품 업로드
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'history'}
+          className={`${styles.tab} ${activeTab === 'history' ? styles.tabActive : ''}`}
+          onClick={() => setActiveTab('history')}
+        >
+          업로드 이력
+        </button>
+      </div>
+
       {error && <div className={styles.error}>{error}</div>}
       {success && <div className={styles.success}>{success}</div>}
+      {savedRun && activeTab === 'upload' && (
+        <button
+          type="button"
+          className={styles.historyLink}
+          onClick={() => { setActiveTab('history'); setSavedRun(false); }}
+        >
+          📋 업로드 이력에서 변동 확인
+        </button>
+      )}
 
+      {activeTab === 'history' ? (
+        <ChangeHistoryPanel />
+      ) : (
+        <>
       {/* Grid of wholesale sites */}
       <div className={styles.sitesGrid}>
         {wholesaleSites.map((site) => {
@@ -789,6 +842,17 @@ export default function UploadPage() {
                 )}
               </div>
 
+              <button
+                type="button"
+                className={styles.studioToggle}
+                onClick={() => setIsStudioOpen(open => !open)}
+                aria-expanded={isStudioOpen}
+              >
+                ⚙️ 매핑 규칙 {isStudioOpen ? '접기' : '보기/수정'}
+              </button>
+
+              {isStudioOpen && (
+                <>
               <div className={styles.mapperSectionHeader}>
                 <div>
                   <span className={styles.mapperEyebrow}>Mapping Workspace</span>
@@ -1028,6 +1092,8 @@ export default function UploadPage() {
                   {isValidating ? '검증 중...' : '매핑 검증'}
                 </PillButton>
               </div>
+                </>
+              )}
 
               {mappingResult && (
                 <div className={styles.standardPreview}>
@@ -1101,12 +1167,16 @@ export default function UploadPage() {
                   disabled={isProcessing || !isMappingValidated}
                   type="button"
                 >
-                  {isProcessing ? 'DB 저장 중...' : 'DB에 상품 저장'}
+                  {isProcessing
+                    ? (hadSavedMapping ? '업데이트 중...' : 'DB 저장 중...')
+                    : (hadSavedMapping ? '업데이트 실행' : 'DB에 상품 저장')}
                 </PillButton>
               </div>
             </div>
           )}
         </div>
+      )}
+        </>
       )}
 
       {/* Create site interactive Modal */}
