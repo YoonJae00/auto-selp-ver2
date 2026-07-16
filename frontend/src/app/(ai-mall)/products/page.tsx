@@ -105,24 +105,26 @@ const DEFAULT_ORDER = [
   'created_at'
 ];
 
+const COLUMN_CONFIG_VERSION = 2;
+
 const DEFAULT_VISIBILITY: Record<string, boolean> = {
   checkbox: true,
   main_image: true,
   refined_name: true,
-  original_name: true,
-  brand_name: true,
-  keywords: true,
+  original_name: false,
+  brand_name: false,
+  keywords: false,
   option_variants: true,
   option_values_raw: false,
   platform_mappings: true,
-  mapped_attributes: true,
+  mapped_attributes: false,
   warnings: true,
   status: true,
-  raw_metadata: true,
+  raw_metadata: false,
   image_detail: false,
   product_code: false,
   wholesale_product_id: false,
-  price_wholesale: false,
+  price_wholesale: true,
   price_retail: false,
   price_min_selling: false,
   origin: false,
@@ -133,16 +135,16 @@ const DEFAULT_VISIBILITY: Record<string, boolean> = {
 
 const COLUMNS_REGISTRY: Record<string, string> = {
   checkbox: '',
-  main_image: '대표 이미지',
-  refined_name: '상품 명칭',
-  original_name: '원래 상품명',
+  main_image: '이미지',
+  refined_name: '상품 정보',
+  original_name: '기존 상품명',
   brand_name: '브랜드명',
   keywords: '정제 키워드',
-  option_variants: '옵션',
+  option_variants: '옵션 · 공급가',
   option_values_raw: '옵션 원본',
-  platform_mappings: '마켓 카테고리 매핑',
+  platform_mappings: '마켓 매핑',
   mapped_attributes: '가공 속성',
-  warnings: 'AI 가공 경고',
+  warnings: '확인 필요',
   status: '가공 상태',
   raw_metadata: '원본 데이터',
   image_detail: '상세이미지 URL',
@@ -154,7 +156,25 @@ const COLUMNS_REGISTRY: Record<string, string> = {
   origin: '원산지',
   wholesale_status: '도매 상태',
   wholesale_registered_at: '도매 등록일',
-  created_at: '등록 시각'
+  created_at: '등록일'
+};
+
+const WARNING_FIELD_LABELS: Record<string, string> = {
+  price_wholesale_raw: '공급가',
+  option_variants: '옵션',
+  image_detail: '상세 이미지',
+  supplier_name: '도매처',
+  supplier_product_id: '도매처 상품 ID',
+  supplier_product_code: '상품 코드',
+  supplier_status: '판매 상태',
+  raw_product_name: '기존 상품명'
+};
+
+const WARNING_MESSAGE_LABELS: Record<string, string> = {
+  'Required value is blank.': '필수 값이 비어 있습니다.',
+  'One or more option prices could not be parsed.': '옵션 가격 일부를 숫자로 읽을 수 없습니다.',
+  'Option count and price count differ.': '옵션 개수와 가격 개수가 일치하지 않습니다.',
+  trademark: '상표권 검토가 필요한 키워드입니다.'
 };
 
 export default function ProductsPage() {
@@ -207,12 +227,16 @@ export default function ProductsPage() {
       const stored = localStorage.getItem('autoselp_product_columns_config');
       if (stored) {
         const parsed = JSON.parse(stored);
-        if (parsed.order && Array.isArray(parsed.order)) {
+        if (parsed.version === COLUMN_CONFIG_VERSION && parsed.order && Array.isArray(parsed.order)) {
           const filteredOrder = parsed.order.filter((k: string) => COLUMNS_REGISTRY[k] !== undefined);
           const missingKeys = DEFAULT_ORDER.filter((k) => !filteredOrder.includes(k));
           setColumnOrder([...filteredOrder, ...missingKeys]);
         }
-        if (parsed.visibility && typeof parsed.visibility === 'object') {
+        if (
+          parsed.version === COLUMN_CONFIG_VERSION &&
+          parsed.visibility &&
+          typeof parsed.visibility === 'object'
+        ) {
           setColumnVisibility({ ...DEFAULT_VISIBILITY, ...parsed.visibility });
         }
       }
@@ -226,7 +250,7 @@ export default function ProductsPage() {
     try {
       localStorage.setItem(
         'autoselp_product_columns_config',
-        JSON.stringify({ order: newOrder, visibility: newVisibility })
+        JSON.stringify({ version: COLUMN_CONFIG_VERSION, order: newOrder, visibility: newVisibility })
       );
     } catch (e) {
       console.error('Failed to save columns config to localStorage:', e);
@@ -484,6 +508,9 @@ export default function ProductsPage() {
   // Stats calculation
   const totalPages = Math.ceil(total / size) || 1;
   const isAllSelected = products.length > 0 && selectedIds.size === products.length;
+  const visibleColumnCount = columnOrder.filter(
+    (key) => key !== 'checkbox' && columnVisibility[key] !== false
+  ).length;
   const matchedSite = wholesaleSites.find(s => s.id === wholesaleFilter);
   const formatPrice = (value?: number | null) =>
     typeof value === 'number' ? `${value.toLocaleString('ko-KR')}원` : '-';
@@ -517,20 +544,6 @@ export default function ProductsPage() {
           <h1 className={styles.title}>상품 관리</h1>
         </div>
         <div className={styles.actionGroup}>
-          {selectedIds.size > 0 && (
-            <button 
-              className={styles.deleteSelectedBtn}
-              onClick={() => {
-                setDeleteConfig({ mode: 'selected', count: selectedIds.size });
-                setWarningSyncedCount(0);
-                setDeleteError(null);
-                setDeleteModalOpen(true);
-              }}
-              type="button"
-            >
-              선택 삭제 ({selectedIds.size})
-            </button>
-          )}
           {wholesaleFilter && (
             <button 
               className={styles.deleteWholesaleBtn}
@@ -593,7 +606,7 @@ export default function ProductsPage() {
           <span className={styles.searchIcon}>🔍</span>
           <input 
             type="text" 
-            placeholder="원래 상품명으로 검색..."
+            placeholder="기존 상품명으로 검색..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className={styles.searchInput}
@@ -671,16 +684,37 @@ export default function ProductsPage() {
 
         {/* Column Settings Button & Popover */}
         <div className={styles.columnSettingsContainer} id="column-settings-container">
-          <PillButton 
-            variant="secondary" 
+          <button
+            className={`${styles.columnSettingsButton} ${showSettings ? styles.columnSettingsButtonActive : ''}`}
             onClick={() => setShowSettings(!showSettings)}
             type="button"
+            aria-expanded={showSettings}
+            aria-haspopup="dialog"
+            aria-controls="column-settings-popover"
           >
-            열 설정 ⚙️
-          </PillButton>
+            <svg className={styles.settingsIcon} viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4 7h10m4 0h2M14 4v6M4 17h3m4 0h9M10 14v6" />
+            </svg>
+            <span>표시 항목</span>
+            <span className={styles.visibleColumnCount}>{visibleColumnCount}</span>
+            <svg className={styles.settingsChevron} viewBox="0 0 20 20" aria-hidden="true">
+              <path d="m6 8 4 4 4-4" />
+            </svg>
+          </button>
           {showSettings && (
-            <div className={styles.columnSettingsPopover}>
-              <div className={styles.popoverHeader}>표시할 열 선택</div>
+            <div
+              id="column-settings-popover"
+              className={styles.columnSettingsPopover}
+              role="dialog"
+              aria-label="표시할 열 선택"
+            >
+              <div className={styles.popoverHeader}>
+                <div>
+                  <strong>표시 항목</strong>
+                  <span>필요한 열만 선택하세요</span>
+                </div>
+                <span>{visibleColumnCount}/{columnOrder.length - 1}</span>
+              </div>
               <div className={styles.popoverList}>
                 {columnOrder.map((colKey) => {
                   if (colKey === 'checkbox') return null;
@@ -703,6 +737,45 @@ export default function ProductsPage() {
 
       {/* Products Table Section */}
       <div className={styles.tableSection}>
+        {selectedIds.size > 0 && (
+          <div className={styles.selectionToolbar}>
+            <div className={styles.selectionSummary} aria-live="polite">
+              <span className={styles.selectionIcon} aria-hidden="true">
+                <svg viewBox="0 0 24 24">
+                  <path d="m6 12 4 4 8-9" />
+                </svg>
+              </span>
+              <div className={styles.selectionCopy}>
+                <strong>{selectedIds.size}개 상품 선택됨</strong>
+                <span>선택한 상품을 일괄 관리합니다</span>
+              </div>
+            </div>
+            <div className={styles.selectionActions}>
+              <button
+                className={styles.clearSelectionButton}
+                onClick={() => setSelectedIds(new Set())}
+                type="button"
+              >
+                선택 해제
+              </button>
+              <button
+                className={styles.deleteSelectedBtn}
+                onClick={() => {
+                  setDeleteConfig({ mode: 'selected', count: selectedIds.size });
+                  setWarningSyncedCount(0);
+                  setDeleteError(null);
+                  setDeleteModalOpen(true);
+                }}
+                type="button"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M4 7h16M9 7V4h6v3m3 0-1 13H7L6 7m4 4v5m4-5v5" />
+                </svg>
+                선택 삭제
+              </button>
+            </div>
+          </div>
+        )}
         {error && <div className={styles.errorState}>{error}</div>}
         
         {isLoading ? (
@@ -755,6 +828,7 @@ export default function ProductsPage() {
                     return (
                       <th
                         key={colKey}
+                        data-column={colKey}
                         className={thClassName}
                         draggable
                         onDragStart={(e) => handleDragStart(e, colKey)}
@@ -818,11 +892,13 @@ export default function ProductsPage() {
                             return (
                               <td key="refined_name">
                                 <div className={styles.nameWrapper}>
-                                  <span className={styles.refName}>
+                                  <span className={styles.refName} title={p.refined_name || '가공 전'}>
                                     {p.refined_name ? p.refined_name : <span className={styles.refNameEmpty}>가공 전</span>}
                                     {priceChanged && <span className={styles.changeBadgeOrange}>가격 변동</span>}
                                     {stockChanged && <span className={styles.changeBadgeRed}>품절 변동</span>}
                                   </span>
+                                  <span className={styles.origName} title={p.original_name}>{p.original_name}</span>
+                                  {p.brand_name && <span className={styles.nameMeta}>{p.brand_name}</span>}
                                 </div>
                               </td>
                             );
@@ -972,17 +1048,64 @@ export default function ProductsPage() {
                           }
 
                           case 'warnings': {
-                            const warningCount = p.warnings ? Object.keys(p.warnings).length : 0;
+                            const productWarnings = Array.isArray(p.warnings)
+                              ? p.warnings
+                              : Array.isArray(p.warnings?.warnings)
+                                ? p.warnings.warnings
+                                : [
+                                    ...(Array.isArray(p.warnings?.supplier_warnings) ? p.warnings.supplier_warnings : []),
+                                    ...(Array.isArray(p.warnings?.processing_warnings) ? p.warnings.processing_warnings : [])
+                                  ];
+                            const warningCount = productWarnings.length;
+                            const tooltipId = `warning-tooltip-${p.id}`;
                             return (
                               <td key={colKey}>
                                 {warningCount > 0 ? (
-                                  <span 
-                                    className={styles.warningPill} 
-                                    title={JSON.stringify(p.warnings, null, 2)}
-                                    style={{ cursor: 'help' }}
-                                  >
-                                    ⚠️ 경고 {warningCount}건
-                                  </span>
+                                  <div className={styles.warningTooltip}>
+                                    <button
+                                      className={styles.warningPill}
+                                      type="button"
+                                      aria-describedby={tooltipId}
+                                    >
+                                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                                        <path d="M12 9v4m0 4h.01M10.3 4.6 2.7 18a1.5 1.5 0 0 0 1.3 2.2h16a1.5 1.5 0 0 0 1.3-2.2L13.7 4.6a2 2 0 0 0-3.4 0Z" />
+                                      </svg>
+                                      경고 {warningCount}건
+                                    </button>
+                                    <div id={tooltipId} className={styles.warningPanel} role="tooltip">
+                                      <div className={styles.warningPanelHeader}>
+                                        <div>
+                                          <strong>확인이 필요한 항목</strong>
+                                          <span>상품 정보를 다시 확인해 주세요</span>
+                                        </div>
+                                        <span className={styles.warningCountBadge}>{warningCount}</span>
+                                      </div>
+                                      <ul className={styles.warningList}>
+                                        {productWarnings.map((warning: any, index: number) => {
+                                          const title = warning?.keyword
+                                            ? `키워드 · ${warning.keyword}`
+                                            : WARNING_FIELD_LABELS[warning?.field] || COLUMNS_REGISTRY[warning?.field] || '상품 정보';
+                                          const rawMessage = warning?.message || warning?.reason;
+                                          const message = WARNING_MESSAGE_LABELS[rawMessage] || rawMessage || String(warning);
+                                          return (
+                                            <li key={index} className={styles.warningItem}>
+                                              <span className={styles.warningDot} />
+                                              <div>
+                                                <strong>{title}</strong>
+                                                <span>{message}</span>
+                                                {warning?.raw_value != null && (
+                                                  <code>입력값: {String(warning.raw_value)}</code>
+                                                )}
+                                                {warning?.option_count != null && warning?.price_count != null && (
+                                                  <small>옵션 {warning.option_count}개 · 가격 {warning.price_count}개</small>
+                                                )}
+                                              </div>
+                                            </li>
+                                          );
+                                        })}
+                                      </ul>
+                                    </div>
+                                  </div>
                                 ) : (
                                   <span className={styles.emptyInline}>경고 없음</span>
                                 )}
