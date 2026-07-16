@@ -33,7 +33,7 @@ def test_first_run_requires_provider_key_and_browser(qt_app, tmp_path) -> None:
     vm = make_first_run_vm(tmp_path)
 
     assert vm.required is True
-    assert vm.complete("gemini", "msedge", "") is False
+    assert vm.complete("msedge", "") is False
     assert vm.fieldErrors["apiKey"] == "API 키를 입력하세요."
     assert not (tmp_path / ".first_run_done").exists()
 
@@ -42,7 +42,7 @@ def test_completion_creates_marker_and_flips_required(qt_app, tmp_path) -> None:
     saved: list[AppConfig] = []
     vm = make_first_run_vm(tmp_path, saved=saved)
 
-    assert vm.complete("openai", "msedge", "new-secret") is True
+    assert vm.complete("msedge", "new-secret") is True
 
     assert saved[-1].llm_provider == "openai"
     assert saved[-1].browser_channel == "msedge"
@@ -51,9 +51,9 @@ def test_completion_creates_marker_and_flips_required(qt_app, tmp_path) -> None:
 
 
 def test_completion_uses_existing_key_without_requiring_new_secret(qt_app, tmp_path) -> None:
-    vm = make_first_run_vm(tmp_path, keys={"gemini": "stored-secret"})
+    vm = make_first_run_vm(tmp_path, keys={"openai": "stored-secret"})
 
-    assert vm.complete("gemini", "msedge", "") is True
+    assert vm.complete("msedge", "") is True
     assert vm.required is False
 
 
@@ -77,7 +77,7 @@ def test_first_run_key_save_failure_does_not_echo_submitted_key(qt_app, tmp_path
         app_quitter=lambda: None,
     )
 
-    assert vm.complete("gemini", "msedge", "TOPSECRET") is False
+    assert vm.complete("msedge", "TOPSECRET") is False
     assert "TOPSECRET" not in repr(vm.fieldErrors)
     assert not (tmp_path / ".first_run_done").exists()
 

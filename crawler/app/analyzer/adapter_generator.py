@@ -467,7 +467,7 @@ def verify_adapter_against_probe(adapter: Adapter, probe_result: ProbeResult) ->
 async def generate_adapter_yaml(
     probe_result: ProbeResult,
     supplier_name: str,
-    llm_provider: str = "gemini",
+    llm_provider: str = "openai",
     max_retries: int = 2,
     auto_fallback: bool = True,
     on_progress: Callable[[str], None] | None = None,
@@ -543,36 +543,20 @@ async def generate_adapter_yaml(
             verification=verification,
         )
 
+    # 단일 제공사(OpenAI). auto_fallback 는 시그니처 호환용 no-op — 제공사 전환 분기 없음.
+    # 검증 실패 재시도는 아래 max_retries 루프가 담당한다.
     provider = llm_provider
-    fallback_provider = "openai" if provider == "gemini" else "gemini"
     last_error: str = ""
-    used_fallback = False
 
     _log(f"Generating adapter for {supplier_name} with {provider}...")
 
-    # Try primary provider with retries
     for attempt in range(max_retries):
         client = get_llm_client(provider)
-        try:
-            raw_response = await client.generate(
-                system_prompt,
-                _build_prompt(last_error if attempt > 0 else ""),
-                **img_kwargs,
-            )
-        except QuotaExceededError:
-            if not auto_fallback or used_fallback:
-                raise
-            _log(
-                f"{provider} 할당량 초과, "
-                f"{'openai' if provider == 'gemini' else 'gemini'}로 전환합니다..."
-            )
-            provider = "openai" if provider == "gemini" else "gemini"
-            used_fallback = True
-            # Try fallback immediately (one attempt, no retries)
-            client = get_llm_client(provider)
-            raw_response = await client.generate(system_prompt, user_prompt, **img_kwargs)
-            return await _succeed(raw_response, provider, retries=0)
-
+        raw_response = await client.generate(
+            system_prompt,
+            _build_prompt(last_error if attempt > 0 else ""),
+            **img_kwargs,
+        )
         try:
             return await _succeed(raw_response, provider, retries=attempt)
         except (ValidationError, yaml.YAMLError) as exc:
@@ -582,23 +566,7 @@ async def generate_adapter_yaml(
                 f"retrying... ({exc})"
             )
 
-    # After max_retries exhausted on primary, try fallback if applicable
-    if auto_fallback and not used_fallback:
-        _log(
-            f"{provider} 최대 재시도 초과, "
-            f"{'openai' if provider == 'gemini' else 'gemini'}로 전환합니다..."
-        )
-        provider = "openai" if provider == "gemini" else "gemini"
-        client = get_llm_client(provider)
-        raw_response = await client.generate(
-            system_prompt, _build_prompt(last_error), **img_kwargs
-        )
-        return await _succeed(raw_response, provider, retries=max_retries)
-
-    raise ValueError(
-        "Adapter generation failed with both providers. "
-        f"Last error: {last_error}"
-    )
+    raise ValueError(f"Adapter generation failed. Last error: {last_error}")
 
 
 # Fields the LLM auto-maps and that a repair pass may re-select. Image/detail/option
@@ -689,7 +657,7 @@ async def repair_adapter_fields(
     yaml_text: str,
     failed_fields: list[str],
     probe_result: ProbeResult,
-    llm_provider: str = "gemini",
+    llm_provider: str = "openai",
     auto_fallback: bool = True,
     on_progress: Callable[[str], None] | None = None,
 ) -> str:
@@ -716,15 +684,12 @@ async def repair_adapter_fields(
     system_prompt = REPAIR_SYSTEM_PROMPT + (_VISION_DIRECTIVE if images else "")
 
     _log(f"빈 값 필드 {len(targets)}개 자동 재매핑 중...")
-    provider = llm_provider
+    # 단일 제공사 — 할당량 초과 시 수리를 포기하고 원본 유지(보강 실패는 치명적이지 않음).
     try:
-        response = await get_llm_client(provider).generate(system_prompt, user_prompt, **img_kwargs)
+        response = await get_llm_client(llm_provider).generate(system_prompt, user_prompt, **img_kwargs)
     except QuotaExceededError:
-        if not auto_fallback:
-            return yaml_text
-        provider = "openai" if provider == "gemini" else "gemini"
-        _log(f"할당량 초과, {provider}로 재매핑 전환...")
-        response = await get_llm_client(provider).generate(system_prompt, user_prompt, **img_kwargs)
+        _log("할당량 초과, 자동 재매핑 생략.")
+        return yaml_text
 
     text = response.strip()
     if text.startswith("```"):

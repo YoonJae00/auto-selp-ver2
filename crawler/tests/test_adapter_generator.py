@@ -201,7 +201,7 @@ def test_generate_triggers_repair_and_adopts_improvement(monkeypatch):
     monkeypatch.setattr(ag, "get_llm_client", lambda provider: fake)
 
     probe = _probe(DETAIL, "<a href='/shopdetail.html'>x</a>")
-    result = asyncio.run(generate_adapter_yaml(probe, "테스트몰", llm_provider="gemini"))
+    result = asyncio.run(generate_adapter_yaml(probe, "테스트몰"))
 
     assert "repair" in calls  # 검증 실패로 수리 발동
     assert ".price" in result.yaml_text  # 개선된 선택자 채택
@@ -223,7 +223,7 @@ def test_generate_excludes_locked_hint_from_repair(monkeypatch):
     )
     probe = _probe(DETAIL, "<a href='/shopdetail.html'>x</a>")
     result = asyncio.run(
-        generate_adapter_yaml(probe, "테스트몰", llm_provider="gemini", mapping_hints=[hint])
+        generate_adapter_yaml(probe, "테스트몰", mapping_hints=[hint])
     )
 
     assert "repair" not in calls  # 잠금 필드는 수리 대상 아님
@@ -285,7 +285,7 @@ def test_generate_passes_screenshot_to_client(monkeypatch):
     probe = _probe(DETAIL, "<a href='/shopdetail.html'>x</a>")
     probe.detail_screenshot_path = "/tmp/probe_shots_x/detail.png"
 
-    asyncio.run(generate_adapter_yaml(probe, "테스트몰", llm_provider="gemini"))
+    asyncio.run(generate_adapter_yaml(probe, "테스트몰"))
 
     assert seen["image_paths"] == ["/tmp/probe_shots_x/detail.png"]  # 스크린샷 전달됨
     assert "스크린샷" in seen["system"]  # 화면 대조 지시 접미됨
@@ -296,7 +296,7 @@ def test_generate_omits_image_kwarg_without_screenshot(monkeypatch):
     monkeypatch.setattr(ag, "get_llm_client", lambda provider: _VisionCapturingClient(GEN_YAML_OK, seen))
     probe = _probe(DETAIL, "<a href='/shopdetail.html'>x</a>")  # detail_screenshot_path 기본 ""
 
-    asyncio.run(generate_adapter_yaml(probe, "테스트몰", llm_provider="gemini"))
+    asyncio.run(generate_adapter_yaml(probe, "테스트몰"))
 
     assert seen["image_paths"] is None  # 스크린샷 없으면 kwarg 미전달(기존 호출부 호환)
     assert "스크린샷" not in seen["system"]

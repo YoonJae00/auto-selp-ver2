@@ -5,7 +5,7 @@
 ## 주요 기능
 
 - **도매처 관리**: 사이트별 로그인 계정, 어댑터, 모니터링 주기 설정
-- **LLM 어댑터 빌더**: 신규 도매처 사이트를 LLM(Gemini/GPT)으로 분석하여 크롤링 어댑터 YAML 자동 생성
+- **LLM 어댑터 빌더**: 신규 도매처 사이트를 LLM(OpenAI GPT)으로 분석하여 크롤링 어댑터 YAML 자동 생성
 - **카테고리 크롤링**: 전체상품/카테고리 트리 선택 후 자동 수집 (의존 옵션 지원)
 - **품절 모니터링**: 주기적 재크롤링으로 품절/복구/가격변동 감지
 - **엑셀 내보내기**: Auto-Selp 표준 스키마(`products`/`product_options`) 엑셀 출력 → 기존 `/upload`와 연동
@@ -44,7 +44,7 @@ python main.py
 ```
 
 첫 실행 시 앱 안의 초기 설정 화면이 표시됩니다:
-1. LLM 제공자(Gemini/OpenAI) 및 API 키 입력
+1. OpenAI API 키 입력
 2. 브라우저 채널 확인 (Edge 권장)
 3. 설정을 완료하면 사이드바 기반 작업 공간으로 이동
 
@@ -58,7 +58,7 @@ python main.py
 ### 2. 어댑터 생성 (어댑터 스튜디오)
 - 도매처명, 메인 URL, (선택) 목록/상세 URL 입력
 - "1. 사이트 프로브" → DOM 구조 자동 분석
-- "2. LLM 어댑터 생성" → Gemini/GPT가 YAML 어댑터 생성
+- "2. LLM 어댑터 생성" → OpenAI GPT가 YAML 어댑터 생성
 - YAML 에디터에서 내용 확인/수정
 - "3. 어댑터 저장"
 
@@ -82,7 +82,7 @@ python main.py
 
 | 설정 | 설명 |
 | --- | --- |
-| LLM 제공자 | Gemini(기본) 또는 OpenAI |
+| LLM 제공자 | OpenAI (gpt-5.6-luna, reasoning medium) |
 | LLM API 키 | OS 키체인에 안전 저장 |
 | 브라우저 채널 | msedge(권장) / chrome / chromium |
 | 전역 지연 | 페이지/상품 사이 대기 시간 (0-10초, 기본 0초) |

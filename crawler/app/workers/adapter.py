@@ -43,7 +43,7 @@ class ProbeRequest:
 class GenerateRequest:
     probe_result: Any
     supplier_name: str
-    provider: str = "gemini"
+    provider: str = "openai"
     auto_fallback: bool = True
     mapping_hints: list[Any] = field(default_factory=list)
 
@@ -53,7 +53,7 @@ class AdapterRepairRequest:
     yaml_text: str
     failed_fields: list[str]
     probe_result: Any
-    provider: str = "gemini"
+    provider: str = "openai"
     auto_fallback: bool = True
 
 
@@ -137,7 +137,7 @@ class AutoAdapterRequest:
     login_url: str | None = None
     username: str | None = None
     password: str | None = None
-    provider: str = "gemini"
+    provider: str = "openai"
     auto_fallback: bool = True
     supplier_key: str | None = None
     soldout_url: str | None = None  # 사용자가 직접 입력한 품절 상품 URL (UI 뷰모델 계약)
@@ -356,7 +356,7 @@ class PickerJob(QObject):
         """Use LLM to analyze the login page HTML and extract form selectors."""
         import asyncio
         import json
-        from app.analyzer.llm_client import QuotaExceededError, get_llm_client
+        from app.analyzer.llm_client import get_llm_client
         from app.config import load_config
 
         html = session.get_login_page_html()
@@ -878,14 +878,8 @@ class SoldoutCompareWorker(_AsyncWorker):
             f"판매중 상태 후보:\n{json.dumps(available, ensure_ascii=False)[:8000]}\n\n"
             f"품절 상태 후보:\n{json.dumps(soldout, ensure_ascii=False)[:8000]}"
         )
-        try:
-            response = await client.generate(system_prompt, user_prompt)
-        except QuotaExceededError:
-            if not config.auto_fallback_enabled:
-                raise
-            provider = "openai" if provider == "gemini" else "gemini"
-            self.progress.emit(f"할당량 초과, {provider}로 전환합니다...")
-            response = await get_llm_client(provider).generate(system_prompt, user_prompt)
+        # 단일 제공사 — 할당량 초과 시 제공사 전환 없이 그대로 전파.
+        response = await client.generate(system_prompt, user_prompt)
         try:
             raw = json.loads(_strip_json_response(response))
         except json.JSONDecodeError:
@@ -1958,17 +1952,11 @@ class AutoAdapterWorker(_AsyncWorker):
 
     async def _dep_judge_values(self, samples: dict[str, list[str]]) -> dict[str, dict]:
         """1차 통과 필드들의 추출값 타당성 LLM 검수. 예외는 오케스트레이터가 통과로 처리."""
-        from app.analyzer.llm_client import QuotaExceededError, get_llm_client
+        from app.analyzer.llm_client import get_llm_client
 
         user = "필드별 샘플 추출값:\n" + json.dumps(samples, ensure_ascii=False, indent=1)
-        provider = self.request.provider
-        try:
-            resp = await get_llm_client(provider).generate(_JUDGE_SYSTEM_PROMPT, user)
-        except QuotaExceededError:
-            if not self.request.auto_fallback:
-                raise
-            provider = "openai" if provider == "gemini" else "gemini"
-            resp = await get_llm_client(provider).generate(_JUDGE_SYSTEM_PROMPT, user)
+        # 단일 제공사 — 할당량 초과는 오케스트레이터가 통과로 처리하도록 그대로 전파.
+        resp = await get_llm_client(self.request.provider).generate(_JUDGE_SYSTEM_PROMPT, user)
         verdicts = json.loads(_strip_json_response(resp))
         return verdicts if isinstance(verdicts, dict) else {}
 
@@ -1998,14 +1986,11 @@ class AutoAdapterWorker(_AsyncWorker):
             img_kw = {"image_paths": [self._detail_screenshot_path]}
         else:
             img_kw = {}
-        provider = self.request.provider
+        # 단일 제공사 — 할당량 초과 시 수리 포기하고 원본 유지(보강 실패는 치명적 아님).
         try:
-            resp = await get_llm_client(provider).generate(_AUTO_REPAIR_SYSTEM_PROMPT, user, **img_kw)
+            resp = await get_llm_client(self.request.provider).generate(_AUTO_REPAIR_SYSTEM_PROMPT, user, **img_kw)
         except QuotaExceededError:
-            if not self.request.auto_fallback:
-                return yaml_text
-            provider = "openai" if provider == "gemini" else "gemini"
-            resp = await get_llm_client(provider).generate(_AUTO_REPAIR_SYSTEM_PROMPT, user, **img_kw)
+            return yaml_text
         try:
             spec = json.loads(_strip_json_response(resp))
         except json.JSONDecodeError:

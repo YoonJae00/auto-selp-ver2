@@ -51,14 +51,8 @@ except ImportError:
     _OpenAIConnectionError = Exception
     _OpenAIStatusError = Exception
 
-try:
-    from google.api_core.exceptions import ResourceExhausted as _GeminiQuotaError
-except ImportError:
-    _GeminiQuotaError = Exception
-
-
 class QuotaExceededError(Exception):
-    """API 사용량 초과 시 발생하는 예외"""
+    """API 사용량 초과 시 발생하는 예외 (내부 재시도 의미)"""
 
 
 class LLMClient(ABC):
@@ -79,14 +73,11 @@ class LLMClient(ABC):
 
 # 어댑터 스튜디오 전용 모델. 어댑터 생성은 1회성 고비용 허용 작업이라 프론티어급을 쓴다.
 # (get_llm_client 사용처는 전부 어댑터 스튜디오 경로 — 대량 크롤 런타임은 LLM을 쓰지 않는다.)
-# config.gemini_model/openai_model 로 오버라이드 가능. 비어 있으면 아래 기본값.
-_GEMINI_MODEL_DEFAULT = "gemini-2.5-pro"
-_OPENAI_MODEL_DEFAULT = "gpt-5.4"
-
-
-def _gemini_model() -> str:
-    from app.config import load_config
-    return (load_config().gemini_model or "").strip() or _GEMINI_MODEL_DEFAULT
+# config.openai_model 로 오버라이드 가능. 비어 있으면 아래 기본값.
+_OPENAI_MODEL_DEFAULT = "gpt-5.6-luna"
+# GPT-5.6 계열 reasoning effort. Chat Completions는 reasoning_effort 파라미터.
+# SDK 1.51.2에는 정식 kwarg가 없어 extra_body로 그대로 API에 전달한다(구 SDK 안전).
+_REASONING_EXTRA_BODY = {"reasoning_effort": "medium"}
 
 
 def _openai_model() -> str:
@@ -94,43 +85,9 @@ def _openai_model() -> str:
     return (load_config().openai_model or "").strip() or _OPENAI_MODEL_DEFAULT
 
 
-def _gemini_vision(model: str) -> bool:
-    # 현대 Gemini(1.5, 2.x, 2.5 pro/flash)는 전부 멀티모달. 텍스트 전용은 -8b/embedding 정도.
-    m = model.lower()
-    return ("flash" in m or "pro" in m or "gemini-1.5" in m or "gemini-2" in m) and "8b" not in m
-
-
 def _openai_vision(model: str) -> bool:
+    # GPT-5.6 3형제(sol/terra/luna) 포함 현대 모델은 전부 비전 지원.
     return model.startswith(("gpt-4o", "gpt-4.1", "gpt-5", "o1", "o3", "o4"))
-
-
-class GeminiClient(LLMClient):
-    async def generate(
-        self, system_prompt: str, user_prompt: str, image_paths: list[str] | None = None
-    ) -> str:
-        import google.generativeai as genai
-
-        genai.configure(api_key=self.api_key)
-        model_name = _gemini_model()
-        model = genai.GenerativeModel(model_name)
-        full_prompt = f"{system_prompt}\n\n{user_prompt}"
-        images = _read_images(image_paths) if _gemini_vision(model_name) else []
-        # 0.8.6: content part로 {"mime_type", "data": bytes} blob dict을 받는다(inline_data).
-        contents: Any = (
-            [full_prompt, *({"mime_type": "image/png", "data": b} for b in images)]
-            if images else full_prompt
-        )
-        _log_llm_call(self.provider, system_prompt, user_prompt, len(images))
-        try:
-            response = await model.generate_content_async(contents)
-            _log_llm_response(self.provider, response.text)
-            return response.text
-        except _GeminiQuotaError:
-            raise QuotaExceededError(
-                "Gemini API 사용량이 초과되었습니다. 무료 할당량이 소진되었을 수 있습니다."
-            )
-        except Exception as exc:
-            raise RuntimeError(f"Gemini 호출 중 오류: {exc}") from exc
 
 
 class OpenAIClient(LLMClient):
@@ -157,6 +114,7 @@ class OpenAIClient(LLMClient):
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_content},
                     ],
+                    extra_body=_REASONING_EXTRA_BODY,
                 )
             content = response.choices[0].message.content or ""
             _log_llm_response(self.provider, content)
@@ -175,7 +133,6 @@ class OpenAIClient(LLMClient):
             raise RuntimeError(f"OpenAI 호출 중 오류: {exc}") from exc
 
 
-def get_llm_client(provider: str) -> LLMClient:
-    if provider.lower() == "openai":
-        return OpenAIClient(provider)
-    return GeminiClient(provider)
+def get_llm_client(provider: str = "openai") -> LLMClient:
+    # 이 앱의 LLM은 OpenAI 단일 제공사다. provider 인자는 하위호환으로 받되 무시한다.
+    return OpenAIClient("openai")

@@ -9,14 +9,14 @@ from app.paths import config_dir
 
 @dataclass
 class AppConfig:
-    llm_provider: str = "gemini"
+    llm_provider: str = "openai"
     browser_channel: str = "msedge"
     global_delay_seconds: int = 0
     check_updates_on_start: bool = True
     app_version: str = "0.1.0"
     auto_fallback_enabled: bool = True
     # 어댑터 스튜디오 전용 LLM 모델 오버라이드. 빈 문자열이면 llm_client 기본값(프론티어급)을 쓴다.
-    gemini_model: str = ""
+    # 레거시 settings.json 의 gemini_model 등 미지원 키는 load_config 에서 무시된다.
     openai_model: str = ""
 
 

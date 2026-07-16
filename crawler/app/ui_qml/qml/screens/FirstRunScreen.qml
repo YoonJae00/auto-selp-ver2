@@ -36,18 +36,11 @@ Item {
             }
             Text {
                 Layout.fillWidth: true
-                text: "처음 실행하기 전에 AI 제공자, 브라우저, API 키를 설정하세요. 키 값은 저장만 하고 화면에 다시 표시하지 않습니다."
+                text: "처음 실행하기 전에 브라우저와 OpenAI API 키를 설정하세요. 키 값은 저장만 하고 화면에 다시 표시하지 않습니다."
                 color: Ui.Theme.textMuted
                 wrapMode: Text.Wrap
             }
 
-            ComboBox {
-                id: providerCombo
-                objectName: "firstRunProviderCombo"
-                Layout.fillWidth: true
-                model: ["gemini", "openai"]
-                Accessible.name: "AI 제공자"
-            }
             ComboBox {
                 id: browserCombo
                 objectName: "firstRunBrowserCombo"
@@ -60,13 +53,13 @@ Item {
                 objectName: "firstRunApiKeyInput"
                 Layout.fillWidth: true
                 echoMode: TextInput.Password
-                placeholderText: "API 키"
-                Accessible.name: "API 키"
+                placeholderText: "OpenAI API 키"
+                Accessible.name: "OpenAI API 키"
             }
             InlineBanner {
                 Layout.fillWidth: true
                 visible: text.length > 0
-                text: root.viewModel.fieldErrors.apiKey || root.viewModel.fieldErrors.form || root.viewModel.fieldErrors.browserChannel || root.viewModel.fieldErrors.llmProvider || ""
+                text: root.viewModel.fieldErrors.apiKey || root.viewModel.fieldErrors.form || root.viewModel.fieldErrors.browserChannel || ""
                 severity: "danger"
             }
             Item { Layout.fillHeight: true }
@@ -83,7 +76,7 @@ Item {
                     text: "시작하기"
                     selected: true
                     onClicked: {
-                        if (root.viewModel.complete(providerCombo.currentText, browserCombo.currentText, apiKeyField.text)) {
+                        if (root.viewModel.complete(browserCombo.currentText, apiKeyField.text)) {
                             apiKeyField.text = ""
                         }
                     }

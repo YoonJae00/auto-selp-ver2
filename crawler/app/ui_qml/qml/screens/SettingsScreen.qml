@@ -37,22 +37,6 @@ Item {
                 title: "AI 제공자"
                 visible: root.viewModel.filterSections(searchField.text).some(section => section.id === "llm")
 
-                ComboBox {
-                    id: providerCombo
-                    objectName: "settingsProviderCombo"
-                    Layout.fillWidth: true
-                    model: ["gemini", "openai"]
-                    currentIndex: Math.max(0, model.indexOf(root.viewModel.llmProvider))
-                    Accessible.name: "AI 제공자"
-                }
-                AppTextField {
-                    id: geminiKey
-                    objectName: "geminiApiKeyInput"
-                    Layout.fillWidth: true
-                    echoMode: TextInput.Password
-                    placeholderText: root.viewModel.geminiKeyConfigured ? "Gemini API 키 설정됨 - 변경할 때만 입력" : "Gemini API 키"
-                    Accessible.name: "Gemini API 키"
-                }
                 AppTextField {
                     id: openaiKey
                     objectName: "openaiApiKeyInput"
@@ -64,7 +48,6 @@ Item {
                 RowLayout {
                     Layout.fillWidth: true
                     Text { Layout.fillWidth: true; text: "저장된 키 값은 화면에 표시하지 않습니다."; color: Ui.Theme.textMuted; wrapMode: Text.Wrap }
-                    AppButton { text: "Gemini 키 삭제"; onClicked: root.viewModel.removeApiKey("gemini") }
                     AppButton { text: "OpenAI 키 삭제"; onClicked: root.viewModel.removeApiKey("openai") }
                 }
             }
@@ -122,7 +105,7 @@ Item {
             InlineBanner {
                 Layout.fillWidth: true
                 visible: text.length > 0
-                text: root.viewModel.fieldErrors.form || root.viewModel.fieldErrors.apiKey || root.viewModel.fieldErrors.browserChannel || root.viewModel.fieldErrors.llmProvider || ""
+                text: root.viewModel.fieldErrors.form || root.viewModel.fieldErrors.apiKey || root.viewModel.fieldErrors.browserChannel || ""
                 severity: "danger"
             }
 
@@ -135,15 +118,12 @@ Item {
                     selected: true
                     onClicked: {
                         if (root.viewModel.save(
-                            providerCombo.currentText,
                             browserCombo.currentText,
                             delaySpin.value,
                             updateCheck.checked,
                             fallbackCheck.checked,
-                            geminiKey.text,
                             openaiKey.text
                         )) {
-                            geminiKey.text = ""
                             openaiKey.text = ""
                         }
                     }
