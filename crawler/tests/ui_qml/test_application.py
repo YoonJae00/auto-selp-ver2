@@ -177,17 +177,14 @@ def test_settings_secret_inputs_clear_after_successful_save(qt_app, monkeypatch)
     app_vm.navigate("settings")
     qt_app.processEvents()
     settings = root.findChild(QObject, "settingsScreen")
-    gemini = settings.findChild(QObject, "geminiApiKeyInput")
     openai = settings.findChild(QObject, "openaiApiKeyInput")
     save = settings.findChild(QObject, "settingsSaveButton")
-    gemini.setProperty("text", "gemini-secret")
     openai.setProperty("text", "openai-secret")
 
     assert QMetaObject.invokeMethod(save, "click") is True
     qt_app.processEvents()
 
-    assert saved_keys == {"gemini": "gemini-secret", "openai": "openai-secret"}
-    assert gemini.property("text") == ""
+    assert saved_keys == {"openai": "openai-secret"}
     assert openai.property("text") == ""
 
 
@@ -203,7 +200,7 @@ def test_qml_engine_tests_do_not_touch_real_keyring(qt_app, monkeypatch) -> None
     app_vm.navigate("settings")
     qt_app.processEvents()
 
-    assert engine.property("settingsViewModel").geminiKeyConfigured is False
+    assert engine.property("settingsViewModel").openaiKeyConfigured is False
     assert root.findChild(QObject, "settingsScreen") is not None
 
 

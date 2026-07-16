@@ -10,7 +10,7 @@ from typing import Any, Literal
 
 from playwright.sync_api import Browser, BrowserContext, Page, sync_playwright
 
-from app.analyzer.adapter_schema import extract_url_value
+from app.analyzer.adapter_schema import clean_field_value, extract_url_value
 from app.analyzer.element_picker import (
     INSTRUCTION_OVERLAY_SCRIPT,
     MAPPING_PREVIEW_SCRIPT,
@@ -23,7 +23,21 @@ from app.analyzer.element_picker import (
     sanitize_value,
 )
 from app.analyzer.option_text_parser import parse_option_text, format_option_group
+from app.crawlers.yaml_adapter import is_soldout_text
 from app.config import load_config
+
+
+def _sync_option_soldout(element, text: str) -> bool:
+    """옵션 요소 품절 판정 (sync). yaml_adapter.option_is_soldout의 sync 최소판."""
+    if is_soldout_text(text):
+        return True
+    try:
+        if element.get_attribute("disabled") is not None:
+            return True
+        cls = (element.get_attribute("class") or "").lower()
+        return "soldout" in cls or "sold_out" in cls or "품절" in cls
+    except Exception:
+        return False
 
 
 def _apply_preview_transform(value: str | None, transform: str | None) -> str | None:
@@ -866,10 +880,14 @@ class PickerSession:
         if selector:
             try:
                 if field.get("multiple"):
-                    reads = [
-                        self._read_preview_element(element, field) or ""
-                        for element in page.query_selector_all(selector)
-                    ]
+                    elements = page.query_selector_all(selector)
+                    reads = [self._read_preview_element(el, field) or "" for el in elements]
+                    # 옵션값 미리보기에 품절 개수 표기 (option_values만; placeholder 제외).
+                    def _soldout_suffix() -> str:
+                        if field.get("key") != "option_values":
+                            return ""
+                        n = sum(1 for el, t in zip(elements, reads) if t and _sync_option_soldout(el, t))
+                        return f" (품절 {n})" if n else ""
                     parser = field.get("option_text_parser")
                     if parser:
                         parsed = [parse_option_text(item, parser) for item in reads if item]
@@ -886,16 +904,20 @@ class PickerSession:
                             # 병합 표시: 값 묶음 / 가격 묶음 (엑셀 2열 구조와 동일)
                             summary = format_option_group(parsed)
                             if summary:
-                                return summary[:200]
-                    values = [_apply_preview_transform(item, transform) for item in reads if item]
+                                return f"{summary}{_soldout_suffix()}"[:200]
+                    values = [
+                        _apply_preview_transform(clean_field_value(field.get("key"), item), transform)
+                        for item in reads if item
+                    ]
                     values = [item for item in values if item]
                     if values:
                         preview = ", ".join(item[:50] for item in values[:5])
-                        return f"{len(values)}개 · {preview}"[:100]
+                        return f"{len(values)}개 · {preview}{_soldout_suffix()}"[:100]
                 else:
                     element = page.query_selector(selector)
                     if element:
-                        return _apply_preview_transform(self._read_preview_element(element, field), transform)
+                        raw = clean_field_value(field.get("key"), self._read_preview_element(element, field))
+                        return _apply_preview_transform(raw, transform)
             except Exception:
                 pass
         if field.get("fallback_from") == "url":

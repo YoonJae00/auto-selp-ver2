@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 import pytest
 from pydantic import ValidationError
 
@@ -11,9 +13,63 @@ from app.analyzer.adapter_schema import (
     NavigationConfig,
     OptionsConfig,
     ProductConfig,
+    clean_field_value,
     extract_url_value,
     get_product_field_mappings,
 )
+
+
+# ── clean_field_value: 라벨 오염 자동 정리 ──────────────────────────────────
+def test_clean_origin_strips_label_and_takes_value_after_colon():
+    # itopic 시나리오: 브랜드+원산지가 한 컨테이너에 섞임 → "원산지 :" 뒤 국가만
+    assert clean_field_value("origin", "브랜드 : VIGA\n원산지 : 중국(외 아시아)") == "중국(외 아시아)"
+    assert clean_field_value("origin", "원산지 : 중국") == "중국"
+    assert clean_field_value("origin", "제조국：대한민국") == "대한민국"
+
+
+def test_clean_origin_leaves_plain_value_untouched():
+    assert clean_field_value("origin", "국산") == "국산"
+    assert clean_field_value("origin", "중국") == "중국"
+
+
+def test_clean_origin_generic_label_when_no_origin_keyword():
+    assert clean_field_value("origin", "made in : China") == "China"
+
+
+def test_clean_name_and_code_strip_leading_label_prefix():
+    assert clean_field_value("raw_product_name", "상품명 : 멋진 상품") == "멋진 상품"
+    assert clean_field_value("supplier_product_code", "상품코드 : V50672") == "V50672"
+    assert clean_field_value("brand_name", "브랜드 : VIGA") == "VIGA"
+    assert clean_field_value("model_name", "모델명 : V-50672") == "V-50672"
+
+
+def test_clean_name_preserves_mid_value_colon_and_no_label():
+    # 라벨 접두 없으면 그대로 (중간 콜론 보존)
+    assert clean_field_value("raw_product_name", "비가(VIGA) 쇼핑카트 (V50672)") == "비가(VIGA) 쇼핑카트 (V50672)"
+    assert clean_field_value("raw_product_name", "특가 : 한정판 세트") == "특가 : 한정판 세트"
+
+
+def test_clean_ignores_unknown_field_and_empty():
+    assert clean_field_value("supply_price", "원산지 : 중국") == "원산지 : 중국"
+    assert clean_field_value("origin", None) is None
+    assert clean_field_value("origin", "") == ""
+
+
+def test_clean_supply_price_picks_sale_price_over_consumer_price():
+    # itopic: 상품정보 패널을 통째로 잡아 소비자가(취소선)가 앞에 온 경우 → 판매가격 값만.
+    raw = "브랜드 : 아이넷  소비자가 : 59,000원 판매가격 : 35,400원 수량 1 EA"
+    cleaned = clean_field_value("supply_price", raw)
+    assert re.search(r"-?\d[\d,]*", cleaned).group().replace(",", "") == "35400"
+
+
+def test_clean_supply_price_prefers_supply_label():
+    assert clean_field_value("supply_price", "소비자가 : 59,000원 공급가 : 30,000원") == "30,000원"
+
+
+def test_clean_supply_price_untouched_with_one_or_zero_labels():
+    # 판매가는 판매가격의 부분문자열이지만 이중집계되지 않아 1개로 취급 → 무변형.
+    assert clean_field_value("supply_price", "판매가격 : 35,400원") == "판매가격 : 35,400원"
+    assert clean_field_value("supply_price", "35,400원") == "35,400원"
 
 
 def _minimal_adapter_data() -> AdapterData:

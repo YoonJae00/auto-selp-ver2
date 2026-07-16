@@ -380,6 +380,37 @@ class FakeWorker(QObject):
         return False
 
 
+def test_absent_field_event_is_reflected_in_auto_fields(vm) -> None:
+    vm._handle_auto_event(
+        '[event:{"kind":"field","field":"adapter.product.supplier_status",'
+        '"key":"supplier_status","label":"판매 상태","status":"absent","attempt":0,'
+        '"cap":4,"value":"","reason":"샘플 15개 중 품절 상품 없음"}]'
+    )
+    row = next(r for r in vm._auto_fields._rows if r["key"] == "supplier_status")
+    assert row["status"] == "absent"
+    assert row["reason"] == "샘플 15개 중 품절 상품 없음"
+
+
+def test_finished_dispositions_exposed_as_auto_dispositions(vm) -> None:
+    vm._auto_adapter_finished({
+        "yaml": "",
+        "unresolved": ["adapter.product.detail_content"],
+        "dispositions": {
+            "adapter.product.supplier_status": {"state": "absent", "reason": "품절 상품 없음, 기본값 '판매중'"},
+            "adapter.product.detail_content": {"state": "unresolved", "reason": "선택자 불명확"},
+        },
+    })
+    by_path = {d["fieldPath"]: d for d in vm.autoDispositions}
+    assert by_path["adapter.product.supplier_status"]["state"] == "absent"
+    assert by_path["adapter.product.supplier_status"]["label"] == "판매 상태"
+    assert "품절" in by_path["adapter.product.supplier_status"]["reason"]
+    assert vm.autoAbsentCount == 1
+    # unresolved 항목의 reason도 함께 노출된다
+    unresolved = vm.autoUnresolvedFields[0]
+    assert unresolved["path"] == "adapter.product.detail_content"
+    assert unresolved["reason"] == "선택자 불명확"
+
+
 def test_soldout_compare_dispatches_urls_and_applies_yaml() -> None:
     import yaml
 
@@ -1725,6 +1756,52 @@ def test_cancel_manual_login_resets_state(monkeypatch) -> None:
     assert vm.manualLoginPending is False
 
 
+def test_run_full_auto_surfaces_manual_login(monkeypatch) -> None:
+    from PySide6.QtCore import QObject, Signal, Slot
+    from app.ui_qml.viewmodels.adapter_studio import AdapterStudioViewModel
+
+    class AutoWorker(QObject):
+        finished = Signal(dict)
+        error = Signal(str)
+        progress = Signal(str)
+        cancelled = Signal()
+        login_required = Signal()
+        def __init__(self, request):
+            super().__init__()
+            self.request = request
+            self.confirmed = False
+        def start(self):
+            self.login_required.emit()
+        @Slot()
+        def confirmManualLogin(self):
+            self.confirmed = True
+        @Slot()
+        def cancelManualLogin(self):
+            pass
+        def requestInterruption(self):
+            pass
+        def isRunning(self):
+            return False
+
+    store = {}
+    monkeypatch.setattr("app.ui_qml.viewmodels.adapter_studio.save_supplier_credentials", lambda key, user, password: store.__setitem__(key, (user, password)))
+    monkeypatch.setattr("app.ui_qml.viewmodels.adapter_studio.load_supplier_credentials", lambda key: store.get(key))
+    made = []
+    vm = AdapterStudioViewModel(
+        app_view_model=AppViewModel(),
+        worker_factories={"auto_adapter": lambda request: made.append(AutoWorker(request)) or made[-1]},
+    )
+    vm.setConnectionInputs({"supplierName": "Shop", "mainUrl": "https://x", "detailUrl": "https://x/p/1", "needsLogin": True})
+    vm.setLoginInputs({"loginUrl": "https://x/login", "username": "buyer", "password": "secret"})
+
+    assert vm.runFullAuto() is True
+    assert vm.manualLoginPending is True
+
+    vm.confirmManualLogin()
+    assert vm.manualLoginPending is False
+    assert made[0].confirmed is True
+
+
 def test_accept_picked_hint_with_empty_selector_falls_back_to_candidate() -> None:
     """When the chosen selector is empty but candidates exist, use the first candidate."""
     from app.analyzer.element_picker import PickedElement
@@ -2120,3 +2197,260 @@ def test_save_persists_discovered_category_entries_into_yaml() -> None:
         {"name": "주방", "url": "http://x/k"},
         {"name": "욕실", "url": "http://x/b"},
     ]
+
+
+def test_run_full_auto_applies_yaml_and_exposes_unresolved() -> None:
+    """runFullAuto 는 워커 결과 YAML 을 2단계에 반영하고 미확정 필드를 노출한다."""
+    from types import SimpleNamespace
+
+    from app.ui_qml.viewmodels.adapter_studio import AdapterStudioViewModel
+
+    app = AppViewModel()
+    made: list[FakeWorker] = []
+
+    def factory(*args, **kwargs):
+        worker = FakeWorker(*args, **kwargs)
+        made.append(worker)
+        return worker
+
+    vm = AdapterStudioViewModel(app_view_model=app, worker_factories={"auto_adapter": factory})
+    vm.setConnectionInputs({
+        "supplierName": "Test Shop",
+        "mainUrl": "https://shop.example",
+        "detailUrl": "https://shop.example/p/1",
+        "needsLogin": False,
+    })
+
+    assert vm.runFullAuto() is True
+    request = made[0].args[0]
+    assert request.main_url == "https://shop.example"
+    assert request.supplier_name == "Test Shop"
+
+    probe = SimpleNamespace(
+        final_url="https://shop.example", encoding="utf-8", needs_login=False,
+        categories=[{"name": "c", "url": "/c"}],
+        sample_products=[{"url": "https://shop.example/p/1"}],
+        has_all_products=True, storage_state=None,
+    )
+    made[0].finished.emit({
+        "yaml": VALID_YAML,
+        "unresolved": ["adapter.product.origin", "adapter.categories.navigation.menu_selector"],
+        "log": [], "status_pair": None, "needs_login": False, "probe": probe,
+    })
+
+    assert vm.currentStage == 2
+    assert "shop.example" in vm.yamlText
+    paths = [f["path"] for f in vm.autoUnresolvedFields]
+    assert "adapter.product.origin" in paths
+    assert vm.probeSummary["hasAllProducts"] is True
+
+
+def test_run_full_auto_requires_sample_url() -> None:
+    from app.ui_qml.viewmodels.adapter_studio import AdapterStudioViewModel
+
+    vm = AdapterStudioViewModel(app_view_model=AppViewModel(),
+                                worker_factories={"auto_adapter": lambda request: FakeWorker(request)})
+    vm.setConnectionInputs({"supplierName": "Test Shop", "mainUrl": "https://shop.example", "needsLogin": False})
+    assert vm.runFullAuto() is False  # detailUrl 없음
+
+
+def _auto_vm(made: list) -> "object":
+    from app.ui_qml.viewmodels.adapter_studio import AdapterStudioViewModel
+
+    vm = AdapterStudioViewModel(
+        app_view_model=AppViewModel(),
+        worker_factories={"auto_adapter": lambda request: made.append(FakeWorker(request)) or made[-1]},
+    )
+    vm.setConnectionInputs({
+        "supplierName": "Test Shop", "mainUrl": "https://shop.example",
+        "detailUrl": "https://shop.example/p/1", "needsLogin": False,
+    })
+    return vm
+
+
+def test_auto_events_update_stages_fields_feed_and_shot() -> None:
+    import json
+
+    made: list = []
+    vm = _auto_vm(made)
+    assert vm.runFullAuto() is True
+    assert vm.autoRunning is True
+    assert [s["status"] for s in vm.autoStages] == ["pending"] * 7
+
+    def emit(payload):
+        made[0].progress.emit("[event:" + json.dumps(payload, ensure_ascii=False) + "]")
+
+    emit({"kind": "stage", "stage": "probe", "status": "active", "label": "사이트 분석"})
+    stages = {s["stage"]: s for s in vm.autoStages}
+    assert stages["probe"]["status"] == "active"
+    assert stages["probe"]["label"] == "사이트 분석"
+    assert stages["generate"]["status"] == "pending"
+
+    emit({"kind": "stage", "stage": "probe", "status": "done"})
+    emit({"kind": "stage", "stage": "status", "status": "skipped"})
+    stages = {s["stage"]: s for s in vm.autoStages}
+    assert stages["probe"]["status"] == "done"
+    assert stages["status"]["status"] == "skipped"
+
+    # field upsert: testing → retry → confirmed
+    emit({"kind": "field", "field": "adapter.product.raw_product_name", "key": "raw_product_name",
+          "label": "상품명", "status": "testing", "attempt": 1, "cap": 4})
+    rows = vm.autoFields._rows
+    assert len(rows) == 1
+    assert rows[0]["status"] == "testing"
+    assert rows[0]["fieldPath"] == "adapter.product.raw_product_name"
+
+    emit({"kind": "field", "key": "raw_product_name", "status": "retry", "attempt": 2, "cap": 4,
+          "reason": "빈 값"})
+    rows = vm.autoFields._rows
+    assert len(rows) == 1  # upsert, 새 행 아님
+    assert rows[0]["status"] == "retry"
+    assert rows[0]["attempt"] == 2
+    assert rows[0]["reason"] == "빈 값"
+    assert rows[0]["label"] == "상품명"  # 이전 라벨 유지
+
+    emit({"kind": "field", "key": "raw_product_name", "status": "confirmed", "value": "티셔츠"})
+    assert vm.autoFields._rows[0]["value"] == "티셔츠"
+    assert vm.autoConfirmedCount == 1
+
+    # visit/shot/note → feed (최신순) + 최근 스크린샷
+    emit({"kind": "visit", "url": "https://shop.example/p/1", "purpose": "라이브 검증"})
+    emit({"kind": "shot", "path": "/tmp/shots/shot_1.png", "url": "https://shop.example/p/1",
+          "field": "adapter.product.raw_product_name"})
+    emit({"kind": "note", "text": "옵션 없음으로 판단"})
+    feed = vm.autoFeed
+    assert [e["kind"] for e in feed[:3]] == ["note", "shot", "visit"]
+    assert feed[2]["text"] == "페이지 방문 — 라이브 검증"
+    assert "상품명" in feed[1]["text"]
+    assert feed[0]["text"] == "옵션 없음으로 판단"
+    assert vm.autoLatestShot == "/tmp/shots/shot_1.png"
+
+    # event 라인은 진행 라벨을 오염시키지 않는다
+    assert "[event:" not in vm.currentProgressLabel
+    made[0].progress.emit("[progress:0.42] 필드 검증 중")
+    assert vm.currentProgress == pytest.approx(0.42)
+    assert vm.currentProgressLabel == "필드 검증 중"
+
+
+def test_auto_event_bad_json_is_ignored() -> None:
+    made: list = []
+    vm = _auto_vm(made)
+    assert vm.runFullAuto() is True
+
+    made[0].progress.emit("[event:{broken json]")
+    made[0].progress.emit("[event:]")
+    made[0].progress.emit('[event:"not-a-dict"]')
+    made[0].progress.emit('[event:{"kind":"unknown-kind","x":1}]')
+    made[0].progress.emit('[event:{"kind":"field"}]')  # key 없음 → 무시
+
+    assert [s["status"] for s in vm.autoStages] == ["pending"] * 7
+    assert vm.autoFields._rows == []
+    assert vm.autoFeed == []
+
+
+def test_run_full_auto_restart_resets_auto_state() -> None:
+    import json
+
+    made: list = []
+    vm = _auto_vm(made)
+    assert vm.runFullAuto() is True
+    made[0].progress.emit('[event:{"kind":"stage","stage":"probe","status":"done"}]')
+    made[0].progress.emit(json.dumps({"kind": "x"}))  # noise, ignored (no [event: prefix)
+    made[0].progress.emit('[event:{"kind":"field","key":"raw_product_name","status":"confirmed"}]')
+    made[0].progress.emit('[event:{"kind":"shot","path":"/tmp/s1.png"}]')
+    made[0].finished.emit({"yaml": "", "unresolved": [], "log": [], "status_pair": None,
+                           "needs_login": False, "probe": None})
+    assert vm.autoRunning is False
+    assert vm.autoDone is True
+    assert vm.autoLatestShot == "/tmp/s1.png"
+
+    assert vm.runFullAuto() is True
+    assert vm.autoRunning is True
+    assert vm.autoDone is False
+    assert [s["status"] for s in vm.autoStages] == ["pending"] * 7
+    assert vm.autoFields._rows == []
+    assert vm.autoFeed == []
+    assert vm.autoLatestShot == ""
+    assert vm.autoElapsedSec == 0
+
+
+def test_cancel_full_auto_stops_running_without_done() -> None:
+    made: list = []
+    vm = _auto_vm(made)
+    assert vm.runFullAuto() is True
+    vm.cancelFullAuto()
+    assert vm.autoRunning is False
+    assert vm.autoDone is False
+
+
+@pytest.fixture(autouse=True)
+def _tolerant_auto_request(monkeypatch):
+    """runFullAuto passes ``soldout_url`` which the backend AutoAdapterRequest may
+    not carry yet. Capture kwargs into a namespace so viewmodel tests don't depend
+    on the dataclass field landing first — the worker still receives the request."""
+    from types import SimpleNamespace
+
+    import app.ui_qml.viewmodels.adapter_studio as module
+
+    monkeypatch.setattr(module, "AutoAdapterRequest", lambda **kwargs: SimpleNamespace(**kwargs))
+
+
+def test_run_full_auto_forwards_soldout_url() -> None:
+    made: list = []
+    vm = _auto_vm(made)
+    vm.setConnectionInputs({"soldoutUrl": "https://shop.example/p/soldout"})
+
+    assert vm.runFullAuto() is True
+    request = made[0].args[0]
+    assert request.soldout_url == "https://shop.example/p/soldout"
+    assert request.listing_url is None  # 폼에서 빠졌으므로 항상 None
+
+
+def test_run_full_auto_soldout_url_is_optional() -> None:
+    made: list = []
+    vm = _auto_vm(made)  # soldoutUrl 미입력
+
+    assert vm.runFullAuto() is True
+    assert made[0].args[0].soldout_url is None
+
+
+def test_run_full_auto_rejects_soldout_equal_to_or_invalid_sample() -> None:
+    made: list = []
+    vm = _auto_vm(made)
+
+    vm.setConnectionInputs({"soldoutUrl": "https://shop.example/p/1"})  # == detailUrl
+    assert vm.runFullAuto() is False
+    assert "soldoutUrl" in vm.fieldErrors
+    assert made == []
+
+    vm.setConnectionInputs({"soldoutUrl": "not-a-url"})
+    assert vm.runFullAuto() is False
+    assert "soldoutUrl" in vm.fieldErrors
+    assert made == []
+
+
+def test_run_full_auto_forwards_option_url() -> None:
+    made: list = []
+    vm = _auto_vm(made)
+    vm.setConnectionInputs({"optionUrl": "https://shop.example/p/opt"})
+
+    assert vm.runFullAuto() is True
+    assert made[0].args[0].option_url == "https://shop.example/p/opt"
+
+
+def test_run_full_auto_option_url_is_optional() -> None:
+    made: list = []
+    vm = _auto_vm(made)  # optionUrl 미입력
+
+    assert vm.runFullAuto() is True
+    assert made[0].args[0].option_url is None
+
+
+def test_run_full_auto_rejects_invalid_option_url() -> None:
+    made: list = []
+    vm = _auto_vm(made)
+
+    vm.setConnectionInputs({"optionUrl": "not-a-url"})
+    assert vm.runFullAuto() is False
+    assert "optionUrl" in vm.fieldErrors
+    assert made == []

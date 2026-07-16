@@ -10,77 +10,112 @@ Item {
     id: root
     required property var viewModel
     property var toastHost: null
+    // 0 = AI 자동 설정 (기본), 1 = 수동 설정 (기존 4단계 마법사)
+    property int mode: 0
     focus: true
 
     ColumnLayout {
         anchors.fill: parent
         spacing: 12
-        Components.StageRail {
+        // 모드 탭
+        RowLayout {
             Layout.fillWidth: true
-            enabled: !root.viewModel.busy
-            currentStage: root.viewModel.currentStage
-            onStageRequested: stage => root.viewModel.setCurrentStage(stage)
+            spacing: 8
+            Components.AppButton {
+                text: "AI 자동 설정"
+                selected: root.mode === 0
+                onClicked: root.mode = 0
+                Accessible.name: text
+                Accessible.description: "접속 정보만 입력하면 AI가 모든 필드를 자동으로 매핑합니다."
+            }
+            Components.AppButton {
+                text: "수동 설정"
+                selected: root.mode === 1
+                onClicked: root.mode = 1
+                Accessible.name: text
+                Accessible.description: "4단계 마법사로 직접 분석·매핑·검증을 진행합니다."
+            }
+            Item { Layout.fillWidth: true }
         }
         Components.InlineBanner {
             Layout.fillWidth: true
             visible: text.length > 0
-            text: root.viewModel.fieldErrors.form || root.viewModel.fieldErrors.yamlText || root.viewModel.fieldErrors.detailUrl || root.viewModel.fieldErrors.soldoutUrl || ""
+            text: root.viewModel.fieldErrors.form || root.viewModel.fieldErrors.yamlText || root.viewModel.fieldErrors.detailUrl || root.viewModel.fieldErrors.soldoutUrl || root.viewModel.fieldErrors.optionUrl || ""
             severity: "danger"
+        }
+        // 전역 오버레이 — 두 탭 공통 (자동 실행 중에도 수동 로그인/픽커 안내가 떠야 함)
+        Components.InlineBanner {
+            Layout.fillWidth: true
+            visible: root.viewModel.pickerActive
+            text: "브라우저에서 요소를 클릭하세요 — 「" + root.viewModel.pickerFieldLabel + "」 선택 중"
+            severity: "accent"
+        }
+        Components.GlassPanel {
+            Layout.fillWidth: true
+            visible: root.viewModel.manualLoginPending
+            color: Qt.alpha(Ui.Theme.warning, 0.10)
+            border.color: Ui.Theme.warning
+            ColumnLayout {
+                anchors.fill: parent
+                anchors.margins: 14
+                spacing: 8
+                Text { text: "수동 로그인 필요"; color: Ui.Theme.warning; font.pixelSize: 13; font.weight: Font.DemiBold }
+                Text {
+                    Layout.fillWidth: true
+                    text: "자동 로그인에 실패했습니다. 브라우저 창에서 직접 아이디와 비밀번호를 입력해 로그인한 뒤, 아래 '로그인 완료' 버튼을 누르세요. 로그인하면 요소 선택이 계속 진행됩니다."
+                    color: Ui.Theme.textMuted
+                    font.pixelSize: 11
+                    wrapMode: Text.Wrap
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 8
+                    Item { Layout.fillWidth: true }
+                    Components.AppButton {
+                        text: "취소"
+                        enabled: !root.viewModel.busy
+                        onClicked: root.viewModel.cancelManualLogin()
+                        Accessible.name: text
+                        Accessible.description: "수동 로그인을 취소하고 요소 선택을 중단합니다."
+                        Accessible.role: Accessible.Button
+                    }
+                    Components.AppButton {
+                        text: "로그인 완료"
+                        selected: true
+                        enabled: !root.viewModel.busy
+                        onClicked: root.viewModel.confirmManualLogin()
+                        Accessible.name: text
+                        Accessible.description: "브라우저에서 직접 로그인을 마친 뒤 누르면 요소 선택을 계속 진행합니다."
+                        Accessible.role: Accessible.Button
+                    }
+                }
+            }
+        }
+        // ── 자동 탭: AI 전체 자동화 대시보드 ──
+        Components.AutoAdapterDashboard {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            visible: root.mode === 0
+            viewModel: root.viewModel
+            onReviewMappingRequested: { root.viewModel.setCurrentStage(2); root.mode = 1 }
+            onReviewValidationRequested: { root.viewModel.setCurrentStage(3); root.mode = 1 }
+        }
+        // ── 수동 탭: 기존 4단계 마법사 ──
+        Components.StageRail {
+            Layout.fillWidth: true
+            visible: root.mode === 1
+            enabled: !root.viewModel.busy
+            currentStage: root.viewModel.currentStage
+            onStageRequested: stage => root.viewModel.setCurrentStage(stage)
         }
         Components.GlassPanel {
             Layout.fillWidth: true
             Layout.fillHeight: true
+            visible: root.mode === 1
             ColumnLayout {
                 anchors.fill: parent
                 anchors.margins: 16
                 spacing: 10
-                Components.InlineBanner {
-                    Layout.fillWidth: true
-                    visible: root.viewModel.pickerActive
-                    text: "브라우저에서 요소를 클릭하세요 — 「" + root.viewModel.pickerFieldLabel + "」 선택 중"
-                    severity: "accent"
-                }
-                Components.GlassPanel {
-                    Layout.fillWidth: true
-                    visible: root.viewModel.manualLoginPending
-                    color: Qt.alpha(Ui.Theme.warning, 0.10)
-                    border.color: Ui.Theme.warning
-                    ColumnLayout {
-                        anchors.fill: parent
-                        anchors.margins: 14
-                        spacing: 8
-                        Text { text: "수동 로그인 필요"; color: Ui.Theme.warning; font.pixelSize: 13; font.weight: Font.DemiBold }
-                        Text {
-                            Layout.fillWidth: true
-                            text: "자동 로그인에 실패했습니다. 브라우저 창에서 직접 아이디와 비밀번호를 입력해 로그인한 뒤, 아래 '로그인 완료' 버튼을 누르세요. 로그인하면 요소 선택이 계속 진행됩니다."
-                            color: Ui.Theme.textMuted
-                            font.pixelSize: 11
-                            wrapMode: Text.Wrap
-                        }
-                        RowLayout {
-                            Layout.fillWidth: true
-                            spacing: 8
-                            Item { Layout.fillWidth: true }
-                            Components.AppButton {
-                                text: "취소"
-                                enabled: !root.viewModel.busy
-                                onClicked: root.viewModel.cancelManualLogin()
-                                Accessible.name: text
-                                Accessible.description: "수동 로그인을 취소하고 요소 선택을 중단합니다."
-                                Accessible.role: Accessible.Button
-                            }
-                            Components.AppButton {
-                                text: "로그인 완료"
-                                selected: true
-                                enabled: !root.viewModel.busy
-                                onClicked: root.viewModel.confirmManualLogin()
-                                Accessible.name: text
-                                Accessible.description: "브라우저에서 직접 로그인을 마친 뒤 누르면 요소 선택을 계속 진행합니다."
-                                Accessible.role: Accessible.Button
-                            }
-                        }
-                    }
-                }
                 ColumnLayout {
                     Layout.fillWidth: true
                     visible: root.viewModel.busy && !root.viewModel.pickerActive
@@ -127,7 +162,7 @@ Item {
                             // ponytail: 테스트용 기본값 프리필 — 배포 전 아래 text 값들 지우면 됨
                             Components.AppTextField { id: supplierName; Layout.fillWidth: true; text: "mockmall"; placeholderText: "도매처명"; Accessible.name: "도매처명"; size: "compact" }
                             Components.AppTextField { id: mainUrl; Layout.fillWidth: true; text: "http://localhost:9000/index.html"; placeholderText: "https://example.com"; Accessible.name: "메인 URL"; size: "compact" }
-                            Components.AppTextField { id: listingUrl; Layout.fillWidth: true; placeholderText: "상품 목록 URL (선택)"; Accessible.name: "상품 목록 URL"; size: "compact" }
+                            Components.AppTextField { id: soldoutUrl; Layout.fillWidth: true; placeholderText: "품절 상품 URL (권장 — 품절 감지 정확도를 높입니다)"; Accessible.name: "품절 상품 URL"; size: "compact" }
                             Components.AppTextField { id: detailUrl; Layout.fillWidth: true; text: "http://localhost:9000/detail.html?product_no=101"; placeholderText: "샘플 상품 URL (필드 매핑에 사용)"; Accessible.name: "샘플 상품 URL"; size: "compact" }
                             CheckBox { id: needsLogin; checked: true; text: "로그인 필요"; Accessible.name: text }
                             Components.AppTextField { id: loginUrl; visible: needsLogin.checked; Layout.fillWidth: true; text: "http://localhost:9000/login.html"; placeholderText: "로그인 URL"; Accessible.name: "로그인 URL"; size: "compact" }
@@ -139,7 +174,8 @@ Item {
                                     enabled: !root.viewModel.busy
                                     selected: true
                                     onClicked: {
-                                        root.viewModel.setConnectionInputs({supplierName: supplierName.text, mainUrl: mainUrl.text, listingUrl: listingUrl.text, detailUrl: detailUrl.text, needsLogin: needsLogin.checked})
+                                        root.viewModel.setConnectionInputs({supplierName: supplierName.text, mainUrl: mainUrl.text, detailUrl: detailUrl.text, needsLogin: needsLogin.checked})
+                                        root.viewModel.setSoldoutUrl(soldoutUrl.text)
                                         root.viewModel.setLoginInputs({loginUrl: loginUrl.text, username: username.text, password: password.text})
                                         root.viewModel.probe()
                                         username.text = ""

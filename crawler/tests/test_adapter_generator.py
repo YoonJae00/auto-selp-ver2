@@ -120,6 +120,46 @@ def test_verify_product_link_zero_matches_failed():
     assert "product_link" in result["failed_fields"]
 
 
+# ----- 의사요소(::before 등) 새니타이즈 -----
+
+PSEUDO_YAML = """adapter:
+  name: T
+  base_url: https://x.com
+  listing:
+    product_link:
+      selector: a[href*='shopdetail']::before
+  product:
+    raw_product_name:
+      selector: .name::before
+    supply_price:
+      selector: .price::after
+      transform: extract_number
+    origin:
+      selector: span:has-text('원산지')
+"""
+
+
+def test_finalize_strips_pseudo_elements_and_verify_survives():
+    # 크래시 재현: ::before 선택자가 든 LLM 응답으로 finalize → verify 까지 죽지 않아야 한다.
+    yaml_text, adapter = ag._finalize_generated_yaml(PSEUDO_YAML, strip_manual=False)
+    assert adapter.adapter.product.raw_product_name.selector == ".name"
+    assert adapter.adapter.product.supply_price.selector == ".price"
+    assert adapter.adapter.listing.product_link.selector == "a[href*='shopdetail']"
+    # 콜론 1개 Playwright 의사클래스는 보존
+    assert adapter.adapter.product.origin.selector == "span:has-text('원산지')"
+    # NotImplementedError 없이 완주
+    result = verify_adapter_against_probe(adapter, _probe(DETAIL, "<a href='/shopdetail.html'>x</a>"))
+    assert result["values"]["raw_product_name"] == "멋진 상품"
+
+
+def test_apply_repaired_fields_strips_pseudo_elements():
+    base = _adapter({"raw_product_name": {"selector": ".old"}})
+    dumped = __import__("yaml").safe_dump(base.model_dump(mode="json", exclude_none=True), allow_unicode=True, sort_keys=False)
+    out = ag._apply_repaired_fields(dumped, {"raw_product_name": {"selector": ".name::before"}})
+    assert "::before" not in out
+    assert ".name" in out
+
+
 # ----- generate_adapter_yaml 통합 (LLM mock) -----
 
 class _FakeClient:
@@ -161,7 +201,7 @@ def test_generate_triggers_repair_and_adopts_improvement(monkeypatch):
     monkeypatch.setattr(ag, "get_llm_client", lambda provider: fake)
 
     probe = _probe(DETAIL, "<a href='/shopdetail.html'>x</a>")
-    result = asyncio.run(generate_adapter_yaml(probe, "테스트몰", llm_provider="gemini"))
+    result = asyncio.run(generate_adapter_yaml(probe, "테스트몰"))
 
     assert "repair" in calls  # 검증 실패로 수리 발동
     assert ".price" in result.yaml_text  # 개선된 선택자 채택
@@ -183,12 +223,83 @@ def test_generate_excludes_locked_hint_from_repair(monkeypatch):
     )
     probe = _probe(DETAIL, "<a href='/shopdetail.html'>x</a>")
     result = asyncio.run(
-        generate_adapter_yaml(probe, "테스트몰", llm_provider="gemini", mapping_hints=[hint])
+        generate_adapter_yaml(probe, "테스트몰", mapping_hints=[hint])
     )
 
     assert "repair" not in calls  # 잠금 필드는 수리 대상 아님
     assert "supply_price" not in result.verification["failed_fields"]
     assert ".live-only-price" in result.yaml_text  # 잠금 선택자 유지
+
+
+# ----- jQuery :contains() → Playwright :has-text() 변환 -----
+
+CONTAINS_YAML = """adapter:
+  name: T
+  base_url: https://x.com
+  listing:
+    product_link:
+      selector: a[href*='shopdetail']
+  product:
+    raw_product_name:
+      selector: .name
+    origin:
+      selector: dt:contains("원산지")
+"""
+
+
+def test_finalize_converts_jquery_contains_to_has_text():
+    _, adapter = ag._finalize_generated_yaml(CONTAINS_YAML, strip_manual=False)
+    # jQuery 전용 :contains() 는 Playwright query_selector가 SyntaxError → :has-text() 로 변환.
+    assert adapter.adapter.product.origin.selector == 'dt:has-text("원산지")'
+
+
+# ----- 비전: 상세 스크린샷을 LLM 호출에 전달 -----
+
+class _VisionCapturingClient:
+    def __init__(self, gen_yaml: str, seen: dict):
+        self._gen = gen_yaml
+        self._seen = seen
+
+    async def generate(self, system: str, user: str, image_paths=None) -> str:
+        self._seen["image_paths"] = image_paths
+        self._seen["system"] = system
+        return self._gen
+
+
+GEN_YAML_OK = """
+adapter:
+  name: T
+  base_url: https://x.com
+  listing:
+    product_link:
+      selector: a[href*='shopdetail']
+  product:
+    raw_product_name:
+      selector: .name
+"""
+
+
+def test_generate_passes_screenshot_to_client(monkeypatch):
+    seen: dict = {}
+    monkeypatch.setattr(ag, "get_llm_client", lambda provider: _VisionCapturingClient(GEN_YAML_OK, seen))
+    probe = _probe(DETAIL, "<a href='/shopdetail.html'>x</a>")
+    probe.detail_screenshot_path = "/tmp/probe_shots_x/detail.png"
+
+    asyncio.run(generate_adapter_yaml(probe, "테스트몰"))
+
+    assert seen["image_paths"] == ["/tmp/probe_shots_x/detail.png"]  # 스크린샷 전달됨
+    assert "스크린샷" in seen["system"]  # 화면 대조 지시 접미됨
+
+
+def test_generate_omits_image_kwarg_without_screenshot(monkeypatch):
+    seen: dict = {}
+    monkeypatch.setattr(ag, "get_llm_client", lambda provider: _VisionCapturingClient(GEN_YAML_OK, seen))
+    probe = _probe(DETAIL, "<a href='/shopdetail.html'>x</a>")  # detail_screenshot_path 기본 ""
+
+    asyncio.run(generate_adapter_yaml(probe, "테스트몰"))
+
+    assert seen["image_paths"] is None  # 스크린샷 없으면 kwarg 미전달(기존 호출부 호환)
+    assert "스크린샷" not in seen["system"]
 
 
 if __name__ == "__main__":

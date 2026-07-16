@@ -35,24 +35,23 @@ def make_settings_vm(
 
 
 def test_settings_exposes_secret_presence_not_value(qt_app) -> None:
-    vm = make_settings_vm(keys={"gemini": "gemini-secret", "openai": "openai-secret"})
+    vm = make_settings_vm(keys={"openai": "openai-secret"})
 
-    assert vm.geminiKeyConfigured is True
     assert vm.openaiKeyConfigured is True
     assert "secret" not in repr(vm.sections)
-    assert "gemini-secret" not in repr(vm.fieldErrors)
+    assert "openai-secret" not in repr(vm.fieldErrors)
     assert not any("secret" in name.data().decode() for name in vm.dynamicPropertyNames())
 
 
 def test_empty_secret_preserves_existing_key_on_save(qt_app) -> None:
     saved: list[AppConfig] = []
     deleted: list[str] = []
-    vm = make_settings_vm(keys={"gemini": "existing-secret"}, saved=saved, deleted=deleted)
+    vm = make_settings_vm(keys={"openai": "existing-secret"}, saved=saved, deleted=deleted)
 
-    assert vm.save("openai", "chrome", 3, False, True, "", "") is True
+    assert vm.save("chrome", 3, False, True, "") is True
 
     assert saved[-1].llm_provider == "openai"
-    assert vm._key_loader("gemini") == "existing-secret"
+    assert vm._key_loader("openai") == "existing-secret"
     assert deleted == []
 
 
@@ -88,5 +87,5 @@ def test_secret_save_failure_does_not_echo_submitted_key(qt_app) -> None:
         key_deleter=lambda _provider: None,
     )
 
-    assert vm.save("gemini", "msedge", 0, True, True, "TOPSECRET", "") is False
+    assert vm.save("msedge", 0, True, True, "TOPSECRET") is False
     assert "TOPSECRET" not in repr(vm.fieldErrors)

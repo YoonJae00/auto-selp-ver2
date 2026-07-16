@@ -57,17 +57,16 @@ class FirstRunViewModel(BaseViewModel):
             self.set_field_errors({"apiKey": sanitize_diagnostic(exc)})
             return False
 
-    @Slot(str, str, str, result=bool)
-    def complete(self, llm_provider: str, browser_channel: str, api_key: str) -> bool:
-        provider = (llm_provider or "").strip().casefold()
+    @Slot(str, str, result=bool)
+    def complete(self, browser_channel: str, api_key: str) -> bool:
+        # LLM 제공사는 OpenAI 단일 — 제공사 선택 없음.
+        provider = "openai"
         browser = (browser_channel or "").strip().casefold()
         secret = api_key or ""
         errors: dict[str, str] = {}
-        if provider not in {"gemini", "openai"}:
-            errors["llmProvider"] = "제공자를 선택하세요."
         if browser not in {"msedge", "chrome", "chromium"}:
             errors["browserChannel"] = "브라우저를 선택하세요."
-        if provider in {"gemini", "openai"} and not secret and not self._has_key(provider):
+        if not secret and not self._has_key(provider):
             errors["apiKey"] = "API 키를 입력하세요."
         if errors:
             self.set_field_errors(errors)

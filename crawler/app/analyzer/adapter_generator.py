@@ -12,7 +12,7 @@ from soupsieve import SelectorSyntaxError
 
 from app.analyzer.adapter_schema import FieldExtractor
 
-from app.analyzer.adapter_schema import Adapter
+from app.analyzer.adapter_schema import Adapter, clean_field_value
 from app.analyzer.llm_client import get_llm_client, QuotaExceededError
 from app.analyzer.mapping_hints import MappingHint, PRODUCT_DEFAULTS, apply_locked_hints_to_yaml_dict, format_mapping_hints_for_prompt
 from app.analyzer.platform_hints import platform_hint_block
@@ -104,6 +104,39 @@ adapter:
 """
 
 
+# 전체 자동화 모드용 프롬프트 — SYSTEM_PROMPT의 "manual-only 필드는 생성하지 마세요" 지시만
+# 치환해 재사용한다(복붙 금지 원칙). manual 지시 블록이 사라지면 replace가 no-op이 되므로
+# 아래 assert로 드리프트를 즉시 잡는다.
+_MANUAL_DIRECTIVE_BLOCK = (
+    "   판매 상태(supplier_status), 상세 이미지(detail_content), 추가 이미지(extra_image_urls), 옵션값(groups), 옵션가격(option_price_delta)은 자동 생성하지 마세요.\n"
+    "   이 필드들과 옵션 텍스트 파서(option_text_parser)는 사용자가 3단계 매핑 화면에서 직접 선택/분석합니다."
+)
+_AUTO_DIRECTIVE_BLOCK = (
+    # supplier_status는 요청하지 않는다 — 라이브 검증 불가 필드라 LLM 추측만으로 받지 않고,
+    # 오케스트레이터의 판매중/품절 실측 비교 경로로만 설정한다.
+    "   아래 필드의 후보 CSS 선택자도 함께 생성하세요 (전체 자동화 모드, 확실하지 않으면 생략):\n"
+    "   - product.detail_content: 상세 설명 이미지 컨테이너의 img (attribute: src, multiple: true)\n"
+    "   - product.extra_image_urls: 상품 갤러리 추가 이미지 img (attribute: src, multiple: true)\n"
+    "   - options.groups: [{name: 옵션, values_selector: CSS선택자}] 옵션값 요소\n"
+    "   - options.option_price_delta: 옵션 추가금액 요소 (transform: extract_number)\n"
+    "   후보를 찾을 수 없는 필드는 생략하세요. 이 후보들은 라이브 검증 후 자동 보정됩니다."
+)
+AUTO_SYSTEM_PROMPT = SYSTEM_PROMPT.replace(_MANUAL_DIRECTIVE_BLOCK, _AUTO_DIRECTIVE_BLOCK)
+assert AUTO_SYSTEM_PROMPT != SYSTEM_PROMPT, "SYSTEM_PROMPT의 manual 지시 블록이 바뀌었습니다 — _MANUAL_DIRECTIVE_BLOCK 갱신 필요"
+
+
+_VISION_DIRECTIVE = (
+    "\n\n첨부된 스크린샷은 상품 상세 페이지 화면입니다. "
+    "화면에서 각 필드의 실제 위치를 확인하고 DOM과 대조해 정확한 선택자를 고르세요."
+)
+
+
+def _screenshot_images(probe_result: ProbeResult) -> list[str]:
+    """상세 스크린샷 경로 리스트(있을 때만). 비전 LLM 호출에 넘긴다."""
+    path = getattr(probe_result, "detail_screenshot_path", "") or ""
+    return [path] if path else []
+
+
 @dataclass
 class GenerationResult:
     yaml_text: str
@@ -129,10 +162,43 @@ def _validate_yaml(yaml_text: str | dict) -> Adapter:
     return Adapter.model_validate(raw)
 
 
-def _finalize_generated_yaml(raw_response: str, mapping_hints: list[MappingHint] | None = None) -> tuple[str, Adapter]:
+# 의사요소(::before/::after 등)는 추출에 무의미하고 soupsieve는 이를 NotImplementedError로,
+# Playwright query_selector는 런타임 에러로 던진다 → 소스에서 제거하는 게 근본 처리.
+# 콜론 1개 Playwright 의사클래스(:has-text() 등)는 :: 가 아니라 안전.
+_PSEUDO_ELEMENT_RE = re.compile(r"::[\w-]+(?:\([^)]*\))?")
+
+
+def _strip_pseudo_elements(selector: str | None) -> str:
+    if not selector:
+        return selector or ""
+    cleaned = _PSEUDO_ELEMENT_RE.sub("", str(selector)).strip()
+    # jQuery 전용 :contains() → Playwright 지원 :has-text() (query_selector SyntaxError 방지, 인자 보존).
+    return cleaned.replace(":contains(", ":has-text(")
+
+
+def _sanitize_pseudo_elements(node: Any) -> None:
+    """YAML dict 전체를 훑어 selector/values_selector 문자열에서 의사요소 접미 제거."""
+    if isinstance(node, dict):
+        for key, val in node.items():
+            if key in ("selector", "values_selector") and isinstance(val, str):
+                node[key] = _strip_pseudo_elements(val)
+            else:
+                _sanitize_pseudo_elements(val)
+    elif isinstance(node, list):
+        for item in node:
+            _sanitize_pseudo_elements(item)
+
+
+def _finalize_generated_yaml(
+    raw_response: str,
+    mapping_hints: list[MappingHint] | None = None,
+    strip_manual: bool = True,
+) -> tuple[str, Adapter]:
     raw = yaml.safe_load(_extract_yaml(raw_response))
     _strip_empty_selectors(raw)
-    _strip_auto_manual_fields(raw, mapping_hints)
+    _sanitize_pseudo_elements(raw)  # LLM이 만든 ::before 등 의사요소 선택자 제거 (검증 크래시 방지)
+    if strip_manual:  # 전체 자동화 모드(strip_manual=False)는 LLM이 만든 manual-only 후보를 남긴다
+        _strip_auto_manual_fields(raw, mapping_hints)
     Adapter.model_validate(raw)
     apply_locked_hints_to_yaml_dict(raw, mapping_hints)
     _strip_empty_selectors(raw)
@@ -314,7 +380,7 @@ def _verify_number(text: str | None) -> int | None:
         return None
 
 
-def _extract_field_value(element, extractor: FieldExtractor) -> Any:
+def _extract_field_value(element, extractor: FieldExtractor, field_name: str = "") -> Any:
     """soup 요소에서 extractor(attribute/transform)를 반영해 값 추출. 없으면 None."""
     attr = extractor.attribute
     value: str | None = None
@@ -337,6 +403,9 @@ def _extract_field_value(element, extractor: FieldExtractor) -> Any:
         text = element.get_text(strip=True)
         value = text or None
 
+    if value is None:
+        return None
+    value = clean_field_value(field_name, value)  # 라벨 오염 정리를 transform 전에 적용
     if value is None:
         return None
     if extractor.transform == "extract_number":
@@ -370,9 +439,9 @@ def verify_adapter_against_probe(adapter: Adapter, probe_result: ProbeResult) ->
                 continue  # Playwright 전용 → 검증 불가
             try:
                 matches = detail_soup.select(selector)
-            except SelectorSyntaxError:
+            except (SelectorSyntaxError, NotImplementedError):  # 의사요소(::before 등)는 NotImplementedError
                 continue  # 파싱 불가 → 검증 불가
-            value = _extract_field_value(matches[0], extractor) if matches else None
+            value = _extract_field_value(matches[0], extractor, name) if matches else None
             if value is None or (isinstance(value, str) and not value.strip()):
                 failed.append(name)
             else:
@@ -389,7 +458,7 @@ def verify_adapter_against_probe(adapter: Adapter, probe_result: ProbeResult) ->
             product_link_count = len(listing_soup.select(link_selector))
             if product_link_count == 0:
                 failed.append("product_link")
-        except SelectorSyntaxError:
+        except (SelectorSyntaxError, NotImplementedError):  # 의사요소(::before 등)는 NotImplementedError
             pass  # 검증 불가
 
     return {"failed_fields": failed, "values": values, "product_link_count": product_link_count}
@@ -398,13 +467,21 @@ def verify_adapter_against_probe(adapter: Adapter, probe_result: ProbeResult) ->
 async def generate_adapter_yaml(
     probe_result: ProbeResult,
     supplier_name: str,
-    llm_provider: str = "gemini",
+    llm_provider: str = "openai",
     max_retries: int = 2,
     auto_fallback: bool = True,
     on_progress: Callable[[str], None] | None = None,
     mapping_hints: list[MappingHint] | None = None,
+    include_manual_fields: bool = False,
 ) -> GenerationResult:
     user_prompt = _build_user_prompt(probe_result, supplier_name, mapping_hints)
+    # 전체 자동화 모드: manual-only 필드까지 후보 선택자를 받도록 프롬프트/스트립을 전환.
+    system_prompt = AUTO_SYSTEM_PROMPT if include_manual_fields else SYSTEM_PROMPT
+    # 상세 스크린샷이 있으면 비전 첨부 + 화면 대조 지시를 붙인다(계약: 비어있지 않을 때만 전달).
+    images = _screenshot_images(probe_result)
+    img_kwargs = {"image_paths": images} if images else {}
+    if images:
+        system_prompt = system_prompt + _VISION_DIRECTIVE
 
     def _log(msg: str) -> None:
         if on_progress:
@@ -424,7 +501,7 @@ async def generate_adapter_yaml(
 
     async def _succeed(raw_response: str, used_provider: str, retries: int) -> GenerationResult:
         """finalize → 오프라인 검증 → 실패 시 1회 자동 수리 → 개선됐을 때만 수리본 채택."""
-        yaml_text, adapter = _finalize_generated_yaml(raw_response, mapping_hints)
+        yaml_text, adapter = _finalize_generated_yaml(raw_response, mapping_hints, strip_manual=not include_manual_fields)
         _log(f"Generation succeeded with {used_provider}.")
 
         verification = verify_adapter_against_probe(adapter, probe_result)
@@ -466,35 +543,20 @@ async def generate_adapter_yaml(
             verification=verification,
         )
 
+    # 단일 제공사(OpenAI). auto_fallback 는 시그니처 호환용 no-op — 제공사 전환 분기 없음.
+    # 검증 실패 재시도는 아래 max_retries 루프가 담당한다.
     provider = llm_provider
-    fallback_provider = "openai" if provider == "gemini" else "gemini"
     last_error: str = ""
-    used_fallback = False
 
     _log(f"Generating adapter for {supplier_name} with {provider}...")
 
-    # Try primary provider with retries
     for attempt in range(max_retries):
         client = get_llm_client(provider)
-        try:
-            raw_response = await client.generate(
-                SYSTEM_PROMPT,
-                _build_prompt(last_error if attempt > 0 else ""),
-            )
-        except QuotaExceededError:
-            if not auto_fallback or used_fallback:
-                raise
-            _log(
-                f"{provider} 할당량 초과, "
-                f"{'openai' if provider == 'gemini' else 'gemini'}로 전환합니다..."
-            )
-            provider = "openai" if provider == "gemini" else "gemini"
-            used_fallback = True
-            # Try fallback immediately (one attempt, no retries)
-            client = get_llm_client(provider)
-            raw_response = await client.generate(SYSTEM_PROMPT, user_prompt)
-            return await _succeed(raw_response, provider, retries=0)
-
+        raw_response = await client.generate(
+            system_prompt,
+            _build_prompt(last_error if attempt > 0 else ""),
+            **img_kwargs,
+        )
         try:
             return await _succeed(raw_response, provider, retries=attempt)
         except (ValidationError, yaml.YAMLError) as exc:
@@ -504,23 +566,7 @@ async def generate_adapter_yaml(
                 f"retrying... ({exc})"
             )
 
-    # After max_retries exhausted on primary, try fallback if applicable
-    if auto_fallback and not used_fallback:
-        _log(
-            f"{provider} 최대 재시도 초과, "
-            f"{'openai' if provider == 'gemini' else 'gemini'}로 전환합니다..."
-        )
-        provider = "openai" if provider == "gemini" else "gemini"
-        client = get_llm_client(provider)
-        raw_response = await client.generate(
-            SYSTEM_PROMPT, _build_prompt(last_error)
-        )
-        return await _succeed(raw_response, provider, retries=max_retries)
-
-    raise ValueError(
-        "Adapter generation failed with both providers. "
-        f"Last error: {last_error}"
-    )
+    raise ValueError(f"Adapter generation failed. Last error: {last_error}")
 
 
 # Fields the LLM auto-maps and that a repair pass may re-select. Image/detail/option
@@ -599,6 +645,7 @@ def _apply_repaired_fields(yaml_text: str, repaired: dict) -> str:
     if not changed:
         return yaml_text
     _strip_empty_selectors(raw)
+    _sanitize_pseudo_elements(raw)  # repair가 되돌린 ::before 등 의사요소 선택자 제거
     try:
         adapter = Adapter.model_validate(raw)
     except ValidationError:
@@ -610,7 +657,7 @@ async def repair_adapter_fields(
     yaml_text: str,
     failed_fields: list[str],
     probe_result: ProbeResult,
-    llm_provider: str = "gemini",
+    llm_provider: str = "openai",
     auto_fallback: bool = True,
     on_progress: Callable[[str], None] | None = None,
 ) -> str:
@@ -631,16 +678,18 @@ async def repair_adapter_fields(
     field_lines = "\n".join(f"- {f}: {_REPAIR_FIELD_HINTS.get(f, '')}" for f in targets)
     user_prompt = f"## 다시 선택자를 찾을 필드\n{field_lines}\n\n{dom}"
 
+    # 수리도 화면을 보고 고르게 스크린샷 첨부 + 대조 지시(있을 때만).
+    images = _screenshot_images(probe_result)
+    img_kwargs = {"image_paths": images} if images else {}
+    system_prompt = REPAIR_SYSTEM_PROMPT + (_VISION_DIRECTIVE if images else "")
+
     _log(f"빈 값 필드 {len(targets)}개 자동 재매핑 중...")
-    provider = llm_provider
+    # 단일 제공사 — 할당량 초과 시 수리를 포기하고 원본 유지(보강 실패는 치명적이지 않음).
     try:
-        response = await get_llm_client(provider).generate(REPAIR_SYSTEM_PROMPT, user_prompt)
+        response = await get_llm_client(llm_provider).generate(system_prompt, user_prompt, **img_kwargs)
     except QuotaExceededError:
-        if not auto_fallback:
-            return yaml_text
-        provider = "openai" if provider == "gemini" else "gemini"
-        _log(f"할당량 초과, {provider}로 재매핑 전환...")
-        response = await get_llm_client(provider).generate(REPAIR_SYSTEM_PROMPT, user_prompt)
+        _log("할당량 초과, 자동 재매핑 생략.")
+        return yaml_text
 
     text = response.strip()
     if text.startswith("```"):

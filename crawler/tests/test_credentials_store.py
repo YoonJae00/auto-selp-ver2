@@ -51,14 +51,14 @@ def test_delete_supplier_credentials_swallows_errors() -> None:
 
 def test_save_and_load_llm_api_key() -> None:
     with patch("app.credentials.store.keyring") as mock_kr:
-        save_llm_api_key("gemini", "AIzaXXX")
-        mock_kr.set_password.assert_called_once_with("auto-selp-crawler.llm", "gemini", "AIzaXXX")
-        mock_kr.get_password.return_value = "AIzaXXX"
-        assert load_llm_api_key("gemini") == "AIzaXXX"
+        save_llm_api_key("openai", "sk-XXX")
+        mock_kr.set_password.assert_called_once_with("auto-selp-crawler.llm", "openai", "sk-XXX")
+        mock_kr.get_password.return_value = "sk-XXX"
+        assert load_llm_api_key("openai") == "sk-XXX"
 
 
 def test_delete_llm_api_key_swallows_errors() -> None:
     with patch("app.credentials.store.keyring") as mock_kr:
         mock_kr.delete_password.side_effect = PasswordDeleteError
-        delete_llm_api_key("gemini")
+        delete_llm_api_key("openai")
         mock_kr.delete_password.assert_called_once()

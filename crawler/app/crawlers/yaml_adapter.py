@@ -11,6 +11,7 @@ from app.analyzer.adapter_schema import (
     CategoriesConfig,
     FieldExtractor,
     OptionsConfig,
+    clean_field_value,
     extract_url_value,
 )
 from app.analyzer.option_text_parser import (
@@ -290,12 +291,27 @@ def _image_values(value: Any, base_url: str = "") -> list[str]:
     return [img for img in (_supported_image_url(item, base_url) for item in values) if img]
 
 
+# 파일명 크기 토큰: 접미(_s/_m/_l/_t/_th/_small/_medium/_large/_thumb) · 접두(small_/thumb_/th_).
+# 숫자 식별부는 건드리지 않아 서로 다른 이미지(103 vs 104)는 다른 키로 남는다.
+_SIZE_SUFFIX_RE = re.compile(r"_(?:s|m|l|t|th|small|medium|large|thumb)$", re.IGNORECASE)
+_SIZE_PREFIX_RE = re.compile(r"^(?:small|thumb|th)_", re.IGNORECASE)
+
+
 def _image_key(url: str, base_url: str = "") -> str:
-    """크기변형 URL(big/small 폴더, 리사이저 쿼리 등)도 같은 이미지로 보도록 파일명 기준 키."""
+    """크기변형 URL(big/small 폴더, 리사이저 쿼리, _s/_thumb 접미 등)도 같은 이미지로 보도록
+    파일명 기준 키. 경로/쿼리 무시 → 사이즈 디렉토리(/small/, /thumb/ 등)는 자연히 동일 키."""
     absolute = urljoin(base_url, url)
     path = absolute.split("?", 1)[0].split("#", 1)[0]
     name = path.rsplit("/", 1)[-1].lower()
-    return name or absolute.lower()
+    if not name:
+        return absolute.lower()
+    stem, dot, ext = name.rpartition(".")
+    if not dot:  # 확장자 없음 (CDN/리사이저 URL)
+        stem = name
+    stem = _SIZE_SUFFIX_RE.sub("", stem)
+    stem = _SIZE_PREFIX_RE.sub("", stem)
+    # ponytail: 크기 토큰이 실제 식별부인 드문 파일명(image_l.jpg가 별개 원본)은 과잉병합될 수 있음
+    return f"{stem}.{ext}" if dot else stem
 
 
 def _without_images(images: list[str], excluded: str | None, base_url: str = "") -> list[str]:
@@ -319,6 +335,9 @@ DETAIL_IMAGE_MIN_PX = 300  # ponytail: 튜닝 노브 — 작은 상품썸네일 
 _COLLECT_IMAGES_JS = r"""
 ([selector, minPx]) => {
   const PLACEHOLDER = /blank|spacer|1x1|no_?image|noimg|transparent|\/icon/i;
+  // 사이드바 퀵메뉴 아이콘·버튼(품절리스트/엑셀주문/적립금충전/채팅 등)은 세로로 길어 크기 필터를
+  // 통과할 수 있어 파일명 토큰으로도 제외. 보수적으로 경계 붙은 icon/btn/quick + banner_sm 만.
+  const SKIP_SRC = /(?:^|[\/_\-])(?:icon|btn|quick)(?=[\/_\-.]|$)|banner_sm/i;
   const LAZY_ATTRS = ['src', 'data-src', 'data-original', 'data-lazy', 'data-echo'];
   function realSrc(img) {
     // _read_image_attribute와 동일 우선순위 — placeholder/data-URI 건너뛰고 lazy 속성 순회
@@ -343,6 +362,7 @@ _COLLECT_IMAGES_JS = r"""
   for (const img of imgs) {
     const src = realSrc(img);
     if (!src || seen[src]) continue;
+    if (SKIP_SRC.test(src)) continue;  // 아이콘/버튼/퀵메뉴 파일명 토큰 제외
     const attrW = parseInt(img.getAttribute('width') || '0', 10) || 0;
     const attrH = parseInt(img.getAttribute('height') || '0', 10) || 0;
     const rect = img.getBoundingClientRect();
@@ -686,7 +706,7 @@ class YAMLAdapter(BaseAdapter):
                 if extractor is None or extractor.optional is False and not extractor.selector:
                     fields[field_name] = None
                     continue
-                fields[field_name] = await self._extract_field(page, extractor)
+                fields[field_name] = await self._extract_field(page, extractor, field_name)
 
             status_value = None
             if product_config.supplier_status:
@@ -764,7 +784,7 @@ class YAMLAdapter(BaseAdapter):
         except Exception:
             return {}
 
-    async def _extract_field(self, page, extractor: FieldExtractor) -> Any:
+    async def _extract_field(self, page, extractor: FieldExtractor, field_name: str = "") -> Any:
         try:
             if extractor.selector:
                 if extractor.multiple:
@@ -783,7 +803,10 @@ class YAMLAdapter(BaseAdapter):
                     if element:
                         raw = await self._read_element(element, extractor)
                         if raw:
-                            return _apply_transform(raw, extractor.transform)
+                            # 라벨 오염 정리(원산지/이름/코드 등)를 transform 전에 적용.
+                            raw = clean_field_value(field_name, raw)
+                            if raw:
+                                return _apply_transform(raw, extractor.transform)
 
             fallback_value = await self._extract_field_fallback_from(page, extractor)
             if fallback_value is not None:
@@ -1110,7 +1133,7 @@ class YAMLAdapter(BaseAdapter):
 
             code = url
             if product_config.supplier_product_code:
-                code_raw = await self._extract_field(page, product_config.supplier_product_code)
+                code_raw = await self._extract_field(page, product_config.supplier_product_code, "supplier_product_code")
                 if code_raw and isinstance(code_raw, str):
                     code = code_raw.strip()
 
