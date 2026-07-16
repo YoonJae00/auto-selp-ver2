@@ -1,6 +1,7 @@
 import pytest
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
-from clients.openai_client import OpenAIClient
+from clients.openai_client import OpenAIClient, WholesaleMappingRule, WholesaleMappingSuggestion
 
 @pytest.mark.asyncio
 async def test_openai_refine_product_name_success():
@@ -54,3 +55,32 @@ async def test_openai_smartstore_candidates_json_and_failure_fallback():
 
         create.side_effect = ValueError("bad json")
         assert await client.generate_smartstore_name_candidates("정제명", ["키워드"]) == []
+
+
+@pytest.mark.asyncio
+async def test_wholesale_mapping_uses_direct_parse_without_beta_access():
+    parsed = WholesaleMappingSuggestion(
+        rules=[WholesaleMappingRule(target="product_code", source="자체상품코드")],
+        notes=["상품코드는 자체상품코드를 사용합니다."],
+    )
+    parse = AsyncMock(
+        return_value=SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(parsed=parsed, refusal=None))]
+        )
+    )
+    client = object.__new__(OpenAIClient)
+    client.client = SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(parse=parse))
+    )
+    client.model = "test-model"
+
+    result = await client.suggest_wholesale_mapping(
+        ["자체상품코드"],
+        [{"자체상품코드": "ABC-1"}],
+    )
+
+    assert result == {
+        "column_mapping": {"product_code": "자체상품코드"},
+        "notes": ["상품코드는 자체상품코드를 사용합니다."],
+    }
+    parse.assert_awaited_once()

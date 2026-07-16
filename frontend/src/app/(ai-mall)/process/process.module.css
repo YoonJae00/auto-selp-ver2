@@ -739,6 +739,32 @@
   font-weight: 700;
 }
 
+.statusCell {
+  display: grid;
+  justify-items: start;
+  gap: 5px;
+}
+
+.sourceChangeBadge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.sourceChangeNew {
+  background: #eef2ff;
+  color: #4f46e5;
+}
+
+.sourceChangeUpdated {
+  background: #fff7ed;
+  color: #c2410c;
+}
+
 .status_pending {
   background: #eef2ff;
   color: #4f46e5;

@@ -74,6 +74,8 @@ def make_context(progress_events=None, db=None, marketplace_client=None):
         warnings={"supplier_warnings": [{"keyword": "공급처", "reason": "raw"}]},
         processing_time_ms=None,
         status="pending",
+        change_type="updated",
+        changed_fields=["price_wholesale"],
     )
     import_run = SimpleNamespace(
         id=uuid.uuid4(),
@@ -147,6 +149,8 @@ async def test_process_product_with_graph_success_updates_product_and_trace():
 
     assert result["refined_name"] == "정제 상품명"
     assert context.product.status == "completed"
+    assert context.product.change_type is None
+    assert context.product.changed_fields == []
     assert context.product.refined_name == "정제 상품명"
     assert context.product.keywords == ["키워드1", "키워드2"]
     assert context.product.processing_time_ms >= 0
@@ -173,6 +177,8 @@ async def test_process_product_with_graph_failure_marks_product_failed_and_conti
 
     assert result["error"] == "llm unavailable"
     assert context.product.status == "failed"
+    assert context.product.change_type == "updated"
+    assert context.product.changed_fields == ["price_wholesale"]
     assert context.import_run.success_count == 0
     assert context.import_run.failed_count == 1
     assert context.completed_rows[0]["name"] == "원본 상품명"
@@ -217,6 +223,8 @@ async def test_process_product_with_graph_late_failure_restores_success_and_incr
 
     assert result["error"] == "commit exploded"
     assert context.product.status == "failed"
+    assert context.product.change_type == "updated"
+    assert context.product.changed_fields == ["price_wholesale"]
     assert context.import_run.success_count == 5
     assert context.import_run.failed_count == 3
     assert context.completed_rows[0]["error"] == "commit exploded"

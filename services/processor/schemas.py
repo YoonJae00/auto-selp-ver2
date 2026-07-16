@@ -5,7 +5,7 @@ from uuid import UUID
 
 class ProcessRequest(BaseModel):
     file_id: str
-    column_mapping: Dict[str, str]
+    column_mapping: Dict[str, Any]
     llm_provider: Optional[str] = "gemini"
     vision_llm_provider: Optional[str] = "gemini"
     kipris_enabled: Optional[bool] = True
@@ -74,6 +74,8 @@ class ProductResponse(BaseModel):
     warnings: Optional[Dict] = None
     raw_metadata: Optional[Dict] = None
     processing_time_ms: Optional[int] = None
+    change_type: Optional[Literal["new", "updated"]] = None
+    changed_fields: List[str] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
     platform_mappings: List[ProductPlatformMappingResponse] = []
@@ -107,7 +109,7 @@ class ProductImportResponse(BaseModel):
 class DBProcessRequest(BaseModel):
     import_id: Optional[UUID] = None
     product_ids: Optional[List[UUID]] = None
-    column_mapping: Dict[str, str]
+    column_mapping: Dict[str, Any]
     llm_provider: Optional[str] = "gemini"
     vision_llm_provider: Optional[str] = "gemini"
     kipris_enabled: Optional[bool] = True
@@ -117,7 +119,7 @@ class DBProcessRequest(BaseModel):
 class WholesaleSiteBase(BaseModel):
     name: str
     homepage_url: Optional[str] = None
-    column_mapping: Optional[Dict[str, str]] = None
+    column_mapping: Optional[Dict[str, Any]] = None
 
 class WholesaleSiteCreate(WholesaleSiteBase):
     pass
@@ -131,6 +133,17 @@ class WholesaleSiteResponse(WholesaleSiteBase):
     created_at: datetime
     updated_at: datetime
     model_config = ConfigDict(from_attributes=True)
+
+
+class WholesaleMappingSuggestionRequest(BaseModel):
+    file_id: str
+    column_mapping: Optional[Dict[str, Any]] = None
+    instruction: Optional[str] = Field(default=None, max_length=2_000)
+
+
+class WholesaleMappingPreviewRequest(BaseModel):
+    file_id: str
+    column_mapping: Dict[str, Any]
 
 
 class MarketplaceSnapshotPrice(BaseModel):

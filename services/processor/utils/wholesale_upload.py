@@ -18,6 +18,27 @@ REQUIRED_WHOLESALE_FIELDS = [
     "image_detail",
 ]
 
+MAPPABLE_WHOLESALE_FIELDS = [
+    *REQUIRED_WHOLESALE_FIELDS,
+    "option_values_raw",
+    "option_price_deltas_raw",
+    "option_skus_raw",
+    "option_image_urls_raw",
+    "price_retail",
+    "price_min_selling",
+    "image_list_2",
+    "image_list_3",
+    "image_list_4",
+    "image_list_5",
+    "wholesale_registered_at",
+    "price_wholesale",
+    "options",
+    "images_list",
+]
+
+MAX_REGEX_LENGTH = 300
+MAX_REGEX_INPUT_LENGTH = 5_000
+
 IMAGE_FIELD_KEYS = [
     "image_list_1",
     "image_list_2",
@@ -74,17 +95,19 @@ def clean_text(value: Any) -> str | None:
     return str(value).strip()
 
 
-def resolve_field_header(field_name: str, mapping: dict[str, str], columns: list[str]) -> str | None:
+def resolve_field_header(field_name: str, mapping: dict[str, Any], columns: list[str]) -> str | None:
     candidate_headers: list[str] = []
 
-    mapped_header = mapping.get(field_name)
-    if mapped_header:
+    mapped_value = mapping.get(field_name)
+    mapped_header = mapped_value.get("source") if isinstance(mapped_value, dict) else mapped_value
+    if isinstance(mapped_header, str) and mapped_header:
         candidate_headers.append(mapped_header)
 
     if not mapped_header:
         for legacy_field in LEGACY_FIELD_ALIASES.get(field_name, []):
-            legacy_header = mapping.get(legacy_field)
-            if legacy_header:
+            legacy_value = mapping.get(legacy_field)
+            legacy_header = legacy_value.get("source") if isinstance(legacy_value, dict) else legacy_value
+            if isinstance(legacy_header, str) and legacy_header:
                 candidate_headers.append(legacy_header)
 
     candidate_headers.extend(FIELD_FALLBACKS.get(field_name, []))
@@ -96,20 +119,167 @@ def resolve_field_header(field_name: str, mapping: dict[str, str], columns: list
     return None
 
 
-def validate_required_mappings(mapping: dict[str, str], columns: list[str]) -> list[str]:
+def validate_required_mappings(mapping: dict[str, Any], columns: list[str]) -> list[str]:
     missing: list[str] = []
     for field_name in REQUIRED_WHOLESALE_FIELDS:
-        if not resolve_field_header(field_name, mapping, columns):
+        rule = mapping.get(field_name)
+        has_default = isinstance(rule, dict) and not is_blank(rule.get("default"))
+        if not has_default and not resolve_field_header(field_name, mapping, columns):
             missing.append(field_name)
     return missing
 
 
+def sanitize_column_mapping(
+    mapping: Any,
+    columns: list[str],
+) -> tuple[dict[str, str | dict[str, Any]], list[str]]:
+    """Keep only deterministic, bounded mapping rules that the parser understands."""
+    sanitized: dict[str, str | dict[str, Any]] = {}
+    warnings: list[str] = []
+    if not isinstance(mapping, dict):
+        return {}, ["column_mapping must be an object."]
+
+    for field_name, raw_rule in mapping.items():
+        if field_name not in MAPPABLE_WHOLESALE_FIELDS:
+            warnings.append(f"Ignored unknown target field: {field_name}")
+            continue
+        if isinstance(raw_rule, str):
+            if raw_rule in columns:
+                sanitized[field_name] = raw_rule
+            else:
+                warnings.append(f"Ignored missing source header for {field_name}: {raw_rule}")
+            continue
+        if not isinstance(raw_rule, dict):
+            warnings.append(f"Ignored invalid rule for {field_name}.")
+            continue
+
+        rule: dict[str, Any] = {}
+        source = raw_rule.get("source")
+        if isinstance(source, str) and source in columns:
+            rule["source"] = source
+        elif source:
+            warnings.append(f"Ignored missing source header for {field_name}: {source}")
+
+        default = raw_rule.get("default")
+        if default is not None and isinstance(default, (str, int, float, bool)):
+            rule["default"] = str(default)[:2_000]
+
+        pattern = raw_rule.get("pattern")
+        compiled = None
+        invalid_pattern = False
+        if pattern is not None:
+            unsafe_pattern = isinstance(pattern, str) and (
+                re.search(r"\\[1-9]", pattern)
+                or "(?<=" in pattern
+                or "(?<!" in pattern
+                or re.search(r"\([^)]*[+*][^)]*\)[+*{]", pattern)
+            )
+            if not isinstance(pattern, str) or len(pattern) > MAX_REGEX_LENGTH or unsafe_pattern:
+                warnings.append(f"Ignored invalid or oversized regex for {field_name}.")
+                invalid_pattern = True
+            else:
+                try:
+                    compiled = re.compile(pattern)
+                except re.error:
+                    warnings.append(f"Ignored invalid regex for {field_name}.")
+                    invalid_pattern = True
+                else:
+                    rule["pattern"] = pattern
+
+        if invalid_pattern:
+            continue
+
+        regex_group = raw_rule.get("regex_group")
+        if compiled is not None and regex_group is not None:
+            valid_group = (
+                isinstance(regex_group, int)
+                and not isinstance(regex_group, bool)
+                and 0 <= regex_group <= compiled.groups
+            ) or (
+                isinstance(regex_group, str) and regex_group in compiled.groupindex
+            )
+            if valid_group:
+                rule["regex_group"] = regex_group
+            else:
+                warnings.append(f"Ignored invalid regex_group for {field_name}.")
+                continue
+
+        if compiled is not None and isinstance(raw_rule.get("regex_all"), bool):
+            rule["regex_all"] = raw_rule["regex_all"]
+
+        join_with = raw_rule.get("join_with")
+        if isinstance(join_with, str):
+            rule["join_with"] = join_with[:20]
+
+        value_map = raw_rule.get("value_map")
+        if isinstance(value_map, dict) and len(value_map) <= 100:
+            rule["value_map"] = {
+                str(key)[:500]: str(value)[:2_000]
+                for key, value in value_map.items()
+                if isinstance(value, (str, int, float, bool))
+            }
+        elif value_map is not None:
+            warnings.append(f"Ignored invalid value_map for {field_name}.")
+
+        if "source" in rule or "default" in rule:
+            sanitized[field_name] = rule
+        else:
+            warnings.append(f"Ignored rule without a valid source or default for {field_name}.")
+
+    return sanitized, warnings
+
+
+def apply_mapping_rule(value: Any, rule: dict[str, Any]) -> Any:
+    if is_blank(value):
+        value = rule.get("default")
+    if is_blank(value):
+        return None
+
+    text = clean_text(value) or ""
+    pattern = rule.get("pattern")
+    if pattern:
+        text = text[:MAX_REGEX_INPUT_LENGTH]
+        compiled = re.compile(pattern)
+        group = rule.get("regex_group", 1 if compiled.groups else 0)
+        if rule.get("regex_all"):
+            matches = []
+            for match in compiled.finditer(text):
+                try:
+                    matched = match.group(group)
+                except (IndexError, KeyError):
+                    matched = None
+                if matched is not None:
+                    matches.append(str(matched).strip())
+            text = rule.get("join_with", ",").join(item for item in matches if item)
+        else:
+            match = compiled.search(text)
+            if match is None:
+                text = ""
+            else:
+                try:
+                    text = match.group(group) or ""
+                except (IndexError, KeyError):
+                    text = ""
+
+    value_map = rule.get("value_map")
+    if isinstance(value_map, dict):
+        text = value_map.get(text, text)
+    return None if is_blank(text) else text
+
+
 def get_mapped_value(
     row: pd.Series,
-    mapping: dict[str, str],
+    mapping: dict[str, Any],
     field_name: str,
     fallbacks: list[str] | None = None,
 ) -> Any:
+    rule = mapping.get(field_name)
+    if rule is None:
+        for legacy_field in LEGACY_FIELD_ALIASES.get(field_name, []):
+            if legacy_field in mapping:
+                rule = mapping[legacy_field]
+                break
+
     header = resolve_field_header(
         field_name,
         mapping,
@@ -121,10 +291,10 @@ def get_mapped_value(
                 header = fallback
                 break
 
-    if header and header in row.index:
-        value = row[header]
-        if is_blank(value):
-            return None
+    value = row[header] if header and header in row.index else None
+    if isinstance(rule, dict):
+        return apply_mapping_rule(value, rule)
+    if not is_blank(value):
         return value
 
     return None
@@ -149,6 +319,19 @@ def parse_int_price(value: Any) -> int | None:
     if parsed > 2_147_483_647:
         return None
     return parsed
+
+
+def parse_signed_int(value: Any) -> int | None:
+    text = clean_text(value)
+    if not text:
+        return None
+    match = re.search(r"[+-]?\s*[\d,]+", text)
+    if not match:
+        return None
+    try:
+        return int(match.group().replace(" ", "").replace(",", ""))
+    except ValueError:
+        return None
 
 
 def split_csv_text(value: Any) -> list[str]:
@@ -185,19 +368,32 @@ def split_option_price_text(value: Any) -> list[str]:
     return tokens
 
 
-def parse_option_variants(option_values_raw: Any, price_wholesale_raw: Any) -> dict[str, Any]:
+def parse_option_variants(
+    option_values_raw: Any,
+    price_wholesale_raw: Any,
+    option_price_deltas_raw: Any = None,
+) -> dict[str, Any]:
     option_names = split_csv_text(option_values_raw)
-    price_tokens = split_option_price_text(price_wholesale_raw) if option_names else []
-    simple_price_tokens = split_csv_text(price_wholesale_raw) if option_names else []
-    if (
-        option_names
-        and len(price_tokens) != len(option_names)
-        and len(simple_price_tokens) == len(option_names)
-    ):
-        price_tokens = simple_price_tokens
-
-    parsed_prices = [parse_int_price(token) for token in price_tokens]
-    representative_price = parsed_prices[0] if parsed_prices else parse_int_price(price_wholesale_raw)
+    representative_price = parse_int_price(price_wholesale_raw)
+    delta_tokens = split_csv_text(option_price_deltas_raw) if option_names else []
+    if delta_tokens:
+        parsed_deltas = [parse_signed_int(token) for token in delta_tokens]
+        parsed_prices = [
+            representative_price + delta if representative_price is not None and delta is not None else None
+            for delta in parsed_deltas
+        ]
+        price_tokens = delta_tokens
+    else:
+        price_tokens = split_option_price_text(price_wholesale_raw) if option_names else []
+        simple_price_tokens = split_csv_text(price_wholesale_raw) if option_names else []
+        if len(price_tokens) != len(option_names) and len(simple_price_tokens) == len(option_names):
+            price_tokens = simple_price_tokens
+        parsed_prices = [parse_int_price(token) for token in price_tokens]
+        if len(parsed_prices) == 1 and len(option_names) > 1 and parsed_prices[0] is not None:
+            parsed_prices *= len(option_names)
+            price_tokens *= len(option_names)
+        if parsed_prices:
+            representative_price = parsed_prices[0]
     warnings: list[dict[str, Any]] = []
 
     if not option_names:
@@ -268,17 +464,23 @@ def build_standard_options(
     price_wholesale_raw: Any,
     option_image_urls_raw: Any,
     base_supply_price: int | None,
+    option_variants: list[dict[str, Any]] | None = None,
+    option_skus_raw: Any = None,
+    option_price_deltas_raw: Any = None,
 ) -> list[dict[str, Any]]:
     option_names = split_csv_text(option_values_raw)
     if not option_names:
         return []
 
-    option_price_tokens = split_option_price_text(price_wholesale_raw)
-    simple_price_tokens = split_csv_text(price_wholesale_raw)
-    if len(option_price_tokens) != len(option_names) and len(simple_price_tokens) == len(option_names):
-        option_price_tokens = simple_price_tokens
-    option_price_values = [parse_int_price(token) for token in option_price_tokens]
+    option_price_values = [item.get("price_wholesale") for item in (option_variants or [])]
+    if not option_price_values:
+        option_price_tokens = split_option_price_text(price_wholesale_raw)
+        simple_price_tokens = split_csv_text(price_wholesale_raw)
+        if len(option_price_tokens) != len(option_names) and len(simple_price_tokens) == len(option_names):
+            option_price_tokens = simple_price_tokens
+        option_price_values = [parse_int_price(token) for token in option_price_tokens]
     option_image_urls = split_csv_text(option_image_urls_raw)
+    option_skus = split_csv_text(option_skus_raw)
     product_code_text = clean_text(product_code) or ""
     status_text = clean_text(wholesale_status) or ""
     option_usable = status_text not in {"품절", "판매중지", "중지"}
@@ -296,7 +498,7 @@ def build_standard_options(
         standard_options.append(
             {
                 "supplier_product_code": product_code_text,
-                "option_sku": f"{product_code_text}-{index + 1}",
+                "option_sku": option_skus[index] if index < len(option_skus) else f"{product_code_text}-{index + 1}",
                 "option_type": "combination",
                 "option_group_1": option["option_group_1"],
                 "option_value_1": option["option_value_1"],
@@ -319,6 +521,16 @@ def build_standard_options(
                     "option_values_raw": clean_text(option_values_raw),
                     "price_wholesale_raw": clean_text(price_wholesale_raw),
                     "option_image_urls_raw": clean_text(option_image_urls_raw),
+                    **(
+                        {"option_price_deltas_raw": clean_text(option_price_deltas_raw)}
+                        if not is_blank(option_price_deltas_raw)
+                        else {}
+                    ),
+                    **(
+                        {"option_skus_raw": clean_text(option_skus_raw)}
+                        if not is_blank(option_skus_raw)
+                        else {}
+                    ),
                 },
             }
         )
@@ -379,13 +591,15 @@ def merge_product_warnings(existing_warnings: Any, processing_warnings: Any) -> 
     return merged
 
 
-def parse_wholesale_row(row: pd.Series, mapping: dict[str, str]) -> dict[str, Any]:
+def parse_wholesale_row(row: pd.Series, mapping: dict[str, Any]) -> dict[str, Any]:
     mapped_values = {
         "wholesale_status": get_mapped_value(row, mapping, "wholesale_status"),
         "wholesale_product_id": get_mapped_value(row, mapping, "wholesale_product_id"),
         "product_code": get_mapped_value(row, mapping, "product_code"),
         "original_name": get_mapped_value(row, mapping, "original_name"),
         "option_values_raw": get_mapped_value(row, mapping, "option_values_raw"),
+        "option_price_deltas_raw": get_mapped_value(row, mapping, "option_price_deltas_raw"),
+        "option_skus_raw": get_mapped_value(row, mapping, "option_skus_raw"),
         "option_image_urls_raw": get_mapped_value(row, mapping, "option_image_urls_raw"),
         "price_wholesale_raw": get_mapped_value(row, mapping, "price_wholesale_raw"),
         "price_retail": get_mapped_value(row, mapping, "price_retail"),
@@ -402,6 +616,7 @@ def parse_wholesale_row(row: pd.Series, mapping: dict[str, str]) -> dict[str, An
     option_result = parse_option_variants(
         mapped_values["option_values_raw"],
         mapped_values["price_wholesale_raw"],
+        mapped_values["option_price_deltas_raw"],
     )
     warnings = list(option_result["warnings"])
     standard_options = (
@@ -414,6 +629,9 @@ def parse_wholesale_row(row: pd.Series, mapping: dict[str, str]) -> dict[str, An
             price_wholesale_raw=mapped_values["price_wholesale_raw"],
             option_image_urls_raw=mapped_values["option_image_urls_raw"],
             base_supply_price=option_result["price_wholesale"],
+            option_variants=option_result["option_variants"],
+            option_skus_raw=mapped_values["option_skus_raw"],
+            option_price_deltas_raw=mapped_values["option_price_deltas_raw"],
         )
     )
 
@@ -449,3 +667,39 @@ def parse_wholesale_row(row: pd.Series, mapping: dict[str, str]) -> dict[str, An
         "product_data": product_data,
         "warnings": warnings,
     }
+
+
+STANDARD_PRODUCT_EXAMPLE = {
+    "wholesale_status": "판매중",
+    "wholesale_product_id": "1000000001",
+    "product_code": "SUPPLIER-001",
+    "original_name": "예시 상품명",
+    "option_values_raw": "검정,흰색",
+    "price_wholesale_raw": "10000",
+    "price_wholesale": 10000,
+    "option_variants": [
+        {"name": "검정", "price_wholesale": 10000, "position": 1},
+        {"name": "흰색", "price_wholesale": 11000, "position": 2},
+    ],
+    "price_retail": None,
+    "price_min_selling": None,
+    "origin": "국내",
+    "images_list": ["https://example.com/product.jpg"],
+    "image_detail": "https://example.com/detail.jpg",
+    "wholesale_registered_at": None,
+}
+
+
+def build_mapping_preview(
+    dataframe: pd.DataFrame,
+    mapping: dict[str, Any],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    preview: list[dict[str, Any]] = []
+    warnings: list[dict[str, Any]] = []
+    for row_number, (_, row) in enumerate(dataframe.head(5).iterrows(), start=1):
+        parsed = parse_wholesale_row(row, mapping)
+        product_data = dict(parsed["product_data"])
+        product_data.pop("raw_metadata", None)
+        preview.append(product_data)
+        warnings.extend({"row": row_number, **warning} for warning in parsed["warnings"])
+    return preview, warnings

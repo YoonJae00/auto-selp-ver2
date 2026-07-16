@@ -10,8 +10,9 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, Asyn
 from database import Base, engine
 
 from config import settings
-from schemas import ProcessRequest
+from schemas import ProcessRequest, WholesaleMappingSuggestionRequest, WholesaleMappingPreviewRequest
 import main as processor_main
+from utils.wholesale_upload import parse_wholesale_row
 
 # Import models
 from models import WholesaleSite, Product, ProductPlatformMapping, ProductImport
@@ -23,6 +24,7 @@ def anyio_backend():
 @pytest.fixture(scope="module")
 async def test_db():
     # Setup test database tables
+    await engine.dispose()
     async with engine.begin() as conn:
         # Create all tables (in case they do not exist or are missing columns)
         await conn.run_sync(Base.metadata.create_all)
@@ -44,6 +46,9 @@ async def test_db():
         await conn.execute(text("ALTER TABLE products ADD COLUMN IF NOT EXISTS image_detail TEXT"))
         await conn.execute(text("ALTER TABLE products ADD COLUMN IF NOT EXISTS wholesale_status VARCHAR"))
         await conn.execute(text("ALTER TABLE products ADD COLUMN IF NOT EXISTS wholesale_registered_at VARCHAR"))
+        await conn.execute(text("ALTER TABLE products ADD COLUMN IF NOT EXISTS standard_options JSON"))
+        await conn.execute(text("ALTER TABLE products ADD COLUMN IF NOT EXISTS change_type VARCHAR"))
+        await conn.execute(text("ALTER TABLE products ADD COLUMN IF NOT EXISTS changed_fields JSON DEFAULT '[]'"))
         
         await conn.execute(text("ALTER TABLE product_platform_mappings ADD COLUMN IF NOT EXISTS price_changed BOOLEAN DEFAULT FALSE"))
         await conn.execute(text("ALTER TABLE product_platform_mappings ADD COLUMN IF NOT EXISTS stock_changed BOOLEAN DEFAULT FALSE"))
@@ -57,6 +62,7 @@ async def test_db():
     yield async_session
     
     # We can clean up here if needed, but since we use unique IDs, it is generally safe.
+    await engine.dispose()
 
 @pytest.mark.anyio
 async def test_wholesale_site_crud(test_db):
@@ -300,3 +306,258 @@ async def test_process_db_rejects_wholesale_site_owned_by_another_user(test_db, 
             select(func.count()).select_from(ProductImport).where(ProductImport.user_id == current_user_id)
         )
         assert import_count == 0
+
+
+@pytest.mark.anyio
+async def test_process_db_rejects_duplicate_supplier_codes_before_mutation(test_db, tmp_path, monkeypatch):
+    user_id = uuid.uuid4()
+    site_id = uuid.uuid4()
+    product_id = uuid.uuid4()
+    mapping = {
+        "wholesale_status": "상태",
+        "wholesale_product_id": "제품번호",
+        "product_code": "상품코드",
+        "original_name": "상품명",
+        "price_wholesale_raw": "가격",
+        "origin": "원산지",
+        "image_list_1": "목록이미지1",
+        "image_detail": "상세이미지",
+    }
+    rows = [
+        {"상태": "판매중", "제품번호": "W-1", "상품코드": "DUP-1", "상품명": "중복 1", "가격": "2000", "원산지": "국내", "목록이미지1": "u1", "상세이미지": "d1"},
+        {"상태": "판매중", "제품번호": "W-2", "상품코드": "DUP-1", "상품명": "중복 2", "가격": "3000", "원산지": "국내", "목록이미지1": "u2", "상세이미지": "d2"},
+    ]
+
+    async with test_db() as session:
+        session.add(WholesaleSite(id=site_id, user_id=user_id, name="중복 공급처", column_mapping=mapping))
+        session.add(Product(
+            id=product_id,
+            user_id=user_id,
+            wholesale_site_id=site_id,
+            product_code="DUP-1",
+            original_name="기존 상품",
+            price_wholesale=1000,
+            status="completed",
+            changed_fields=[],
+        ))
+        await session.commit()
+
+    file_id = str(uuid.uuid4())
+    (tmp_path / f"{file_id}_duplicates.xlsx").write_bytes(b"placeholder")
+    monkeypatch.setattr(processor_main, "UPLOAD_DIR", str(tmp_path))
+    monkeypatch.setattr(processor_main.pd, "read_excel", lambda _path: pd.DataFrame(rows))
+
+    async with test_db() as session:
+        with pytest.raises(HTTPException) as exc_info:
+            await processor_main.start_db_processing(
+                ProcessRequest(
+                    file_id=file_id,
+                    column_mapping={},
+                    wholesale_site_id=site_id,
+                    start_processing=False,
+                ),
+                current_user={"id": user_id},
+                db=session,
+            )
+
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.detail == "Duplicate product_code values in excel: DUP-1"
+        assert await session.scalar(
+            select(func.count()).select_from(ProductImport).where(ProductImport.user_id == user_id)
+        ) == 0
+        assert await session.scalar(
+            select(func.count()).select_from(Product).where(Product.user_id == user_id)
+        ) == 1
+        existing = await session.get(Product, product_id)
+        assert existing.original_name == "기존 상품"
+        assert existing.price_wholesale == 1000
+        assert existing.status == "completed"
+        assert existing.import_id is None
+
+
+@pytest.mark.anyio
+async def test_mapping_suggestion_repair_is_owned_sanitized_and_previewed(test_db, tmp_path, monkeypatch):
+    user_id = uuid.uuid4()
+    site_id = uuid.uuid4()
+    file_id = str(uuid.uuid4())
+    upload_file = tmp_path / f"{file_id}_products.xlsx"
+    dataframe = pd.DataFrame(
+        [{
+            "상품코드": "1001",
+            "자체상품코드": "JDM-1",
+            "상품명(기본)": "족집게",
+            "판매가": 370,
+            "이미지": "https://img.example/1.jpg",
+            "PC쇼핑몰상세설명": "detail",
+        }]
+    )
+    dataframe.to_excel(upload_file, index=False)
+    monkeypatch.setattr(processor_main, "UPLOAD_DIR", str(tmp_path))
+
+    async with test_db() as session:
+        session.add(WholesaleSite(id=site_id, user_id=user_id, name="정도매", column_mapping={"origin": {"default": "국내"}}))
+        await session.commit()
+
+    calls = []
+
+    async def fake_suggestion(_self, headers, rows, current_mapping, instruction):
+        calls.append((headers, rows, current_mapping, instruction))
+        return {
+            "column_mapping": {
+                "wholesale_status": {"default": "판매중"},
+                "wholesale_product_id": "상품코드",
+                "product_code": "자체상품코드",
+                "original_name": "상품명(기본)",
+                "price_wholesale_raw": "판매가",
+                "image_list_1": "이미지",
+                "image_detail": "PC쇼핑몰상세설명",
+                "made_up_field": "상품명(기본)",
+                "price_retail": {"source": "없는제목"},
+                "option_values_raw": {"source": "상품명(기본)", "pattern": "("},
+            },
+            "notes": ["사용자 지시에 따라 원산지를 유지했습니다."],
+        }
+
+    monkeypatch.setattr(processor_main.OpenAIClient, "suggest_wholesale_mapping", fake_suggestion)
+    request = WholesaleMappingSuggestionRequest(
+        file_id=file_id,
+        column_mapping={"origin": {"default": "대한민국"}},
+        instruction="원산지는 대한민국으로 고쳐줘",
+    )
+
+    async with test_db() as session:
+        response = await processor_main.suggest_wholesale_site_mapping(
+            site_id,
+            request,
+            current_user={"id": user_id},
+            db=session,
+        )
+
+    assert len(calls) == 1
+    assert calls[0][2]["origin"]["default"] == "대한민국"
+    assert calls[0][3] == "원산지는 대한민국으로 고쳐줘"
+    assert response["column_mapping"]["origin"] == {"default": "대한민국"}
+    assert "made_up_field" not in response["column_mapping"]
+    assert "price_retail" not in response["column_mapping"]
+    assert response["preview"][0]["product_code"] == "JDM-1"
+    assert response["standard_example"]["product_code"] == "SUPPLIER-001"
+    assert response["notes"]
+    assert any("unknown target" in item["message"] for item in response["warnings"])
+
+    async with test_db() as session:
+        with pytest.raises(HTTPException) as exc_info:
+            await processor_main.preview_wholesale_site_mapping(
+                site_id,
+                WholesaleMappingPreviewRequest(file_id=file_id, column_mapping={}),
+                current_user={"id": uuid.uuid4()},
+                db=session,
+            )
+    assert exc_info.value.status_code == 404
+
+
+@pytest.mark.anyio
+async def test_process_db_only_imports_new_and_supplier_scoped_changes(test_db, tmp_path, monkeypatch):
+    user_id = uuid.uuid4()
+    site_id = uuid.uuid4()
+    other_site_id = uuid.uuid4()
+    old_import_id = uuid.uuid4()
+    old_updated_at = datetime(2020, 1, 1)
+    mapping = {
+        "wholesale_status": "상태",
+        "wholesale_product_id": "제품번호",
+        "product_code": "상품코드",
+        "original_name": "상품명",
+        "price_wholesale_raw": "가격",
+        "origin": "원산지",
+        "image_list_1": "목록이미지1",
+        "image_detail": "상세이미지",
+    }
+    rows = [
+        {"상태": "판매중", "제품번호": "W-1", "상품코드": "UNCHANGED", "상품명": "그대로", "가격": "1000", "원산지": "국내", "목록이미지1": "u1", "상세이미지": "d1"},
+        {"상태": "판매중", "제품번호": "W-2", "상품코드": "UPDATED", "상품명": "가격 변경", "가격": "2500", "원산지": "국내", "목록이미지1": "u2", "상세이미지": "d2"},
+        {"상태": "판매중", "제품번호": "W-3", "상품코드": "NEW", "상품명": "신상품", "가격": "3000", "원산지": "국내", "목록이미지1": "u3", "상세이미지": "d3"},
+    ]
+
+    def product_from_row(site, row, *, price=None):
+        data = parse_wholesale_row(pd.Series(row), mapping)["product_data"]
+        if price is not None:
+            data["price_wholesale"] = price
+            data["price_wholesale_raw"] = str(price)
+        return Product(
+            user_id=user_id,
+            import_id=old_import_id,
+            wholesale_site_id=site,
+            product_code=data["product_code"],
+            options=data["option_values_raw"],
+            status="completed",
+            change_type=None,
+            changed_fields=[],
+            warnings=None,
+            raw_metadata={},
+            updated_at=old_updated_at,
+            **{field: data[field] for field in processor_main.CANONICAL_IMPORT_FIELDS},
+        )
+
+    async with test_db() as session:
+        session.add_all([
+            WholesaleSite(id=site_id, user_id=user_id, name="공급처 A", column_mapping=mapping),
+            WholesaleSite(id=other_site_id, user_id=user_id, name="공급처 B", column_mapping=mapping),
+            ProductImport(id=old_import_id, user_id=user_id, filename="old.xlsx", status="completed"),
+        ])
+        unchanged = product_from_row(site_id, rows[0])
+        updated = product_from_row(site_id, rows[1], price=2000)
+        other_supplier = product_from_row(other_site_id, rows[1])
+        session.add_all([unchanged, updated, other_supplier])
+        await session.flush()
+        session.add(ProductPlatformMapping(product_id=updated.id, platform_name="naver", sync_status="synced"))
+        await session.commit()
+        unchanged_id, updated_id, other_id = unchanged.id, updated.id, other_supplier.id
+
+    file_id = str(uuid.uuid4())
+    upload_file = tmp_path / f"{file_id}_products.xlsx"
+    upload_file.write_bytes(b"placeholder")
+    monkeypatch.setattr(processor_main, "UPLOAD_DIR", str(tmp_path))
+    monkeypatch.setattr(processor_main.pd, "read_excel", lambda _path: pd.DataFrame(rows))
+    request = ProcessRequest(
+        file_id=file_id,
+        column_mapping={},
+        wholesale_site_id=site_id,
+        start_processing=False,
+    )
+
+    async with test_db() as session:
+        response = await processor_main.start_db_processing(
+            request,
+            current_user={"id": user_id},
+            db=session,
+        )
+
+    assert response["total"] == 2
+    assert response["new_count"] == 1
+    assert response["updated_count"] == 1
+    assert response["unchanged_count"] == 1
+
+    async with test_db() as session:
+        unchanged = await session.get(Product, unchanged_id)
+        updated = await session.get(Product, updated_id)
+        other_supplier = await session.get(Product, other_id)
+        new_product = (await session.execute(select(Product).where(Product.wholesale_site_id == site_id, Product.product_code == "NEW"))).scalar_one()
+        import_run = await session.get(ProductImport, response["import_id"])
+        platform_mapping = (await session.execute(select(ProductPlatformMapping).where(ProductPlatformMapping.product_id == updated_id))).scalar_one()
+
+        assert unchanged.import_id == old_import_id
+        assert unchanged.status == "completed"
+        assert unchanged.change_type is None
+        assert unchanged.updated_at == old_updated_at
+        assert updated.import_id == response["import_id"]
+        assert updated.status == "pending"
+        assert updated.change_type == "updated"
+        assert updated.changed_fields == ["price_wholesale", "price_wholesale_raw"]
+        assert platform_mapping.sync_status == "pending_update"
+        assert platform_mapping.price_changed is True
+        assert platform_mapping.last_changed_at is not None
+        assert other_supplier.import_id == old_import_id
+        assert other_supplier.price_wholesale == 2500
+        assert new_product.change_type == "new"
+        assert new_product.changed_fields == []
+        assert import_run.total_count == 2

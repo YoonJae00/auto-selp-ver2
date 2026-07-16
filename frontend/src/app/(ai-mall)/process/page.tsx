@@ -11,7 +11,7 @@ interface WholesaleSite {
   id: string;
   name: string;
   homepage_url: string | null;
-  column_mapping: Record<string, string> | null;
+  column_mapping: Record<string, unknown> | null;
 }
 
 interface ProductPlatformMapping {
@@ -42,6 +42,8 @@ interface Product {
   refined_name: string | null;
   keywords: string[] | null;
   status: 'pending' | 'processing' | 'completed' | 'failed';
+  change_type: 'new' | 'updated' | null;
+  changed_fields: string[] | null;
   platform_mappings?: ProductPlatformMapping[] | null;
 }
 
@@ -776,9 +778,21 @@ export default function ProcessPage() {
                         />
                       </td>
                       <td>
-                        <span className={`${styles.statusBadge} ${styles[`status_${displayStatus}`] || ''}`}>
-                          {processingStatusLabel[displayStatus]}
-                        </span>
+                        <div className={styles.statusCell}>
+                          <span className={`${styles.statusBadge} ${styles[`status_${displayStatus}`] || ''}`}>
+                            {processingStatusLabel[displayStatus]}
+                          </span>
+                          {product.change_type && (
+                            <span
+                              className={`${styles.sourceChangeBadge} ${product.change_type === 'new' ? styles.sourceChangeNew : styles.sourceChangeUpdated}`}
+                              title={product.change_type === 'updated' && product.changed_fields?.length
+                                ? `변경 항목: ${product.changed_fields.join(', ')}`
+                                : '새 도매처 상품'}
+                            >
+                              {product.change_type === 'new' ? '신상품' : '변동'}
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className={styles.imageCell}>
                         {imageUrl ? (

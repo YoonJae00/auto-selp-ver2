@@ -426,6 +426,16 @@
   color: var(--ink-muted-48);
 }
 
+.nameBadges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.nameBadges > span {
+  margin-left: 0;
+}
+
 .nameMeta {
   width: fit-content;
   padding: 2px 6px;
@@ -749,6 +759,26 @@
   border-radius: 6px;
   margin-left: 8px;
   border: 1px solid rgba(255, 59, 48, 0.2);
+}
+
+.sourceChangeBadge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 6px;
+  border-radius: 6px;
+  margin-left: 8px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.sourceChangeNew {
+  background: #eef2ff;
+  color: #4f46e5;
+}
+
+.sourceChangeUpdated {
+  background: #fff7ed;
+  color: #c2410c;
 }
 
 .syncButton {
