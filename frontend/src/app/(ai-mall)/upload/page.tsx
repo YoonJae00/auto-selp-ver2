@@ -335,6 +335,19 @@ export default function UploadPage() {
     fetchSites();
   }, [fetchSites]);
 
+  // Best-effort standard-format preview; 매핑 검증 still fetches it explicitly.
+  const fetchMappingPreview = useCallback(async (siteId: string, fileId: string, mapping: Record<string, MappingValue>) => {
+    try {
+      const result = await api.post<MappingPreviewResponse>(
+        `/api/processor/wholesale-sites/${siteId}/mapping-preview`,
+        { file_id: fileId, column_mapping: mapping },
+      );
+      setMappingResult(result);
+    } catch {
+      // preview only — upload/editing flow keeps working without it
+    }
+  }, []);
+
   useEffect(() => {
     const siteId = activeSite?.id || null;
     if (draftSiteId === siteId) return;
@@ -349,7 +362,8 @@ export default function UploadPage() {
     setAiCorrectionResult(null);
     setIsMappingValidated(false);
     setDraftSiteId(siteId);
-  }, [activeSite, draftSiteId]);
+    if (draft && siteId) void fetchMappingPreview(siteId, draft.uploadData.file_id, draft.columnMapping);
+  }, [activeSite, draftSiteId, fetchMappingPreview]);
 
   useEffect(() => {
     if (!activeSite || draftSiteId !== activeSite.id || !uploadData) return;
@@ -449,6 +463,7 @@ export default function UploadPage() {
       const savedMapping = activeSite.column_mapping || {};
       if (Object.values(savedMapping).some(isMappingConfigured)) {
         setColumnMapping(savedMapping);
+        await fetchMappingPreview(activeSite.id, data.file_id, savedMapping);
         setSuccess('저장된 도매처 매핑 규칙을 적용했습니다. 상품 저장 전에 매핑을 검증해 주세요.');
       } else {
         setIsSuggesting(true);
