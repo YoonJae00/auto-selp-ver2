@@ -142,14 +142,27 @@ const renderAttributes = (product: Product, realTimeMappedAttributes?: any) => {
     return <span className={styles.emptyAttributes}>-</span>;
   }
 
+  const renderTags = (attributes: typeof attrsList, offset = 0) => attributes.map((attr, idx) => (
+    <span key={`${product.id}-attr-${offset + idx}`} className={styles.attributeTag}>
+      <span className={styles.attributeKey}>{attr.key}</span>: {attr.value}
+    </span>
+  ));
+  const title = attrsList.map((attr) => `${attr.key}: ${attr.value}`).join(', ');
+
+  if (attrsList.length <= 2) {
+    return <div className={styles.attributeCloud} title={title}>{renderTags(attrsList)}</div>;
+  }
+
   return (
-    <div className={styles.attributeCloud}>
-      {attrsList.map((attr, idx) => (
-        <span key={`${product.id}-attr-${idx}`} className={styles.attributeTag}>
-          <span className={styles.attributeKey}>{attr.key}</span>: {attr.value}
+    <details className={styles.attributeDetails}>
+      <summary className={styles.attributeSummary} title={title}>
+        <span className={styles.attributeCloud}>
+          {renderTags(attrsList.slice(0, 2))}
+          <span className={styles.attributeMore}>+{attrsList.length - 2}</span>
         </span>
-      ))}
-    </div>
+      </summary>
+      <div className={styles.attributeExpanded}>{renderTags(attrsList.slice(2), 2)}</div>
+    </details>
   );
 };
 
@@ -442,6 +455,7 @@ export default function ProcessPage() {
     <div className={styles.container}>
       <div className={styles.pageHeader}>
         <div>
+          <p className={styles.eyebrow}>Catalog Operations</p>
           <h1 className={styles.title}>상품 가공</h1>
           <p className={styles.subtitle}>도매처를 선택한 뒤 DB에 저장된 상품 중 필요한 것만 골라 가공합니다.</p>
         </div>
@@ -561,6 +575,7 @@ export default function ProcessPage() {
                       setActiveSearchQuery('');
                     }}
                     title="검색어 지우기"
+                    aria-label="검색어 지우기"
                   >
                     ✕
                   </button>
@@ -625,26 +640,51 @@ export default function ProcessPage() {
               </label>}
             </div>
 
-            <div className={styles.filterRight}>
-              <div className={styles.topPagination}>
+          </div>
+
+          {selectedIds.size > 0 && (
+            <div className={styles.selectionToolbar}>
+              <div className={styles.selectionSummary} aria-live="polite">
+                <span className={styles.selectionIcon} aria-hidden="true">✓</span>
+                <div className={styles.selectionCopy}>
+                  {workMode === 'ai' ? (
+                    <strong>선택한 {selectedIds.size}개 상품을 기본 AI 가공합니다</strong>
+                  ) : (
+                    <strong>선택 {selectedIds.size}개 중 AI 가공 완료 {completedSelectedIds.length}개가 대상입니다</strong>
+                  )}
+                  <span>{workMode === 'ai' ? '상품명, 키워드, 카테고리와 속성을 만듭니다' : '선택한 마켓에 맞는 상품명을 만듭니다'}</span>
+                </div>
+              </div>
+              <div className={styles.selectionActions}>
                 <button
                   type="button"
-                  onClick={() => setPage((value) => Math.max(1, value - 1))}
-                  disabled={page <= 1 || isLoadingProducts}
+                  className={styles.clearSelectionButton}
+                  onClick={() => setSelectedIds(new Set())}
                 >
-                  이전
+                  선택 취소
                 </button>
-                <span>{page} / {totalPages}</span>
-                <button
-                  type="button"
-                  onClick={() => setPage((value) => Math.min(totalPages, value + 1))}
-                  disabled={page >= totalPages || isLoadingProducts}
-                >
-                  다음
-                </button>
+                {workMode === 'ai' ? (
+                  <PillButton
+                    variant="primary"
+                    onClick={handleStartSelectedProcessing}
+                    disabled={isStarting || isGeneratingMarketplaceNames}
+                    type="button"
+                  >
+                    {isStarting ? '가공 시작 중...' : `선택 상품 가공 (${selectedIds.size})`}
+                  </PillButton>
+                ) : (
+                  <PillButton
+                    variant="primary"
+                    onClick={handleGenerateMarketplaceNames}
+                    disabled={!smartstoreSelected || completedSelectedIds.length === 0 || isGeneratingMarketplaceNames || isStarting}
+                    type="button"
+                  >
+                    {isGeneratingMarketplaceNames ? '상품명 만드는 중...' : `상품명 만들기 (${completedSelectedIds.length})`}
+                  </PillButton>
+                )}
               </div>
             </div>
-          </div>
+          )}
 
           <div className={styles.sheetFrame}>
             <table className={styles.productTable}>
@@ -659,6 +699,7 @@ export default function ProcessPage() {
                       aria-label="현재 페이지 전체 선택"
                     />
                   </th>
+                  <th>가공상태</th>
                   <th className={styles.imageCell}>원본 사진</th>
                   <th>상품명</th>
                   <th>옵션</th>
@@ -668,7 +709,6 @@ export default function ProcessPage() {
                   <th>도매처 코드</th>
                   <th>도매가</th>
                   <th>속성</th>
-                  <th>가공상태</th>
                 </tr>
               </thead>
               <tbody>
@@ -697,7 +737,13 @@ export default function ProcessPage() {
                           type="checkbox"
                           checked={selectedIds.has(product.id)}
                           onChange={(event) => toggleProduct(product.id, event.target.checked)}
+                          aria-label={`${product.original_name} 선택`}
                         />
+                      </td>
+                      <td>
+                        <span className={`${styles.statusBadge} ${styles[`status_${displayStatus}`] || ''}`}>
+                          {processingStatusLabel[displayStatus]}
+                        </span>
                       </td>
                       <td className={styles.imageCell}>
                         {imageUrl ? (
@@ -707,7 +753,7 @@ export default function ProcessPage() {
                         )}
                       </td>
                       <td className={styles.nameCell}>
-                        <strong>{product.original_name}</strong>
+                        <strong title={product.original_name}>{product.original_name}</strong>
                         <span>
                           {product.option_variants && product.option_variants.length > 0
                             ? `옵션 ${product.option_variants.length}개`
@@ -742,7 +788,7 @@ export default function ProcessPage() {
                         {hasAiResult ? (
                           <div className={styles.aiResultCell}>
                             <span className={styles.aiResultLabel}>AI 정제</span>
-                            <div className={styles.aiRefinedName}>{displayRefinedName || '-'}</div>
+                            <div className={styles.aiRefinedName} title={displayRefinedName || undefined}>{displayRefinedName || '-'}</div>
                           </div>
                         ) : (
                           <span className={styles.aiResultEmpty}>
@@ -750,21 +796,34 @@ export default function ProcessPage() {
                           </span>
                         )}
                       </td>
-                      <td className={styles.marketplaceNameCell}>
+                      <td className={styles.marketplaceNameCell} title={smartstoreProductName || undefined}>
                         {smartstoreProductName || (product.status === 'completed' ? '생성 전' : '-')}
                       </td>
                       <td>
                         {hasAiResult && displayKeywords && displayKeywords.length > 0 ? (
-                          <div className={styles.keywordCloud}>
-                            {displayKeywords.slice(0, 6).map((keyword) => (
-                              <span key={`${product.id}-${keyword}`} className={styles.keywordPill}>
-                                {keyword}
-                              </span>
-                            ))}
-                            {displayKeywords.length > 6 && (
-                              <span className={styles.keywordMore}>+{displayKeywords.length - 6}</span>
-                            )}
-                          </div>
+                          displayKeywords.length > 2 ? (
+                            <details className={styles.keywordDetails}>
+                              <summary className={styles.keywordSummary} title={displayKeywords.join(', ')}>
+                                <span className={styles.keywordCloud}>
+                                  {displayKeywords.slice(0, 2).map((keyword) => (
+                                    <span key={`${product.id}-${keyword}`} className={styles.keywordPill}>{keyword}</span>
+                                  ))}
+                                  <span className={styles.keywordMore}>+{displayKeywords.length - 2}</span>
+                                </span>
+                              </summary>
+                              <div className={styles.keywordExpanded}>
+                                {displayKeywords.slice(2).map((keyword) => (
+                                  <span key={`${product.id}-${keyword}`} className={styles.keywordPill}>{keyword}</span>
+                                ))}
+                              </div>
+                            </details>
+                          ) : (
+                            <div className={styles.keywordCloud} title={displayKeywords.join(', ')}>
+                              {displayKeywords.map((keyword) => (
+                                <span key={`${product.id}-${keyword}`} className={styles.keywordPill}>{keyword}</span>
+                              ))}
+                            </div>
+                          )
                         ) : (
                           <span className={styles.aiResultEmpty}>-</span>
                         )}
@@ -772,11 +831,6 @@ export default function ProcessPage() {
                       <td>{product.product_code || product.wholesale_product_id || '-'}</td>
                       <td className={styles.priceCell}>{formatPrice(product.price_wholesale)}</td>
                       <td>{renderAttributes(product, realTimeUpdate?.mapped_attributes)}</td>
-                      <td>
-                        <span className={`${styles.statusBadge} ${styles[`status_${displayStatus}`] || ''}`}>
-                          {processingStatusLabel[displayStatus]}
-                        </span>
-                      </td>
                     </tr>
                   );
                 })}
@@ -796,48 +850,6 @@ export default function ProcessPage() {
         </section>
       )}
 
-      {/* Floating Action Bar */}
-      {selectedIds.size > 0 && (
-        <div className={styles.floatingActionBar}>
-          <div className={styles.floatingContent}>
-            <span className={styles.floatingText}>
-              {workMode === 'ai' ? (
-                <>✨ 선택한 <strong>{selectedIds.size}개</strong>를 기본 AI 가공합니다.</>
-              ) : (
-                <>🏷️ 선택 {selectedIds.size}개 중 <strong>AI 가공 완료 {completedSelectedIds.length}개</strong>가 대상입니다.</>
-              )}
-            </span>
-            <div className={styles.floatingButtons}>
-              {workMode === 'ai' ? (
-                <PillButton
-                  variant="primary"
-                  onClick={handleStartSelectedProcessing}
-                  disabled={isStarting || isGeneratingMarketplaceNames}
-                  type="button"
-                >
-                  {isStarting ? '가공 시작 중...' : `선택 상품 가공 (${selectedIds.size})`}
-                </PillButton>
-              ) : (
-                <PillButton
-                  variant="primary"
-                  onClick={handleGenerateMarketplaceNames}
-                  disabled={!smartstoreSelected || completedSelectedIds.length === 0 || isGeneratingMarketplaceNames || isStarting}
-                  type="button"
-                >
-                  {isGeneratingMarketplaceNames ? '상품명 만드는 중...' : `상품명 만들기 (${completedSelectedIds.length})`}
-                </PillButton>
-              )}
-              <button
-                type="button"
-                className={styles.floatingCancelButton}
-                onClick={() => setSelectedIds(new Set())}
-              >
-                선택 취소
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
