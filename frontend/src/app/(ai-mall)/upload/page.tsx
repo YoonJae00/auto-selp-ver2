@@ -19,6 +19,11 @@ interface UploadResponse {
   preview: any[];
 }
 
+interface UploadDraft {
+  uploadData: UploadResponse;
+  columnMapping: Record<string, MappingValue>;
+}
+
 interface MappingRule {
   source?: string | null;
   default?: string | null;
@@ -224,6 +229,29 @@ const describeMappingValue = (value?: MappingValue) => {
 };
 
 const formatNotes = (notes?: string | string[] | null) => notes ? (Array.isArray(notes) ? notes : [notes]) : [];
+const draftStorageKey = (siteId: string) => `auto-selp:wholesale-upload-draft:${siteId}`;
+
+const readUploadDraft = (siteId: string): UploadDraft | null => {
+  try {
+    const parsed = JSON.parse(sessionStorage.getItem(draftStorageKey(siteId)) || 'null');
+    return parsed?.uploadData?.file_id
+      && Array.isArray(parsed.uploadData.columns)
+      && parsed.columnMapping
+      && typeof parsed.columnMapping === 'object'
+      ? parsed
+      : null;
+  } catch {
+    return null;
+  }
+};
+
+const removeUploadDraft = (siteId: string) => {
+  try {
+    sessionStorage.removeItem(draftStorageKey(siteId));
+  } catch {
+    // sessionStorage unavailable: in-memory editing still works
+  }
+};
 
 const displayPreviewValue = (value: any) => {
   if (value == null || value === '') return '';
@@ -266,6 +294,8 @@ export default function UploadPage() {
   const [mappingError, setMappingError] = useState<string | null>(null);
   const [initialMappingNotes, setInitialMappingNotes] = useState<string[]>([]);
   const [aiCorrectionResult, setAiCorrectionResult] = useState<AiCorrectionResult | null>(null);
+  const [draftSiteId, setDraftSiteId] = useState<string | null>(null);
+  const [draftMappingCounts, setDraftMappingCounts] = useState<Record<string, number>>({});
   const [isMappingValidated, setIsMappingValidated] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -289,6 +319,10 @@ export default function UploadPage() {
     try {
       const data = await api.get<WholesaleSite[]>('/api/processor/wholesale-sites');
       setWholesaleSites(data);
+      setDraftMappingCounts(Object.fromEntries(data.flatMap((site) => {
+        const draft = readUploadDraft(site.id);
+        return draft ? [[site.id, Object.values(draft.columnMapping).filter(isMappingConfigured).length]] : [];
+      })));
       if (data.length > 0 && !activeSite) {
         setActiveSite(data[0]);
       }
@@ -301,24 +335,33 @@ export default function UploadPage() {
     fetchSites();
   }, [fetchSites]);
 
-  // Update activeSite's column mapping when it changes
   useEffect(() => {
-    if (activeSite) {
-      setColumnMapping(activeSite.column_mapping || {});
-    } else {
-      setColumnMapping({});
-    }
-  }, [activeSite]);
+    const siteId = activeSite?.id || null;
+    if (draftSiteId === siteId) return;
 
-  useEffect(() => {
-    setUploadData(null);
+    const draft = siteId ? readUploadDraft(siteId) : null;
+    setUploadData(draft?.uploadData || null);
+    setColumnMapping(draft?.columnMapping || activeSite?.column_mapping || {});
     setMappingResult(null);
     setMappingInstruction('');
     setMappingError(null);
     setInitialMappingNotes([]);
     setAiCorrectionResult(null);
     setIsMappingValidated(false);
-  }, [activeSite?.id]);
+    setDraftSiteId(siteId);
+  }, [activeSite, draftSiteId]);
+
+  useEffect(() => {
+    if (!activeSite || draftSiteId !== activeSite.id || !uploadData) return;
+
+    try {
+      sessionStorage.setItem(draftStorageKey(activeSite.id), JSON.stringify({ uploadData, columnMapping }));
+    } catch {
+      // sessionStorage unavailable: in-memory editing still works
+    }
+    const count = Object.values(columnMapping).filter(isMappingConfigured).length;
+    setDraftMappingCounts(current => current[activeSite.id] === count ? current : { ...current, [activeSite.id]: count });
+  }, [activeSite, draftSiteId, uploadData, columnMapping]);
 
   // Create site
   const handleCreateSite = async (e: React.FormEvent) => {
@@ -350,6 +393,12 @@ export default function UploadPage() {
     setError(null);
     try {
       await api.delete(`/api/processor/wholesale-sites/${id}`);
+      removeUploadDraft(id);
+      setDraftMappingCounts(current => {
+        const next = { ...current };
+        delete next[id];
+        return next;
+      });
       const filtered = wholesaleSites.filter(s => s.id !== id);
       setWholesaleSites(filtered);
       if (activeSite?.id === id) {
@@ -395,6 +444,7 @@ export default function UploadPage() {
     try {
       const data = await api.post<UploadResponse>('/api/processor/upload', formData);
       setUploadData(data);
+      setDraftSiteId(activeSite.id);
 
       const savedMapping = activeSite.column_mapping || {};
       if (Object.values(savedMapping).some(isMappingConfigured)) {
@@ -556,6 +606,12 @@ export default function UploadPage() {
       });
       
       setSuccess(`신규 ${res.new_count}개, 변동 ${res.updated_count}개, 변경 없음 ${res.unchanged_count}개입니다. 처리할 ${res.total}개 상품만 상품 가공 및 상품 관리에 반영했습니다.`);
+      removeUploadDraft(activeSite.id);
+      setDraftMappingCounts(current => {
+        const next = { ...current };
+        delete next[activeSite.id];
+        return next;
+      });
       // Clear file upload state
       setUploadData(null);
     } catch (err: any) {
@@ -586,6 +642,8 @@ export default function UploadPage() {
         {wholesaleSites.map((site) => {
           const isSelected = activeSite?.id === site.id;
           const mappedCount = Object.keys(site.column_mapping || {}).length;
+          const draftMappedCount = draftMappingCounts[site.id];
+          const hasDraft = draftMappedCount !== undefined;
           
           return (
             <div 
@@ -598,8 +656,12 @@ export default function UploadPage() {
                 <span className={styles.siteUrl}>
                   {site.homepage_url ? site.homepage_url : '웹 주소 정보 없음'}
                 </span>
-                <span className={`${styles.mappingBadge} ${mappedCount === 0 ? styles.mappingBadgeEmpty : ''}`}>
-                  {mappedCount > 0 ? `🔗 ${mappedCount}개 항목 매핑됨` : '⚠️ 템플릿 미설정'}
+                <span className={`${styles.mappingBadge} ${mappedCount === 0 && !hasDraft ? styles.mappingBadgeEmpty : ''}`}>
+                  {mappedCount > 0
+                    ? `🔗 ${mappedCount}개 항목 매핑됨`
+                    : hasDraft
+                      ? `✏️ ${draftMappedCount}개 작성 중`
+                      : '⚠️ 템플릿 미설정'}
                 </span>
               </div>
               <div className={styles.cardActions}>
