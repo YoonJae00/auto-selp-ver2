@@ -596,7 +596,7 @@ export default function UploadPage() {
     setMappingError(null);
     setIsProcessing(true);
     try {
-      const res = await api.post<{ task_id: string | null; import_id: string; total: number; new_count: number; updated_count: number; unchanged_count: number }>('/api/processor/process-db', {
+      const res = await api.post<{ task_id: string | null; import_id: string; total: number; new_count: number; updated_count: number; unchanged_count: number; removed_count: number; reprocessed_count: number }>('/api/processor/process-db', {
         file_id: uploadData.file_id,
         column_mapping: columnMapping,
         wholesale_site_id: activeSite.id,
@@ -604,8 +604,8 @@ export default function UploadPage() {
         kipris_enabled: true,
         start_processing: false
       });
-      
-      setSuccess(`신규 ${res.new_count}개, 변동 ${res.updated_count}개, 변경 없음 ${res.unchanged_count}개입니다. 처리할 ${res.total}개 상품만 상품 가공 및 상품 관리에 반영했습니다.`);
+
+      setSuccess(`신규 ${res.new_count}개, 변동 ${res.updated_count}개, 단종 ${res.removed_count}개, 변경 없음 ${res.unchanged_count}개입니다. AI 재가공 대상 ${res.total}개만 상품 가공으로 보냈고, 나머지 변동은 상품 관리에 바로 반영했습니다.`);
       removeUploadDraft(activeSite.id);
       setDraftMappingCounts(current => {
         const next = { ...current };

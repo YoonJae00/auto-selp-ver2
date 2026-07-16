@@ -86,6 +86,7 @@ class Product(Base):
     processing_time_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     change_type: Mapped[str | None] = mapped_column(String, nullable=True)
     changed_fields: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    field_changes: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     
     created_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=func.now(), onupdate=func.now())

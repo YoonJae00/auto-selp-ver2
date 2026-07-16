@@ -49,6 +49,7 @@ async def test_db():
         await conn.execute(text("ALTER TABLE products ADD COLUMN IF NOT EXISTS standard_options JSON"))
         await conn.execute(text("ALTER TABLE products ADD COLUMN IF NOT EXISTS change_type VARCHAR"))
         await conn.execute(text("ALTER TABLE products ADD COLUMN IF NOT EXISTS changed_fields JSON DEFAULT '[]'"))
+        await conn.execute(text("ALTER TABLE products ADD COLUMN IF NOT EXISTS field_changes JSON"))
         
         await conn.execute(text("ALTER TABLE product_platform_mappings ADD COLUMN IF NOT EXISTS price_changed BOOLEAN DEFAULT FALSE"))
         await conn.execute(text("ALTER TABLE product_platform_mappings ADD COLUMN IF NOT EXISTS stock_changed BOOLEAN DEFAULT FALSE"))
@@ -532,10 +533,13 @@ async def test_process_db_only_imports_new_and_supplier_scoped_changes(test_db, 
             db=session,
         )
 
-    assert response["total"] == 2
+    # Price-only change on a completed product is data-only: reflected but not reprocessed.
+    assert response["total"] == 1
     assert response["new_count"] == 1
     assert response["updated_count"] == 1
     assert response["unchanged_count"] == 1
+    assert response["removed_count"] == 0
+    assert response["reprocessed_count"] == 1
 
     async with test_db() as session:
         unchanged = await session.get(Product, unchanged_id)
@@ -550,9 +554,10 @@ async def test_process_db_only_imports_new_and_supplier_scoped_changes(test_db, 
         assert unchanged.change_type is None
         assert unchanged.updated_at == old_updated_at
         assert updated.import_id == response["import_id"]
-        assert updated.status == "pending"
+        assert updated.status == "completed"  # data-only change stays out of the AI pipeline
         assert updated.change_type == "updated"
         assert updated.changed_fields == ["price_wholesale", "price_wholesale_raw"]
+        assert updated.field_changes["price_wholesale"] == {"old": 2000, "new": 2500}
         assert platform_mapping.sync_status == "pending_update"
         assert platform_mapping.price_changed is True
         assert platform_mapping.last_changed_at is not None
@@ -560,4 +565,132 @@ async def test_process_db_only_imports_new_and_supplier_scoped_changes(test_db, 
         assert other_supplier.price_wholesale == 2500
         assert new_product.change_type == "new"
         assert new_product.changed_fields == []
-        assert import_run.total_count == 2
+        assert import_run.total_count == 1
+
+
+_LEDGER_MAPPING = {
+    "wholesale_status": "상태",
+    "wholesale_product_id": "제품번호",
+    "product_code": "상품코드",
+    "original_name": "상품명",
+    "price_wholesale_raw": "가격",
+    "origin": "원산지",
+    "image_list_1": "목록이미지1",
+    "image_detail": "상세이미지",
+}
+
+
+def _seed_product(user_id, site_id, row, *, status="completed"):
+    data = parse_wholesale_row(pd.Series(row), _LEDGER_MAPPING)["product_data"]
+    return Product(
+        user_id=user_id,
+        wholesale_site_id=site_id,
+        product_code=data["product_code"],
+        options=data["option_values_raw"],
+        status=status,
+        change_type=None,
+        changed_fields=[],
+        raw_metadata={},
+        **{field: data[field] for field in processor_main.CANONICAL_IMPORT_FIELDS},
+    )
+
+
+async def _run_ledger_upload(test_db, tmp_path, monkeypatch, user_id, site_id, rows):
+    file_id = str(uuid.uuid4())
+    (tmp_path / f"{file_id}_products.xlsx").write_bytes(b"placeholder")
+    monkeypatch.setattr(processor_main, "UPLOAD_DIR", str(tmp_path))
+    monkeypatch.setattr(processor_main.pd, "read_excel", lambda _path: pd.DataFrame(rows))
+    async with test_db() as session:
+        return await processor_main.start_db_processing(
+            ProcessRequest(file_id=file_id, column_mapping={}, wholesale_site_id=site_id, start_processing=False),
+            current_user={"id": user_id},
+            db=session,
+        )
+
+
+@pytest.mark.anyio
+async def test_process_db_price_only_change_is_data_only(test_db, tmp_path, monkeypatch):
+    user_id = uuid.uuid4()
+    site_id = uuid.uuid4()
+    base_row = {"상태": "판매중", "제품번호": "W-1", "상품코드": "PRICE-1", "상품명": "가격상품", "가격": "10000", "원산지": "국내", "목록이미지1": "u1", "상세이미지": "d1"}
+
+    async with test_db() as session:
+        session.add(WholesaleSite(id=site_id, user_id=user_id, name="공급처", column_mapping=_LEDGER_MAPPING))
+        session.add(_seed_product(user_id, site_id, base_row))
+        await session.commit()
+
+    new_row = {**base_row, "가격": "12000"}
+    response = await _run_ledger_upload(test_db, tmp_path, monkeypatch, user_id, site_id, [new_row])
+
+    assert response["updated_count"] == 1
+    assert response["total"] == 0
+    assert response["reprocessed_count"] == 0
+    assert response["removed_count"] == 0
+
+    async with test_db() as session:
+        product = (await session.execute(select(Product).where(Product.product_code == "PRICE-1", Product.user_id == user_id))).scalar_one()
+        assert product.status == "completed"
+        assert product.change_type == "updated"
+        assert product.field_changes["price_wholesale"] == {"old": 10000, "new": 12000}
+
+
+@pytest.mark.anyio
+async def test_process_db_flags_discontinued_products_once(test_db, tmp_path, monkeypatch):
+    user_id = uuid.uuid4()
+    site_id = uuid.uuid4()
+    keep_row = {"상태": "판매중", "제품번호": "W-1", "상품코드": "KEEP-1", "상품명": "유지", "가격": "1000", "원산지": "국내", "목록이미지1": "u1", "상세이미지": "d1"}
+    gone_row = {"상태": "판매중", "제품번호": "W-2", "상품코드": "GONE-1", "상품명": "단종예정", "가격": "2000", "원산지": "국내", "목록이미지1": "u2", "상세이미지": "d2"}
+
+    async with test_db() as session:
+        session.add(WholesaleSite(id=site_id, user_id=user_id, name="공급처", column_mapping=_LEDGER_MAPPING))
+        keep = _seed_product(user_id, site_id, keep_row)
+        gone = _seed_product(user_id, site_id, gone_row)
+        session.add_all([keep, gone])
+        await session.flush()
+        session.add(ProductPlatformMapping(product_id=gone.id, platform_name="naver", sync_status="synced"))
+        await session.commit()
+        gone_id = gone.id
+
+    # New ledger contains KEEP-1 only → GONE-1 is discontinued.
+    response = await _run_ledger_upload(test_db, tmp_path, monkeypatch, user_id, site_id, [keep_row])
+    assert response["removed_count"] == 1
+
+    async with test_db() as session:
+        gone = await session.get(Product, gone_id)
+        assert gone.change_type == "removed"
+        assert gone.wholesale_status == "단종"
+        assert gone.changed_fields == ["wholesale_status"]
+        assert gone.field_changes["wholesale_status"] == {"old": "판매중", "new": "단종"}
+        assert gone.import_id is None
+        assert gone.status == "completed"
+        platform_mapping = (await session.execute(select(ProductPlatformMapping).where(ProductPlatformMapping.product_id == gone_id))).scalar_one()
+        assert platform_mapping.sync_status == "pending_update"
+        assert platform_mapping.stock_changed is True
+
+    # Re-uploading the same ledger must not re-flag it.
+    response = await _run_ledger_upload(test_db, tmp_path, monkeypatch, user_id, site_id, [keep_row])
+    assert response["removed_count"] == 0
+
+
+@pytest.mark.anyio
+async def test_process_db_name_change_triggers_reprocess(test_db, tmp_path, monkeypatch):
+    user_id = uuid.uuid4()
+    site_id = uuid.uuid4()
+    base_row = {"상태": "판매중", "제품번호": "W-1", "상품코드": "NAME-1", "상품명": "옛이름", "가격": "1000", "원산지": "국내", "목록이미지1": "u1", "상세이미지": "d1"}
+
+    async with test_db() as session:
+        session.add(WholesaleSite(id=site_id, user_id=user_id, name="공급처", column_mapping=_LEDGER_MAPPING))
+        session.add(_seed_product(user_id, site_id, base_row))
+        await session.commit()
+
+    new_row = {**base_row, "상품명": "새이름"}
+    response = await _run_ledger_upload(test_db, tmp_path, monkeypatch, user_id, site_id, [new_row])
+
+    assert response["updated_count"] == 1
+    assert response["total"] == 1
+    assert response["reprocessed_count"] == 1
+
+    async with test_db() as session:
+        product = (await session.execute(select(Product).where(Product.product_code == "NAME-1", Product.user_id == user_id))).scalar_one()
+        assert product.status == "pending"
+        assert "original_name" in product.changed_fields

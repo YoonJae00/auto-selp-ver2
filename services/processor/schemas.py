@@ -74,8 +74,9 @@ class ProductResponse(BaseModel):
     warnings: Optional[Dict] = None
     raw_metadata: Optional[Dict] = None
     processing_time_ms: Optional[int] = None
-    change_type: Optional[Literal["new", "updated"]] = None
+    change_type: Optional[Literal["new", "updated", "removed"]] = None
     changed_fields: List[str] = Field(default_factory=list)
+    field_changes: Optional[dict] = None
     created_at: datetime
     updated_at: datetime
     platform_mappings: List[ProductPlatformMappingResponse] = []

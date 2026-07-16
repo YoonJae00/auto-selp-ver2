@@ -790,6 +790,11 @@
   color: #b45309;
 }
 
+.sourceChangeRemoved {
+  background: rgba(255, 59, 48, 0.1);
+  color: #ff3b30;
+}
+
 .syncButton {
   opacity: 0.5;
   cursor: not-allowed;

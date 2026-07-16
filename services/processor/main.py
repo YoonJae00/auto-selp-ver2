@@ -422,6 +422,12 @@ CANONICAL_IMPORT_FIELDS = (
     "wholesale_registered_at",
 )
 
+# Fields whose change actually requires re-running the AI pipeline; other changes
+# (price/stock/etc.) are data-only and reflected without reprocessing.
+REPROCESS_TRIGGER_FIELDS = {"original_name", "images_list", "image_detail"}
+# JSON-typed fields: record only that they changed, not the full blob.
+_JSON_CHANGE_FIELDS = {"option_variants", "standard_options", "images_list"}
+
 @app.post("/process-db")
 async def start_db_processing(
     request: ProcessRequest,
@@ -513,28 +519,41 @@ async def start_db_processing(
         status="pending",
     )
     db.add(import_run)
-    new_count = updated_count = unchanged_count = 0
+    new_count = updated_count = unchanged_count = reprocess_count = 0
 
     for product_data, product_warnings in parsed_rows:
         product_code = product_data["product_code"]
         existing_product = existing_by_code.get(product_code) if product_code else None
         if existing_product:
-            changed_fields = [
-                field_name
-                for field_name in CANONICAL_IMPORT_FIELDS
-                if getattr(existing_product, field_name) != product_data[field_name]
-            ]
+            changed_fields = []
+            field_changes = {}
+            for field_name in CANONICAL_IMPORT_FIELDS:
+                old_value = getattr(existing_product, field_name)
+                new_value = product_data[field_name]
+                if old_value != new_value:
+                    changed_fields.append(field_name)
+                    field_changes[field_name] = (
+                        {"old": None, "new": None}
+                        if field_name in _JSON_CHANGE_FIELDS
+                        else {"old": old_value, "new": new_value}
+                    )
             if not changed_fields:
                 unchanged_count += 1
                 continue
+
+            needs_reprocess = existing_product.status != "completed" or any(
+                field_name in changed_fields for field_name in REPROCESS_TRIGGER_FIELDS
+            )
 
             for field_name in CANONICAL_IMPORT_FIELDS:
                 setattr(existing_product, field_name, product_data[field_name])
             existing_product.options = product_data["option_values_raw"]
             existing_product.import_id = import_id
-            existing_product.status = "pending"
+            if needs_reprocess:
+                existing_product.status = "pending"
             existing_product.change_type = "updated"
             existing_product.changed_fields = changed_fields
+            existing_product.field_changes = field_changes
             existing_product.warnings = product_warnings
             existing_product.raw_metadata = product_data["raw_metadata"]
 
@@ -550,6 +569,8 @@ async def start_db_processing(
                 if "wholesale_status" in changed_fields:
                     platform_mapping.stock_changed = True
             updated_count += 1
+            if needs_reprocess:
+                reprocess_count += 1
         else:
             product = Product(
                 user_id=current_user["id"],
@@ -560,6 +581,7 @@ async def start_db_processing(
                 status="pending",
                 change_type="new",
                 changed_fields=[],
+                field_changes=None,
                 warnings=product_warnings,
                 raw_metadata=product_data["raw_metadata"],
                 **{field_name: product_data[field_name] for field_name in CANONICAL_IMPORT_FIELDS},
@@ -568,9 +590,36 @@ async def start_db_processing(
             if product_code:
                 existing_by_code[product_code] = product
             new_count += 1
+            reprocess_count += 1
 
-    actionable_count = new_count + updated_count
-    import_run.total_count = actionable_count
+    # 단종(discontinued): supplier-scoped products absent from this ledger.
+    removed_count = 0
+    if request.wholesale_site_id:
+        removed_conditions = [
+            Product.user_id == current_user["id"],
+            Product.wholesale_site_id == request.wholesale_site_id,
+            Product.product_code.isnot(None),
+            Product.product_code != "",
+            Product.change_type.is_distinct_from("removed"),
+        ]
+        if product_codes:
+            removed_conditions.append(Product.product_code.notin_(product_codes))
+        removed_result = await db.execute(
+            select(Product).where(*removed_conditions).options(selectinload(Product.platform_mappings))
+        )
+        removed_at = datetime.utcnow()
+        for product in removed_result.scalars().all():
+            product.field_changes = {"wholesale_status": {"old": product.wholesale_status, "new": "단종"}}
+            product.wholesale_status = "단종"
+            product.change_type = "removed"
+            product.changed_fields = ["wholesale_status"]
+            for platform_mapping in product.platform_mappings:
+                platform_mapping.sync_status = "pending_update"
+                platform_mapping.stock_changed = True
+                platform_mapping.last_changed_at = removed_at
+            removed_count += 1
+
+    import_run.total_count = reprocess_count
 
     if not request.start_processing:
         import_run.status = "imported"
@@ -578,22 +627,26 @@ async def start_db_processing(
         return {
             "task_id": None,
             "import_id": import_id,
-            "total": actionable_count,
+            "total": reprocess_count,
             "new_count": new_count,
             "updated_count": updated_count,
             "unchanged_count": unchanged_count,
+            "removed_count": removed_count,
+            "reprocessed_count": reprocess_count,
         }
 
-    if actionable_count == 0:
+    if reprocess_count == 0:
         import_run.status = "completed"
         await db.commit()
         return {
             "task_id": None,
             "import_id": import_id,
             "total": 0,
-            "new_count": 0,
-            "updated_count": 0,
+            "new_count": new_count,
+            "updated_count": updated_count,
             "unchanged_count": unchanged_count,
+            "removed_count": removed_count,
+            "reprocessed_count": 0,
         }
 
     await db.commit()
@@ -609,14 +662,16 @@ async def start_db_processing(
     )
     db.add(ProcessingTask(task_id=task.id, user_id=current_user["id"]))
     await db.commit()
-    
+
     return {
         "task_id": task.id,
         "import_id": import_id,
-        "total": actionable_count,
+        "total": reprocess_count,
         "new_count": new_count,
         "updated_count": updated_count,
         "unchanged_count": unchanged_count,
+        "removed_count": removed_count,
+        "reprocessed_count": reprocess_count,
     }
 
 

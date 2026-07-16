@@ -777,6 +777,11 @@
   color: #b45309;
 }
 
+.sourceChangeRemoved {
+  background: rgba(255, 59, 48, 0.1);
+  color: #ff3b30;
+}
+
 .status_pending {
   background: #eef2ff;
   color: #4f46e5;
