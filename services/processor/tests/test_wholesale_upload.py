@@ -475,6 +475,25 @@ def test_rule_mapping_supports_default_value_map_and_regex_all():
     assert parsed["warnings"] == []
 
 
+def test_default_only_rule_ignores_same_named_fallback_column():
+    row = pd.Series(
+        {
+            "상태": "정상",
+            "제품번호": "12345",
+            "상품코드": "ABC-001",
+            "상품명": "테스트 상품",
+            "가격": "1000",
+            "원산지": "<P align=center><img src='wrong.jpg'></P>",
+            "목록이미지1": "https://img.example/1.jpg",
+            "상세이미지": "https://img.example/detail.jpg",
+        }
+    )
+
+    parsed = parse_wholesale_row(row, {"origin": {"default": "상세정보 참조"}})
+
+    assert parsed["product_data"]["origin"] == "상세정보 참조"
+
+
 def test_mapping_preview_normalizes_up_to_five_rows_and_sanitizes_rules():
     dataframe = pd.DataFrame([{"상품명": f"상품 {index}", "코드": f"P-{index}"} for index in range(6)])
     mapping, warnings = sanitize_column_mapping(

@@ -270,6 +270,7 @@ export default function UploadPage() {
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [isSuggesting, setIsSuggesting] = useState(false);
+  const [isCorrecting, setIsCorrecting] = useState(false);
   const [isValidating, setIsValidating] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isPreviewOpen, setIsPreviewOpen] = useState(true); // Added for accordion toggle
@@ -500,7 +501,7 @@ export default function UploadPage() {
     setError(null);
     setMappingError(null);
     setSuccess(null);
-    setIsSuggesting(true);
+    setIsCorrecting(true);
     setIsMappingValidated(false);
     try {
       const suggestion = await api.post<MappingPreviewResponse>(
@@ -522,7 +523,7 @@ export default function UploadPage() {
     } catch (err: any) {
       setError(err.message || 'AI 매핑 수정에 실패했습니다. 현재 매핑은 그대로 유지됩니다.');
     } finally {
-      setIsSuggesting(false);
+      setIsCorrecting(false);
     }
   };
 
@@ -873,7 +874,7 @@ export default function UploadPage() {
                 </div>
               ))}
 
-              <section className={styles.correctionPanel} aria-labelledby="ai-mapping-studio-title">
+              <section className={styles.correctionPanel} aria-labelledby="ai-mapping-studio-title" aria-busy={isCorrecting}>
                 <div className={styles.studioMain}>
                   <div className={styles.studioHeading}>
                     <span className={styles.studioBadge}><i aria-hidden="true" /> AI Mapping Studio</span>
@@ -887,6 +888,7 @@ export default function UploadPage() {
                       onChange={(event) => setMappingInstruction(event.target.value)}
                       placeholder="예: 원산지는 모두 상세정보 참조로, 판매 상태는 값이 없으면 판매중으로 바꿔줘"
                       aria-label="AI 매핑 수정 요청"
+                      disabled={isCorrecting}
                       rows={3}
                     />
                     <div className={styles.studioComposerFooter}>
@@ -895,10 +897,10 @@ export default function UploadPage() {
                         variant="primary"
                         className={styles.studioButton}
                         onClick={handleAiCorrection}
-                        disabled={isSuggesting || isValidating || !mappingInstruction.trim()}
+                        disabled={isCorrecting || isValidating || !mappingInstruction.trim()}
                         type="button"
                       >
-                        AI로 수정 <span aria-hidden="true">↗</span>
+                        {isCorrecting ? '수정 중...' : <>AI로 수정 <span aria-hidden="true">↗</span></>}
                       </PillButton>
                     </div>
                   </div>

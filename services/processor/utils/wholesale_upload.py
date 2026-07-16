@@ -102,6 +102,8 @@ def resolve_field_header(field_name: str, mapping: dict[str, Any], columns: list
     mapped_header = mapped_value.get("source") if isinstance(mapped_value, dict) else mapped_value
     if isinstance(mapped_header, str) and mapped_header:
         candidate_headers.append(mapped_header)
+    if isinstance(mapped_value, dict) and "default" in mapped_value and not mapped_header:
+        return None
 
     if not mapped_header:
         for legacy_field in LEGACY_FIELD_ALIASES.get(field_name, []):
