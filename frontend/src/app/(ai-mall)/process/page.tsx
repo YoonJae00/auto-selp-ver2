@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '@/lib/api';
+import { changeTooltip } from '@/lib/fieldChanges';
 import { useSettingsStore } from '@/store/settingsStore';
 import { useTaskStore } from '@/store/taskStore';
 import PillButton from '@/components/UI/PillButton/PillButton';
@@ -11,7 +12,7 @@ interface WholesaleSite {
   id: string;
   name: string;
   homepage_url: string | null;
-  column_mapping: Record<string, string> | null;
+  column_mapping: Record<string, unknown> | null;
 }
 
 interface ProductPlatformMapping {
@@ -42,6 +43,9 @@ interface Product {
   refined_name: string | null;
   keywords: string[] | null;
   status: 'pending' | 'processing' | 'completed' | 'failed';
+  change_type: 'new' | 'updated' | 'removed' | null;
+  changed_fields: string[] | null;
+  field_changes?: Record<string, { old: string | number | null; new: string | number | null }> | null;
   platform_mappings?: ProductPlatformMapping[] | null;
 }
 
@@ -776,9 +780,19 @@ export default function ProcessPage() {
                         />
                       </td>
                       <td>
-                        <span className={`${styles.statusBadge} ${styles[`status_${displayStatus}`] || ''}`}>
-                          {processingStatusLabel[displayStatus]}
-                        </span>
+                        <div className={styles.statusCell}>
+                          <span className={`${styles.statusBadge} ${styles[`status_${displayStatus}`] || ''}`}>
+                            {processingStatusLabel[displayStatus]}
+                          </span>
+                          {product.change_type && (
+                            <span
+                              className={`${styles.sourceChangeBadge} ${product.change_type === 'new' ? styles.sourceChangeNew : product.change_type === 'removed' ? styles.sourceChangeRemoved : styles.sourceChangeUpdated}`}
+                              title={changeTooltip(product)}
+                            >
+                              {product.change_type === 'new' ? '신상품' : product.change_type === 'removed' ? '단종' : '변동'}
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className={styles.imageCell}>
                         {imageUrl ? (

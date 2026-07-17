@@ -426,6 +426,16 @@
   color: var(--ink-muted-48);
 }
 
+.nameBadges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.nameBadges > span {
+  margin-left: 0;
+}
+
 .nameMeta {
   width: fit-content;
   padding: 2px 6px;
@@ -749,6 +759,40 @@
   border-radius: 6px;
   margin-left: 8px;
   border: 1px solid rgba(255, 59, 48, 0.2);
+}
+
+.sourceChangeBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  margin-left: 8px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.sourceChangeBadge::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.sourceChangeNew {
+  background: #ecfeff;
+  color: #0e7490;
+}
+
+.sourceChangeUpdated {
+  background: #fffbeb;
+  color: #b45309;
+}
+
+.sourceChangeRemoved {
+  background: rgba(255, 59, 48, 0.1);
+  color: #ff3b30;
 }
 
 .syncButton {

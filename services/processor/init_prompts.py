@@ -44,6 +44,9 @@ async def seed_prompts():
         await conn.execute(text("ALTER TABLE products ADD COLUMN IF NOT EXISTS image_detail TEXT"))
         await conn.execute(text("ALTER TABLE products ADD COLUMN IF NOT EXISTS wholesale_status VARCHAR"))
         await conn.execute(text("ALTER TABLE products ADD COLUMN IF NOT EXISTS wholesale_registered_at VARCHAR"))
+        await conn.execute(text("ALTER TABLE products ADD COLUMN IF NOT EXISTS change_type VARCHAR"))
+        await conn.execute(text("ALTER TABLE products ADD COLUMN IF NOT EXISTS changed_fields JSON DEFAULT '[]'"))
+        await conn.execute(text("ALTER TABLE products ADD COLUMN IF NOT EXISTS field_changes JSON"))
         
         await conn.execute(text("ALTER TABLE product_platform_mappings ADD COLUMN IF NOT EXISTS price_changed BOOLEAN DEFAULT FALSE"))
         await conn.execute(text("ALTER TABLE product_platform_mappings ADD COLUMN IF NOT EXISTS stock_changed BOOLEAN DEFAULT FALSE"))
@@ -52,7 +55,13 @@ async def seed_prompts():
         await conn.execute(text("ALTER TABLE product_platform_mappings ADD COLUMN IF NOT EXISTS last_synced_at TIMESTAMP"))
         await conn.execute(text("ALTER TABLE product_platform_mappings ADD COLUMN IF NOT EXISTS last_changed_at TIMESTAMP"))
         await conn.execute(text("ALTER TABLE product_platform_mappings ADD COLUMN IF NOT EXISTS product_name VARCHAR"))
-        
+
+        await conn.execute(text("ALTER TABLE product_imports ADD COLUMN IF NOT EXISTS wholesale_site_id UUID REFERENCES wholesale_sites(id) ON DELETE SET NULL"))
+        await conn.execute(text("ALTER TABLE product_imports ADD COLUMN IF NOT EXISTS new_count INTEGER DEFAULT 0"))
+        await conn.execute(text("ALTER TABLE product_imports ADD COLUMN IF NOT EXISTS updated_count INTEGER DEFAULT 0"))
+        await conn.execute(text("ALTER TABLE product_imports ADD COLUMN IF NOT EXISTS removed_count INTEGER DEFAULT 0"))
+        await conn.execute(text("ALTER TABLE product_imports ADD COLUMN IF NOT EXISTS unchanged_count INTEGER DEFAULT 0"))
+
     async with SessionLocal() as db:
         for key, data in DEFAULT_PROMPTS.items():
             result = await db.execute(select(Prompt).where(Prompt.key == key))

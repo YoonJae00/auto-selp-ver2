@@ -3,6 +3,8 @@ import base64
 import httpx
 import json
 import logging
+from typing import Any
+from pydantic import BaseModel, Field
 from config import settings
 from utils.backoff import retry_with_backoff
 from clients.llm_client import LLMClient, smartstore_name_prompt
@@ -10,11 +12,79 @@ from utils.prompt_manager import PromptManager
 
 logger = logging.getLogger(__name__)
 
+
+class WholesaleMappingRule(BaseModel):
+    target: str
+    source: str | None = None
+    default: str | None = None
+    pattern: str | None = None
+    regex_group: int | str | None = None
+    regex_all: bool = False
+    join_with: str = ","
+    value_map: dict[str, str] | None = None
+
+
+class WholesaleMappingSuggestion(BaseModel):
+    rules: list[WholesaleMappingRule]
+    notes: list[str] = Field(default_factory=list)
+
+
 class OpenAIClient(LLMClient):
     def __init__(self, prompt_manager: PromptManager = None, model: str = 'gpt-5.6-luna'):
         self.client = openai.AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
         self.model = model
         self.prompt_manager = prompt_manager
+
+    async def suggest_wholesale_mapping(
+        self,
+        headers: list[str],
+        sample_rows: list[dict[str, Any]],
+        current_mapping: dict[str, Any] | None = None,
+        instruction: str | None = None,
+    ) -> dict[str, Any]:
+        prompt = (
+            "Map supplier spreadsheet columns to our canonical product fields. "
+            "Return deterministic rules only; never invent missing source data. "
+            "Use a default only when the user's instruction explicitly supplies it. "
+            "When the instruction gives a literal value to put in a field (e.g. "
+            "'원산지는 모두 상세정보 참조로'), including placeholder phrases like '상세정보 참조', "
+            "return a default-only rule with that exact string; do not build an extraction "
+            "rule from other columns. "
+            "For repeated content in one cell, use a bounded Python regex with regex_all=true. "
+            "The supported targets are: wholesale_status, wholesale_product_id, product_code, "
+            "original_name, option_values_raw, option_price_deltas_raw, option_skus_raw, "
+            "option_image_urls_raw, price_wholesale_raw, price_retail, price_min_selling, origin, "
+            "image_list_1, image_list_2, image_list_3, image_list_4, image_list_5, image_detail, "
+            "wholesale_registered_at. A common combined option line is "
+            "'01) option name/0원/01_SKU': extract names, signed deltas, and SKUs into their three targets.\n"
+            f"Headers: {json.dumps(headers, ensure_ascii=False)}\n"
+            f"Sample rows: {json.dumps(sample_rows, ensure_ascii=False)}\n"
+            f"Current mapping: {json.dumps(current_mapping or {}, ensure_ascii=False)}\n"
+            f"User correction: {instruction or ''}"
+        )
+        completions = self.client.chat.completions
+        parse = getattr(completions, "parse", None) or self.client.beta.chat.completions.parse
+        completion = await parse(
+            model=self.model,
+            messages=[
+                {"role": "system", "content": "You design safe deterministic spreadsheet mappings."},
+                {"role": "user", "content": prompt},
+            ],
+            response_format=WholesaleMappingSuggestion,
+        )
+        parsed = completion.choices[0].message.parsed
+        if parsed is None:
+            refusal = completion.choices[0].message.refusal
+            raise ValueError(refusal or "OpenAI returned no mapping suggestion.")
+
+        mapping: dict[str, Any] = {}
+        for suggested in parsed.rules:
+            rule = suggested.model_dump(exclude={"target"}, exclude_none=True)
+            if set(rule) <= {"source", "regex_all", "join_with"} and rule.get("source") and not rule.get("regex_all"):
+                mapping[suggested.target] = rule["source"]
+            else:
+                mapping[suggested.target] = rule
+        return {"column_mapping": mapping, "notes": parsed.notes}
 
     async def generate_smartstore_name_candidates(
         self,

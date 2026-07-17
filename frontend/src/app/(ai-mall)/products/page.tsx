@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { api } from '@/lib/api';
+import { changeTooltip } from '@/lib/fieldChanges';
 import PillButton from '@/components/UI/PillButton/PillButton';
 import styles from './products.module.css';
 import DeleteConfirmModal from '@/components/UI/DeleteConfirmModal/DeleteConfirmModal';
@@ -38,6 +39,9 @@ interface Product {
   standard_options?: StandardOption[] | null;
   keywords: string[] | null;
   status: 'pending' | 'processing' | 'completed' | 'failed';
+  change_type: 'new' | 'updated' | 'removed' | null;
+  changed_fields: string[] | null;
+  field_changes?: Record<string, { old: string | number | null; new: string | number | null }> | null;
   warnings: any;
   created_at: string;
   platform_mappings: PlatformMapping[];
@@ -894,9 +898,21 @@ export default function ProductsPage() {
                                 <div className={styles.nameWrapper}>
                                   <span className={styles.refName} title={p.refined_name || '가공 전'}>
                                     {p.refined_name ? p.refined_name : <span className={styles.refNameEmpty}>가공 전</span>}
-                                    {priceChanged && <span className={styles.changeBadgeOrange}>가격 변동</span>}
-                                    {stockChanged && <span className={styles.changeBadgeRed}>품절 변동</span>}
                                   </span>
+                                  {(p.change_type || priceChanged || stockChanged) && (
+                                    <span className={styles.nameBadges}>
+                                      {p.change_type && (
+                                        <span
+                                          className={`${styles.sourceChangeBadge} ${p.change_type === 'new' ? styles.sourceChangeNew : p.change_type === 'removed' ? styles.sourceChangeRemoved : styles.sourceChangeUpdated}`}
+                                          title={changeTooltip(p)}
+                                        >
+                                          {p.change_type === 'new' ? '신상품' : p.change_type === 'removed' ? '단종' : '변동'}
+                                        </span>
+                                      )}
+                                      {priceChanged && <span className={styles.changeBadgeOrange}>가격 변동</span>}
+                                      {stockChanged && <span className={styles.changeBadgeRed}>품절 변동</span>}
+                                    </span>
+                                  )}
                                   <span className={styles.origName} title={p.original_name}>{p.original_name}</span>
                                   {p.brand_name && <span className={styles.nameMeta}>{p.brand_name}</span>}
                                 </div>

@@ -285,6 +285,8 @@ async def persist_success(
         sum(int(stage.get("ms", 0)) for stage in state.get("stage_timings", {}).values())
     )
     product.status = "completed"
+    product.change_type = None
+    product.changed_fields = []
 
     naver_mapping = await _get_or_create_mapping(runtime, "naver")
     naver_mapping.category_id = str(state["naver_category"].get("id", ""))
@@ -386,6 +388,8 @@ async def process_product_with_graph(context: ProductProcessingContext) -> Produ
     graph = build_product_processing_graph()
     initial_success_count = context.import_run.success_count if context.import_run else 0
     initial_failed_count = context.import_run.failed_count if context.import_run else 0
+    initial_change_type = getattr(context.product, "change_type", None)
+    initial_changed_fields = list(getattr(context.product, "changed_fields", []) or [])
     initial_state: ProductProcessingState = {
         "product_id": str(context.product.id),
         "original_name": context.product.original_name,
@@ -398,6 +402,8 @@ async def process_product_with_graph(context: ProductProcessingContext) -> Produ
     except asyncio.CancelledError:
         raise
     except Exception as error:
+        context.product.change_type = initial_change_type
+        context.product.changed_fields = initial_changed_fields
         return await persist_failure(
             initial_state,
             context,

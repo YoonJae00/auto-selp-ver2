@@ -5,7 +5,7 @@ from uuid import UUID
 
 class ProcessRequest(BaseModel):
     file_id: str
-    column_mapping: Dict[str, str]
+    column_mapping: Dict[str, Any]
     llm_provider: Optional[str] = "gemini"
     vision_llm_provider: Optional[str] = "gemini"
     kipris_enabled: Optional[bool] = True
@@ -74,6 +74,9 @@ class ProductResponse(BaseModel):
     warnings: Optional[Dict] = None
     raw_metadata: Optional[Dict] = None
     processing_time_ms: Optional[int] = None
+    change_type: Optional[Literal["new", "updated", "removed"]] = None
+    changed_fields: List[str] = Field(default_factory=list)
+    field_changes: Optional[dict] = None
     created_at: datetime
     updated_at: datetime
     platform_mappings: List[ProductPlatformMappingResponse] = []
@@ -99,15 +102,38 @@ class ProductImportResponse(BaseModel):
     total_count: int
     success_count: int
     failed_count: int
+    wholesale_site_id: Optional[UUID] = None
+    wholesale_site_name: Optional[str] = None
+    new_count: int = 0
+    updated_count: int = 0
+    removed_count: int = 0
+    unchanged_count: int = 0
     status: str
     created_at: datetime
     updated_at: datetime
     model_config = ConfigDict(from_attributes=True)
 
+
+class ProductChangeLogResponse(BaseModel):
+    id: UUID
+    product_id: Optional[UUID] = None
+    product_code: Optional[str] = None
+    original_name: str
+    change_type: Literal["new", "updated", "removed"]
+    changed_fields: List[str] = Field(default_factory=list)
+    field_changes: Optional[dict] = None
+    created_at: datetime
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ProductChangeLogListResponse(BaseModel):
+    total: int
+    items: List[ProductChangeLogResponse]
+
 class DBProcessRequest(BaseModel):
     import_id: Optional[UUID] = None
     product_ids: Optional[List[UUID]] = None
-    column_mapping: Dict[str, str]
+    column_mapping: Dict[str, Any]
     llm_provider: Optional[str] = "gemini"
     vision_llm_provider: Optional[str] = "gemini"
     kipris_enabled: Optional[bool] = True
@@ -117,7 +143,7 @@ class DBProcessRequest(BaseModel):
 class WholesaleSiteBase(BaseModel):
     name: str
     homepage_url: Optional[str] = None
-    column_mapping: Optional[Dict[str, str]] = None
+    column_mapping: Optional[Dict[str, Any]] = None
 
 class WholesaleSiteCreate(WholesaleSiteBase):
     pass
@@ -131,6 +157,17 @@ class WholesaleSiteResponse(WholesaleSiteBase):
     created_at: datetime
     updated_at: datetime
     model_config = ConfigDict(from_attributes=True)
+
+
+class WholesaleMappingSuggestionRequest(BaseModel):
+    file_id: str
+    column_mapping: Optional[Dict[str, Any]] = None
+    instruction: Optional[str] = Field(default=None, max_length=2_000)
+
+
+class WholesaleMappingPreviewRequest(BaseModel):
+    file_id: str
+    column_mapping: Dict[str, Any]
 
 
 class MarketplaceSnapshotPrice(BaseModel):

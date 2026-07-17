@@ -1,5 +1,6 @@
 import os
 import asyncio
+import json
 import time
 import uuid
 import logging
@@ -16,12 +17,13 @@ from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 import io
 import urllib.parse
+from collections import Counter
 from datetime import datetime
 
 from tasks import process_excel_task, process_db_products_task
 from celery_app import celery_app
 from database import get_db, engine, Base
-from models import Prompt, ProcessingTask, ProductImport, Product, ProductPlatformMapping, WholesaleSite
+from models import Prompt, ProcessingTask, ProductImport, Product, ProductPlatformMapping, WholesaleSite, ProductChangeLog
 from schemas import (
     ProcessRequest, 
     PromptUpdate, 
@@ -31,6 +33,7 @@ from schemas import (
     ProductStatsResponse,
     ProductResponse,
     ProductImportResponse,
+    ProductChangeLogListResponse,
     WholesaleSiteCreate,
     WholesaleSiteUpdate,
     WholesaleSiteResponse,
@@ -39,12 +42,22 @@ from schemas import (
     MarketplaceNameResponse,
     ProductDeleteRequest,
     ProductDeleteResponse,
+    WholesaleMappingSuggestionRequest,
+    WholesaleMappingPreviewRequest,
 )
 from utils.prompt_manager import PromptManager
-from utils.wholesale_upload import parse_wholesale_row, validate_required_mappings
+from utils.wholesale_upload import (
+    STANDARD_PRODUCT_EXAMPLE,
+    build_mapping_preview,
+    json_safe_row,
+    parse_wholesale_row,
+    sanitize_column_mapping,
+    validate_required_mappings,
+)
 from utils.product_name import select_product_name
 from clients.llm_factory import get_llm_client
 from clients.marketplace_client import MarketplaceClient
+from clients.openai_client import OpenAIClient
 from config import settings
 
 from fastapi.middleware.cors import CORSMiddleware
@@ -140,6 +153,54 @@ def require_internal_service_token(
 
 # --- Wholesale Sites API ---
 
+
+async def require_wholesale_site(site_id: uuid.UUID, user_id: uuid.UUID, db: AsyncSession):
+    result = await db.execute(
+        select(WholesaleSite).where(
+            and_(WholesaleSite.id == site_id, WholesaleSite.user_id == user_id)
+        )
+    )
+    site = result.scalar_one_or_none()
+    if not site:
+        raise HTTPException(status_code=404, detail="Wholesale site not found")
+    return site
+
+
+def get_uploaded_file_path(file_id: str) -> str:
+    files = [filename for filename in os.listdir(UPLOAD_DIR) if filename.startswith(f"{file_id}_")]
+    if not files:
+        raise HTTPException(status_code=404, detail="File not found.")
+    return os.path.join(UPLOAD_DIR, files[0])
+
+
+def read_mapping_sample(file_id: str) -> pd.DataFrame:
+    try:
+        return pd.read_excel(get_uploaded_file_path(file_id), nrows=5)
+    except HTTPException:
+        raise
+    except Exception as error:
+        raise HTTPException(status_code=400, detail=f"Failed to read excel: {error}")
+
+
+def mapping_preview_response(
+    dataframe: pd.DataFrame,
+    mapping: dict,
+    notes: list[str] | None = None,
+    mapping_warnings: list[str] | None = None,
+):
+    preview, row_warnings = build_mapping_preview(dataframe, mapping)
+    warnings = [{"message": warning} for warning in (mapping_warnings or [])] + row_warnings
+    missing = validate_required_mappings(mapping, list(dataframe.columns))
+    if missing:
+        warnings.append({"message": f"Required mappings are missing: {', '.join(missing)}"})
+    return {
+        "column_mapping": mapping,
+        "preview": preview,
+        "standard_example": STANDARD_PRODUCT_EXAMPLE,
+        "warnings": warnings,
+        "notes": notes or [],
+    }
+
 @app.post("/wholesale-sites", response_model=WholesaleSiteResponse)
 async def create_wholesale_site(
     site: WholesaleSiteCreate,
@@ -231,6 +292,68 @@ async def delete_wholesale_site(
     return {"status": "success"}
 
 
+@app.post("/wholesale-sites/{site_id}/mapping-suggestion")
+async def suggest_wholesale_site_mapping(
+    site_id: uuid.UUID,
+    request: WholesaleMappingSuggestionRequest,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    site = await require_wholesale_site(site_id, current_user["id"], db)
+    dataframe = read_mapping_sample(request.file_id)
+    current_mapping = {**(site.column_mapping or {}), **(request.column_mapping or {})}
+    sample_rows = []
+    for _, row in dataframe.iterrows():
+        sample_rows.append({
+            str(key): str(value)[:1_000]
+            for key, value in json_safe_row(row).items()
+        })
+    try:
+        suggestion = await OpenAIClient().suggest_wholesale_mapping(
+            [str(column) for column in dataframe.columns],
+            sample_rows,
+            current_mapping,
+            request.instruction,
+        )
+    except Exception as error:
+        logger.error("OpenAI wholesale mapping suggestion failed: %s", error)
+        raise HTTPException(status_code=502, detail="Could not generate a mapping suggestion.")
+
+    logger.info(
+        "Wholesale mapping suggestion for site %s (instruction=%r): %s",
+        site_id,
+        request.instruction,
+        json.dumps(suggestion["column_mapping"], ensure_ascii=False),
+    )
+    proposed_mapping = {**current_mapping, **suggestion["column_mapping"]}
+    sanitized, mapping_warnings = sanitize_column_mapping(
+        proposed_mapping,
+        [str(column) for column in dataframe.columns],
+    )
+    return mapping_preview_response(
+        dataframe,
+        sanitized,
+        notes=suggestion.get("notes", []),
+        mapping_warnings=mapping_warnings,
+    )
+
+
+@app.post("/wholesale-sites/{site_id}/mapping-preview")
+async def preview_wholesale_site_mapping(
+    site_id: uuid.UUID,
+    request: WholesaleMappingPreviewRequest,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await require_wholesale_site(site_id, current_user["id"], db)
+    dataframe = read_mapping_sample(request.file_id)
+    sanitized, mapping_warnings = sanitize_column_mapping(
+        request.column_mapping,
+        [str(column) for column in dataframe.columns],
+    )
+    return mapping_preview_response(dataframe, sanitized, mapping_warnings=mapping_warnings)
+
+
 
 
 # --- Excel Preview & File Upload ---
@@ -283,18 +406,37 @@ async def start_processing(request: ProcessRequest):
 
 # --- New DB-Backed Processing Endpoints ---
 
+CANONICAL_IMPORT_FIELDS = (
+    "wholesale_product_id",
+    "original_name",
+    "price_wholesale",
+    "price_wholesale_raw",
+    "price_retail",
+    "price_min_selling",
+    "origin",
+    "option_values_raw",
+    "option_variants",
+    "standard_options",
+    "images_list",
+    "image_detail",
+    "wholesale_status",
+    "wholesale_registered_at",
+)
+
+# Fields whose change actually requires re-running the AI pipeline; other changes
+# (price/stock/etc.) are data-only and reflected without reprocessing.
+REPROCESS_TRIGGER_FIELDS = {"original_name", "images_list", "image_detail"}
+# JSON-typed fields: record only that they changed, not the full blob.
+_JSON_CHANGE_FIELDS = {"option_variants", "standard_options", "images_list"}
+
 @app.post("/process-db")
 async def start_db_processing(
     request: ProcessRequest,
     current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    files = [f for f in os.listdir(UPLOAD_DIR) if f.startswith(request.file_id)]
-    if not files:
-        raise HTTPException(status_code=404, detail="File not found.")
-    
-    file_path = os.path.join(UPLOAD_DIR, files[0])
-    
+    file_path = get_uploaded_file_path(request.file_id)
+    filename = os.path.basename(file_path).split("_", 1)[1]
     try:
         df = pd.read_excel(file_path)
     except Exception as e:
@@ -302,30 +444,11 @@ async def start_db_processing(
     
     col_mapping = dict(request.column_mapping)
     if request.wholesale_site_id:
-        result = await db.execute(
-            select(WholesaleSite).where(
-                and_(
-                    WholesaleSite.id == request.wholesale_site_id,
-                    WholesaleSite.user_id == current_user["id"],
-                )
-            )
-        )
-        site = result.scalar_one_or_none()
-        if not site:
-            raise HTTPException(status_code=404, detail="Wholesale site not found")
+        site = await require_wholesale_site(request.wholesale_site_id, current_user["id"], db)
         if site.column_mapping:
             col_mapping = {**site.column_mapping, **col_mapping}
 
-    # 1. ProductImport 생성
-    import_id = uuid.uuid4()
-    import_run = ProductImport(
-        id=import_id,
-        user_id=current_user["id"],
-        filename=files[0][37:], # Remove UUID prefix
-        total_count=len(df),
-        status="pending"
-    )
-    db.add(import_run)
+    col_mapping, _ = sanitize_column_mapping(col_mapping, [str(column) for column in df.columns])
 
     missing_required = validate_required_mappings(col_mapping, list(df.columns))
     if missing_required:
@@ -333,101 +456,197 @@ async def start_db_processing(
             status_code=400,
             detail=f"Required mapped columns missing in excel: {', '.join(missing_required)}",
         )
-        
-    for index, row in df.iterrows():
+
+    parsed_rows = []
+    for _, row in df.iterrows():
         parsed_row = parse_wholesale_row(row, col_mapping)
         product_data = parsed_row["product_data"]
         row_warnings = parsed_row["warnings"]
-
-        original_name = product_data["original_name"]
-        product_code = product_data["product_code"]
-        price_wholesale = product_data["price_wholesale"]
-        wholesale_status = product_data["wholesale_status"]
         product_warnings = (
             {"warnings": row_warnings, "supplier_warnings": row_warnings}
             if row_warnings
             else None
         )
+        parsed_rows.append((product_data, product_warnings))
 
-        # Check for smart upsert if product_code exists
-        existing_product = None
-        if product_code:
-            stmt_existing = select(Product).where(
-                and_(Product.product_code == product_code, Product.user_id == current_user["id"])
+    duplicate_codes = [
+        code
+        for code, count in Counter(
+            product_data["product_code"]
+            for product_data, _ in parsed_rows
+            if product_data["product_code"]
+        ).items()
+        if count > 1
+    ]
+    if duplicate_codes:
+        sample = ", ".join(duplicate_codes[:10])
+        suffix = " ..." if len(duplicate_codes) > 10 else ""
+        raise HTTPException(
+            status_code=400,
+            detail=f"Duplicate product_code values in excel: {sample}{suffix}",
+        )
+
+    product_codes = {
+        product_data["product_code"]
+        for product_data, _ in parsed_rows
+        if product_data["product_code"]
+    }
+    existing_by_code = {}
+    if product_codes:
+        site_filter = (
+            Product.wholesale_site_id == request.wholesale_site_id
+            if request.wholesale_site_id
+            else Product.wholesale_site_id.is_(None)
+        )
+        existing_result = await db.execute(
+            select(Product)
+            .where(
+                Product.user_id == current_user["id"],
+                site_filter,
+                Product.product_code.in_(product_codes),
             )
-            res_existing = await db.execute(stmt_existing)
-            existing_product = res_existing.scalar_one_or_none()
+            .options(selectinload(Product.platform_mappings))
+        )
+        existing_by_code = {
+            product.product_code: product for product in existing_result.scalars().all()
+        }
 
+    import_id = uuid.uuid4()
+    import_run = ProductImport(
+        id=import_id,
+        user_id=current_user["id"],
+        wholesale_site_id=request.wholesale_site_id,
+        filename=filename,
+        total_count=0,
+        status="pending",
+    )
+    db.add(import_run)
+    new_count = updated_count = unchanged_count = reprocess_count = 0
+    # (product, change_type, changed_fields, field_changes) — logs built after flush so new product ids resolve.
+    change_specs = []
+
+    for product_data, product_warnings in parsed_rows:
+        product_code = product_data["product_code"]
+        existing_product = existing_by_code.get(product_code) if product_code else None
         if existing_product:
-            existing_product.original_name = original_name
-            existing_product.import_id = import_id
-            existing_product.wholesale_site_id = request.wholesale_site_id
-            existing_product.wholesale_product_id = product_data["wholesale_product_id"]
-            existing_product.price_wholesale = product_data["price_wholesale"]
-            existing_product.price_wholesale_raw = product_data["price_wholesale_raw"]
-            existing_product.price_retail = product_data["price_retail"]
-            existing_product.price_min_selling = product_data["price_min_selling"]
-            existing_product.origin = product_data["origin"]
+            changed_fields = []
+            field_changes = {}
+            for field_name in CANONICAL_IMPORT_FIELDS:
+                old_value = getattr(existing_product, field_name)
+                new_value = product_data[field_name]
+                if old_value != new_value:
+                    changed_fields.append(field_name)
+                    field_changes[field_name] = (
+                        {"old": None, "new": None}
+                        if field_name in _JSON_CHANGE_FIELDS
+                        else {"old": old_value, "new": new_value}
+                    )
+            if not changed_fields:
+                unchanged_count += 1
+                continue
+
+            needs_reprocess = existing_product.status != "completed" or any(
+                field_name in changed_fields for field_name in REPROCESS_TRIGGER_FIELDS
+            )
+
+            for field_name in CANONICAL_IMPORT_FIELDS:
+                setattr(existing_product, field_name, product_data[field_name])
             existing_product.options = product_data["option_values_raw"]
-            existing_product.option_values_raw = product_data["option_values_raw"]
-            existing_product.option_variants = product_data["option_variants"]
-            existing_product.standard_options = product_data["standard_options"]
-            existing_product.images_list = product_data["images_list"]
-            existing_product.image_detail = product_data["image_detail"]
-            existing_product.wholesale_status = product_data["wholesale_status"]
-            existing_product.wholesale_registered_at = product_data["wholesale_registered_at"]
-            existing_product.status = "pending"
+            existing_product.import_id = import_id
+            if needs_reprocess:
+                existing_product.status = "pending"
+            existing_product.change_type = "updated"
+            existing_product.changed_fields = changed_fields
+            existing_product.field_changes = field_changes
             existing_product.warnings = product_warnings
             existing_product.raw_metadata = product_data["raw_metadata"]
-            
-            mappings_res = await db.execute(
-                select(ProductPlatformMapping).where(ProductPlatformMapping.product_id == existing_product.id)
-            )
-            platform_mappings = mappings_res.scalars().all()
-            for pm in platform_mappings:
-                price_changed = False
-                stock_changed = False
-                
-                if price_wholesale is not None and pm.last_synced_price is not None and pm.last_synced_price != price_wholesale:
-                    price_changed = True
-                    pm.price_changed = True
-                
-                if wholesale_status is not None and pm.last_synced_status is not None and pm.last_synced_status != wholesale_status:
-                    stock_changed = True
-                    pm.stock_changed = True
-                    
-                if price_changed or stock_changed:
-                    pm.sync_status = "pending_update"
-                    pm.last_changed_at = datetime.utcnow()
-                    db.add(pm)
-            
-            db.add(existing_product)
+
+            changed_at = datetime.utcnow()
+            for platform_mapping in existing_product.platform_mappings:
+                platform_mapping.sync_status = "pending_update"
+                platform_mapping.last_changed_at = changed_at
+                if any(
+                    field_name in changed_fields
+                    for field_name in ("price_wholesale", "price_wholesale_raw", "option_variants", "standard_options")
+                ):
+                    platform_mapping.price_changed = True
+                if "wholesale_status" in changed_fields:
+                    platform_mapping.stock_changed = True
+            updated_count += 1
+            change_specs.append((existing_product, "updated", changed_fields, field_changes))
+            if needs_reprocess:
+                reprocess_count += 1
         else:
             product = Product(
                 user_id=current_user["id"],
                 import_id=import_id,
                 wholesale_site_id=request.wholesale_site_id,
-                wholesale_product_id=product_data["wholesale_product_id"],
                 product_code=product_code,
-                price_wholesale=product_data["price_wholesale"],
-                price_wholesale_raw=product_data["price_wholesale_raw"],
-                price_retail=product_data["price_retail"],
-                price_min_selling=product_data["price_min_selling"],
-                origin=product_data["origin"],
                 options=product_data["option_values_raw"],
-                option_values_raw=product_data["option_values_raw"],
-                option_variants=product_data["option_variants"],
-                standard_options=product_data["standard_options"],
-                images_list=product_data["images_list"],
-                image_detail=product_data["image_detail"],
-                wholesale_status=product_data["wholesale_status"],
-                wholesale_registered_at=product_data["wholesale_registered_at"],
-                original_name=original_name,
                 status="pending",
+                change_type="new",
+                changed_fields=[],
+                field_changes=None,
                 warnings=product_warnings,
                 raw_metadata=product_data["raw_metadata"],
+                **{field_name: product_data[field_name] for field_name in CANONICAL_IMPORT_FIELDS},
             )
             db.add(product)
+            if product_code:
+                existing_by_code[product_code] = product
+            new_count += 1
+            change_specs.append((product, "new", [], None))
+            reprocess_count += 1
+
+    # 단종(discontinued): supplier-scoped products absent from this ledger.
+    removed_count = 0
+    if request.wholesale_site_id:
+        removed_conditions = [
+            Product.user_id == current_user["id"],
+            Product.wholesale_site_id == request.wholesale_site_id,
+            Product.product_code.isnot(None),
+            Product.product_code != "",
+            Product.change_type.is_distinct_from("removed"),
+        ]
+        if product_codes:
+            removed_conditions.append(Product.product_code.notin_(product_codes))
+        removed_result = await db.execute(
+            select(Product).where(*removed_conditions).options(selectinload(Product.platform_mappings))
+        )
+        removed_at = datetime.utcnow()
+        for product in removed_result.scalars().all():
+            removed_field_changes = {"wholesale_status": {"old": product.wholesale_status, "new": "단종"}}
+            product.field_changes = removed_field_changes
+            product.wholesale_status = "단종"
+            product.change_type = "removed"
+            product.changed_fields = ["wholesale_status"]
+            for platform_mapping in product.platform_mappings:
+                platform_mapping.sync_status = "pending_update"
+                platform_mapping.stock_changed = True
+                platform_mapping.last_changed_at = removed_at
+            change_specs.append((product, "removed", ["wholesale_status"], removed_field_changes))
+            removed_count += 1
+
+    # Flush so newly-added products get ids, then snapshot one change log per changed product.
+    await db.flush()
+    for product, change_type, changed_fields, field_changes in change_specs:
+        db.add(ProductChangeLog(
+            user_id=current_user["id"],
+            import_id=import_id,
+            product_id=product.id,
+            wholesale_site_id=product.wholesale_site_id,
+            product_code=product.product_code,
+            original_name=product.original_name,
+            change_type=change_type,
+            changed_fields=changed_fields,
+            field_changes=field_changes,
+        ))
+
+    import_run.total_count = reprocess_count
+    import_run.new_count = new_count
+    import_run.updated_count = updated_count
+    import_run.removed_count = removed_count
+    import_run.unchanged_count = unchanged_count
 
     if not request.start_processing:
         import_run.status = "imported"
@@ -435,7 +654,26 @@ async def start_db_processing(
         return {
             "task_id": None,
             "import_id": import_id,
-            "total": len(df)
+            "total": reprocess_count,
+            "new_count": new_count,
+            "updated_count": updated_count,
+            "unchanged_count": unchanged_count,
+            "removed_count": removed_count,
+            "reprocessed_count": reprocess_count,
+        }
+
+    if reprocess_count == 0:
+        import_run.status = "completed"
+        await db.commit()
+        return {
+            "task_id": None,
+            "import_id": import_id,
+            "total": 0,
+            "new_count": new_count,
+            "updated_count": updated_count,
+            "unchanged_count": unchanged_count,
+            "removed_count": removed_count,
+            "reprocessed_count": 0,
         }
 
     await db.commit()
@@ -451,11 +689,16 @@ async def start_db_processing(
     )
     db.add(ProcessingTask(task_id=task.id, user_id=current_user["id"]))
     await db.commit()
-    
+
     return {
         "task_id": task.id,
         "import_id": import_id,
-        "total": len(df)
+        "total": reprocess_count,
+        "new_count": new_count,
+        "updated_count": updated_count,
+        "unchanged_count": unchanged_count,
+        "removed_count": removed_count,
+        "reprocessed_count": reprocess_count,
     }
 
 
@@ -932,11 +1175,47 @@ async def list_imports(
     db: AsyncSession = Depends(get_db)
 ):
     result = await db.execute(
-        select(ProductImport)
+        select(ProductImport, WholesaleSite.name)
+        .outerjoin(WholesaleSite, ProductImport.wholesale_site_id == WholesaleSite.id)
         .where(ProductImport.user_id == current_user["id"])
         .order_by(ProductImport.created_at.desc())
     )
-    return result.scalars().all()
+    imports = []
+    for imp, site_name in result.all():
+        imp.wholesale_site_name = site_name  # unmapped attr; picked up by from_attributes
+        imports.append(imp)
+    return imports
+
+
+@app.get("/imports/{import_id}/changes", response_model=ProductChangeLogListResponse)
+async def list_import_changes(
+    import_id: uuid.UUID,
+    change_type: Optional[str] = None,
+    page: int = 1,
+    page_size: int = 50,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    import_run = await db.get(ProductImport, import_id)
+    if not import_run or import_run.user_id != current_user["id"]:
+        raise HTTPException(status_code=404, detail="Import not found")
+
+    page = max(page, 1)
+    page_size = max(1, min(page_size, 200))
+
+    conditions = [ProductChangeLog.import_id == import_id]
+    if change_type in ("new", "updated", "removed"):
+        conditions.append(ProductChangeLog.change_type == change_type)
+
+    total = await db.scalar(select(func.count()).select_from(ProductChangeLog).where(*conditions))
+    result = await db.execute(
+        select(ProductChangeLog)
+        .where(*conditions)
+        .order_by(ProductChangeLog.change_type, ProductChangeLog.original_name)
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    )
+    return {"total": total or 0, "items": result.scalars().all()}
 
 
 # --- Celery Task Control & Status ---

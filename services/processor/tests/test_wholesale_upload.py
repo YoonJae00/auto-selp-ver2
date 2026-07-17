@@ -3,10 +3,12 @@ import pandas as pd
 from utils.wholesale_upload import (
     REQUIRED_WHOLESALE_FIELDS,
     build_images_list,
+    build_mapping_preview,
     merge_product_warnings,
     parse_int_price,
     parse_option_variants,
     parse_wholesale_row,
+    sanitize_column_mapping,
     validate_required_mappings,
 )
 from utils.standard_product_schema import (
@@ -143,18 +145,14 @@ def test_parse_option_variants_uses_first_option_price_as_representative_even_wh
     ]
 
 
-def test_parse_option_variants_warns_on_count_mismatch():
+def test_parse_option_variants_reuses_single_base_price_for_each_option():
     result = parse_option_variants("L자형,V자형", "2640")
     assert result["price_wholesale"] == 2640
-    assert result["option_variants"] == []
-    assert result["warnings"] == [
-        {
-            "field": "option_variants",
-            "message": "Option count and price count differ.",
-            "option_count": 2,
-            "price_count": 1,
-        }
+    assert result["option_variants"] == [
+        {"name": "L자형", "price_wholesale": 2640, "position": 1},
+        {"name": "V자형", "price_wholesale": 2640, "position": 2},
     ]
+    assert result["warnings"] == []
 
 
 def test_build_images_list_uses_ordered_slots_and_drops_blanks():
@@ -412,7 +410,7 @@ def test_parse_wholesale_row_standard_options_uses_simple_split_fallback_for_rep
     assert [option["option_price_delta"] for option in standard_options] == [0, 0]
 
 
-def test_parse_wholesale_row_suppresses_standard_options_when_option_counts_mismatch():
+def test_parse_wholesale_row_reuses_base_price_when_option_price_list_is_absent():
     row = pd.Series(
         {
             "상태": "정상",
@@ -429,16 +427,93 @@ def test_parse_wholesale_row_suppresses_standard_options_when_option_counts_mism
 
     parsed = parse_wholesale_row(row, {})
 
-    assert parsed["product_data"]["option_variants"] == []
-    assert parsed["product_data"]["standard_options"] == []
-    assert parsed["warnings"] == [
+    assert [item["price_wholesale"] for item in parsed["product_data"]["option_variants"]] == [12000, 12000]
+    assert [item["option_supply_price"] for item in parsed["product_data"]["standard_options"]] == [12000, 12000]
+    assert parsed["warnings"] == []
+
+
+def test_rule_mapping_supports_default_value_map_and_regex_all():
+    row = pd.Series(
         {
-            "field": "option_variants",
-            "message": "Option count and price count differ.",
-            "option_count": 2,
-            "price_count": 1,
+            "상태": "Y",
+            "상품코드": "1000000051",
+            "자체상품코드": "JDM1000010",
+            "상품명(기본)": "족집게",
+            "판매가": 370,
+            "이미지": "https://img.example/list.jpg",
+            "PC쇼핑몰상세설명": "<p>detail</p>",
+            "옵션/추가금액/옵션코드": "01) 평타입/0원/01_JDM1000010\n02) 뾰족타입/+100원/02_JDM1000010",
         }
+    )
+    combined = "옵션/추가금액/옵션코드"
+    mapping = {
+        "wholesale_status": {"source": "상태", "value_map": {"Y": "판매중"}},
+        "wholesale_product_id": "상품코드",
+        "product_code": "자체상품코드",
+        "original_name": "상품명(기본)",
+        "price_wholesale_raw": "판매가",
+        "origin": {"default": "중국"},
+        "image_list_1": "이미지",
+        "image_detail": "PC쇼핑몰상세설명",
+        "option_values_raw": {"source": combined, "pattern": r"\d+\)\s*([^/\n]+?)/", "regex_all": True},
+        "option_price_deltas_raw": {"source": combined, "pattern": r"/([+-]?\d+)원/", "regex_all": True},
+        "option_skus_raw": {"source": combined, "pattern": r"(?m)/([^/\n]+)$", "regex_all": True},
+    }
+
+    parsed = parse_wholesale_row(row, mapping)
+
+    assert parsed["product_data"]["wholesale_status"] == "판매중"
+    assert parsed["product_data"]["origin"] == "중국"
+    assert parsed["product_data"]["option_variants"] == [
+        {"name": "평타입", "price_wholesale": 370, "position": 1},
+        {"name": "뾰족타입", "price_wholesale": 470, "position": 2},
     ]
+    assert [item["option_sku"] for item in parsed["product_data"]["standard_options"]] == [
+        "01_JDM1000010",
+        "02_JDM1000010",
+    ]
+    assert parsed["warnings"] == []
+
+
+def test_default_only_rule_ignores_same_named_fallback_column():
+    row = pd.Series(
+        {
+            "상태": "정상",
+            "제품번호": "12345",
+            "상품코드": "ABC-001",
+            "상품명": "테스트 상품",
+            "가격": "1000",
+            "원산지": "<P align=center><img src='wrong.jpg'></P>",
+            "목록이미지1": "https://img.example/1.jpg",
+            "상세이미지": "https://img.example/detail.jpg",
+        }
+    )
+
+    parsed = parse_wholesale_row(row, {"origin": {"default": "상세정보 참조"}})
+
+    assert parsed["product_data"]["origin"] == "상세정보 참조"
+
+
+def test_mapping_preview_normalizes_up_to_five_rows_and_sanitizes_rules():
+    dataframe = pd.DataFrame([{"상품명": f"상품 {index}", "코드": f"P-{index}"} for index in range(6)])
+    mapping, warnings = sanitize_column_mapping(
+        {
+            "original_name": "상품명",
+            "product_code": "코드",
+            "origin": {"default": "국내"},
+            "unknown": "상품명",
+            "wholesale_status": {"source": "상품명", "pattern": "("},
+        },
+        list(dataframe.columns),
+    )
+    preview, row_warnings = build_mapping_preview(dataframe, mapping)
+
+    assert len(preview) == 5
+    assert preview[0]["original_name"] == "상품 0"
+    assert preview[0]["origin"] == "국내"
+    assert any("unknown target" in warning for warning in warnings)
+    assert any("invalid regex" in warning for warning in warnings)
+    assert row_warnings
 
 
 def test_parse_wholesale_row_suppresses_standard_options_when_option_price_is_invalid():

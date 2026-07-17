@@ -3,13 +3,14 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { api } from '@/lib/api';
 import PillButton from '@/components/UI/PillButton/PillButton';
+import ChangeHistoryPanel from './ChangeHistoryPanel';
 import styles from './upload.module.css';
 
 interface WholesaleSite {
   id: string;
   name: string;
   homepage_url: string | null;
-  column_mapping: Record<string, string> | null;
+  column_mapping: Record<string, MappingValue> | null;
 }
 
 interface UploadResponse {
@@ -17,6 +18,42 @@ interface UploadResponse {
   filename: string;
   columns: string[];
   preview: any[];
+}
+
+interface UploadDraft {
+  uploadData: UploadResponse;
+  columnMapping: Record<string, MappingValue>;
+}
+
+interface MappingRule {
+  source?: string | null;
+  default?: string | null;
+  pattern?: string | null;
+  regex_group?: number | string;
+  regex_all?: boolean;
+  join_with?: string;
+  value_map?: Record<string, string>;
+}
+
+type MappingValue = string | MappingRule;
+
+interface MappingPreviewResponse {
+  column_mapping: Record<string, MappingValue>;
+  preview: Record<string, any>[];
+  standard_example: Record<string, any>;
+  warnings: Array<string | { row?: number; field?: string; message?: string }>;
+  notes?: string | string[] | null;
+}
+
+interface AiMappingChange {
+  fieldKey: string;
+  before?: MappingValue;
+  after?: MappingValue;
+}
+
+interface AiCorrectionResult {
+  changes: AiMappingChange[];
+  notes: string[];
 }
 
 const SYSTEM_FIELD_GROUPS = [
@@ -81,12 +118,34 @@ const SYSTEM_FIELD_GROUPS = [
           '이미지 없음: 컬럼을 선택하지 않거나 값을 비워둡니다.'
         ],
         note: '옵션명 매칭이 다르면 이미지가 해당 옵션에 붙지 않을 수 있습니다.'
+      },
+      {
+        key: 'option_price_deltas_raw',
+        label: '옵션 추가금 목록',
+        required: false,
+        standardKey: 'option_price_deltas_raw',
+        defaultFallbacks: ['옵션추가금', '옵션가격', '추가금', '옵션별가격'],
+        helpText: '옵션 순서에 맞춘 추가 공급가 목록입니다.',
+        format: '옵션 값과 같은 순서의 숫자 목록',
+        sample: '0, 1000, 2000'
+      },
+      {
+        key: 'option_skus_raw',
+        label: '옵션 SKU 목록',
+        required: false,
+        standardKey: 'option_skus_raw',
+        defaultFallbacks: ['옵션sku', '옵션코드', '옵션상품코드'],
+        helpText: '옵션별 재고 관리를 위한 고유 코드 목록입니다.',
+        format: '옵션 값과 같은 순서의 코드 목록',
+        sample: 'BLACK-M, BLACK-L, WHITE-M'
       }
     ]
   }
 ] as const;
 
-const SYSTEM_FIELDS = SYSTEM_FIELD_GROUPS.flatMap(group => group.fields);
+type SystemField = (typeof SYSTEM_FIELD_GROUPS)[number]['fields'][number];
+const SYSTEM_FIELDS = SYSTEM_FIELD_GROUPS.flatMap<SystemField>(group => group.fields);
+const REQUIRED_MAPPING_FIELDS = SYSTEM_FIELDS.filter(field => field.required);
 
 const normalizeHeader = (value: string) => value.trim().replace(/\s+/g, '').toLowerCase();
 
@@ -105,6 +164,120 @@ const findBestColumnMatch = (field: (typeof SYSTEM_FIELDS)[number], columns: str
   }
 };
 
+const mappingSource = (value?: MappingValue) => typeof value === 'string' ? value : value?.source || '';
+const mappingDefault = (value?: MappingValue) => typeof value === 'string' ? '' : value?.default || '';
+const isMappingConfigured = (value?: MappingValue) => Boolean(mappingSource(value).trim() || mappingDefault(value).trim());
+
+const buildHeuristicMapping = (columns: string[]) => {
+  const mapping: Record<string, MappingValue> = {};
+  SYSTEM_FIELDS.forEach((field) => {
+    const matched = findBestColumnMatch(field, columns);
+    if (matched) mapping[field.key] = matched;
+    else if (field.required && columns[0]) mapping[field.key] = columns[0];
+  });
+  return mapping;
+};
+
+const mappingRule = (value?: MappingValue) => value && typeof value !== 'string' ? value : null;
+
+const hasMappingTransform = (value?: MappingValue) => {
+  const rule = mappingRule(value);
+  return Boolean(rule && (
+    mappingDefault(rule).trim()
+    || rule.pattern
+    || rule.regex_all
+    || rule.regex_group != null
+    || rule.join_with
+    || Object.keys(rule.value_map || {}).length
+  ));
+};
+
+const normalizedMappingValue = (value?: MappingValue) => {
+  const rule = mappingRule(value);
+  return {
+    source: mappingSource(value) || null,
+    default: mappingDefault(value) || null,
+    pattern: rule?.pattern || null,
+    regex_group: rule?.regex_group ?? null,
+    regex_all: Boolean(rule?.regex_all),
+    join_with: rule?.join_with || null,
+    value_map: Object.entries(rule?.value_map || {}).sort(([left], [right]) => left.localeCompare(right)),
+  };
+};
+
+const diffMappings = (before: Record<string, MappingValue>, after: Record<string, MappingValue>): AiMappingChange[] => (
+  SYSTEM_FIELDS.flatMap(field => (
+    JSON.stringify(normalizedMappingValue(before[field.key])) === JSON.stringify(normalizedMappingValue(after[field.key]))
+      ? []
+      : [{ fieldKey: field.key, before: before[field.key], after: after[field.key] }]
+  ))
+);
+
+const describeMappingValue = (value?: MappingValue) => {
+  const rule = mappingRule(value);
+  const source = mappingSource(value);
+  const defaultValue = mappingDefault(value);
+  const valueMap = Object.entries(rule?.value_map || {});
+  const parts = [
+    source ? `원본 컬럼 · ${source}` : '',
+    defaultValue ? `${source ? '빈 값 기본값' : '고정값'} · ${defaultValue}` : '',
+    valueMap.length ? `값 치환 · ${valueMap.slice(0, 3).map(([from, to]) => `${from}→${to}`).join(', ')}${valueMap.length > 3 ? ` 외 ${valueMap.length - 3}개` : ''}` : '',
+    rule?.pattern ? '정규식 변환' : '',
+    rule?.regex_all ? '여러 값 추출' : '',
+    rule?.join_with ? `결합 문자 · ${rule.join_with}` : '',
+  ].filter(Boolean);
+  return parts.join(' / ') || '설정 없음';
+};
+
+const formatNotes = (notes?: string | string[] | null) => notes ? (Array.isArray(notes) ? notes : [notes]) : [];
+const draftStorageKey = (siteId: string) => `auto-selp:wholesale-upload-draft:${siteId}`;
+
+const readUploadDraft = (siteId: string): UploadDraft | null => {
+  try {
+    const parsed = JSON.parse(sessionStorage.getItem(draftStorageKey(siteId)) || 'null');
+    return parsed?.uploadData?.file_id
+      && Array.isArray(parsed.uploadData.columns)
+      && parsed.columnMapping
+      && typeof parsed.columnMapping === 'object'
+      ? parsed
+      : null;
+  } catch {
+    return null;
+  }
+};
+
+const removeUploadDraft = (siteId: string) => {
+  try {
+    sessionStorage.removeItem(draftStorageKey(siteId));
+  } catch {
+    // sessionStorage unavailable: in-memory editing still works
+  }
+};
+
+const displayPreviewValue = (value: any) => {
+  if (value == null || value === '') return '';
+  if (Array.isArray(value)) return value.join(', ');
+  if (typeof value === 'object') return JSON.stringify(value);
+  return String(value);
+};
+
+const previewFieldValue = (row: Record<string, any> | undefined, field: SystemField) => {
+  if (!row) return '';
+  const imageIndex = field.key.startsWith('image_list_') ? Number(field.key.slice(-1)) - 1 : -1;
+  if (imageIndex >= 0) return row.images_list?.[imageIndex];
+  if (field.key === 'option_price_deltas_raw') return row.standard_options?.map((option: any) => option.option_price_delta).filter((value: any) => value != null);
+  if (field.key === 'option_skus_raw') return row.standard_options?.map((option: any) => option.option_sku).filter(Boolean);
+  if (field.key === 'option_image_urls_raw') return row.standard_options?.map((option: any) => option.option_main_image_url).filter(Boolean);
+  return row[field.standardKey];
+};
+
+const displayWarning = (warning: MappingPreviewResponse['warnings'][number]) => {
+  if (typeof warning === 'string') return warning;
+  const fieldLabel = SYSTEM_FIELDS.find(field => field.key === warning.field)?.label.replace(' (필수)', '') || warning.field;
+  const message = warning.message === 'Required value is blank.' ? '필수 값이 비어 있습니다.' : warning.message;
+  return [warning.row ? `${warning.row}행` : '', fieldLabel, message].filter(Boolean).join(' · ') || '매핑 결과를 확인해 주세요.';
+};
+
 export default function UploadPage() {
   const [wholesaleSites, setWholesaleSites] = useState<WholesaleSite[]>([]);
   const [activeSite, setActiveSite] = useState<WholesaleSite | null>(null);
@@ -116,23 +289,45 @@ export default function UploadPage() {
   
   // File Uploading & Mapping States
   const [uploadData, setUploadData] = useState<UploadResponse | null>(null);
-  const [columnMapping, setColumnMapping] = useState<Record<string, string>>({});
+  const [columnMapping, setColumnMapping] = useState<Record<string, MappingValue>>({});
+  const [mappingResult, setMappingResult] = useState<MappingPreviewResponse | null>(null);
+  const [mappingInstruction, setMappingInstruction] = useState('');
+  const [mappingError, setMappingError] = useState<string | null>(null);
+  const [initialMappingNotes, setInitialMappingNotes] = useState<string[]>([]);
+  const [aiCorrectionResult, setAiCorrectionResult] = useState<AiCorrectionResult | null>(null);
+  const [draftSiteId, setDraftSiteId] = useState<string | null>(null);
+  const [draftMappingCounts, setDraftMappingCounts] = useState<Record<string, number>>({});
+  const [isMappingValidated, setIsMappingValidated] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [isSuggesting, setIsSuggesting] = useState(false);
+  const [isCorrecting, setIsCorrecting] = useState(false);
+  const [isValidating, setIsValidating] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isPreviewOpen, setIsPreviewOpen] = useState(true); // Added for accordion toggle
+  const [isStudioOpen, setIsStudioOpen] = useState(true); // collapse mapping studio for auto-validated mapped suppliers
+  const [activeTab, setActiveTab] = useState<'upload' | 'history'>('upload');
+  const [savedRun, setSavedRun] = useState(false); // show 업로드 이력 link after a successful save
   
   // Feedback
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const missingRequiredFields = REQUIRED_MAPPING_FIELDS.filter(field => !isMappingConfigured(columnMapping[field.key]));
+  const configuredMappingCount = SYSTEM_FIELDS.filter(field => isMappingConfigured(columnMapping[field.key])).length;
+  const recentlyChangedFieldKeys = new Set(aiCorrectionResult?.changes.map(change => change.fieldKey) || []);
+  const hadSavedMapping = Object.values(activeSite?.column_mapping || {}).some(isMappingConfigured);
 
   // Fetch Wholesale Sites
   const fetchSites = useCallback(async () => {
     try {
       const data = await api.get<WholesaleSite[]>('/api/processor/wholesale-sites');
       setWholesaleSites(data);
+      setDraftMappingCounts(Object.fromEntries(data.flatMap((site) => {
+        const draft = readUploadDraft(site.id);
+        return draft ? [[site.id, Object.values(draft.columnMapping).filter(isMappingConfigured).length]] : [];
+      })));
       if (data.length > 0 && !activeSite) {
         setActiveSite(data[0]);
       }
@@ -145,14 +340,70 @@ export default function UploadPage() {
     fetchSites();
   }, [fetchSites]);
 
-  // Update activeSite's column mapping when it changes
-  useEffect(() => {
-    if (activeSite) {
-      setColumnMapping(activeSite.column_mapping || {});
-    } else {
-      setColumnMapping({});
+  // Core mapping validation shared by 매핑 검증, upload auto-validate, and draft restore.
+  // Sets columnMapping/mappingResult/isMappingValidated/mappingError; returns success. Throws on network error.
+  const validateMapping = useCallback(async (fileId: string, mapping: Record<string, MappingValue>): Promise<boolean> => {
+    if (!activeSite) return false;
+    const missing = REQUIRED_MAPPING_FIELDS.filter(field => !isMappingConfigured(mapping[field.key]));
+    if (missing.length > 0) {
+      setMappingError(`필수 매핑 ${missing.length}개를 연결하거나 고정값을 지정해 주세요.`);
+      setIsMappingValidated(false);
+      return false;
     }
+    const result = await api.post<MappingPreviewResponse>(
+      `/api/processor/wholesale-sites/${activeSite.id}/mapping-preview`,
+      { file_id: fileId, column_mapping: mapping },
+    );
+    setColumnMapping(result.column_mapping);
+    setMappingResult(result);
+    const invalid = REQUIRED_MAPPING_FIELDS.filter(field => !isMappingConfigured(result.column_mapping[field.key]));
+    setIsMappingValidated(invalid.length === 0);
+    if (invalid.length > 0) {
+      setMappingError(`검증 결과 필수 매핑 ${invalid.length}개가 유효하지 않습니다. 컬럼 또는 고정값을 다시 확인해 주세요.`);
+      return false;
+    }
+    setMappingError(null);
+    return true;
   }, [activeSite]);
+
+  useEffect(() => {
+    const siteId = activeSite?.id || null;
+    if (draftSiteId === siteId) return;
+
+    const draft = siteId ? readUploadDraft(siteId) : null;
+    setUploadData(draft?.uploadData || null);
+    setColumnMapping(draft?.columnMapping || activeSite?.column_mapping || {});
+    setMappingResult(null);
+    setMappingInstruction('');
+    setMappingError(null);
+    setInitialMappingNotes([]);
+    setAiCorrectionResult(null);
+    setIsMappingValidated(false);
+    setIsStudioOpen(true);
+    setSavedRun(false);
+    setDraftSiteId(siteId);
+    if (draft && siteId) {
+      void (async () => {
+        try {
+          setIsStudioOpen(!(await validateMapping(draft.uploadData.file_id, draft.columnMapping)));
+        } catch {
+          setIsStudioOpen(true);
+        }
+      })();
+    }
+  }, [activeSite, draftSiteId, validateMapping]);
+
+  useEffect(() => {
+    if (!activeSite || draftSiteId !== activeSite.id || !uploadData) return;
+
+    try {
+      sessionStorage.setItem(draftStorageKey(activeSite.id), JSON.stringify({ uploadData, columnMapping }));
+    } catch {
+      // sessionStorage unavailable: in-memory editing still works
+    }
+    const count = Object.values(columnMapping).filter(isMappingConfigured).length;
+    setDraftMappingCounts(current => current[activeSite.id] === count ? current : { ...current, [activeSite.id]: count });
+  }, [activeSite, draftSiteId, uploadData, columnMapping]);
 
   // Create site
   const handleCreateSite = async (e: React.FormEvent) => {
@@ -184,6 +435,12 @@ export default function UploadPage() {
     setError(null);
     try {
       await api.delete(`/api/processor/wholesale-sites/${id}`);
+      removeUploadDraft(id);
+      setDraftMappingCounts(current => {
+        const next = { ...current };
+        delete next[id];
+        return next;
+      });
       const filtered = wholesaleSites.filter(s => s.id !== id);
       setWholesaleSites(filtered);
       if (activeSite?.id === id) {
@@ -219,26 +476,49 @@ export default function UploadPage() {
     setError(null);
     setIsUploading(true);
     setUploadData(null);
-    
+    setMappingResult(null);
+    setMappingError(null);
+    setInitialMappingNotes([]);
+    setAiCorrectionResult(null);
+    setIsMappingValidated(false);
+    setIsStudioOpen(true);
+    setSavedRun(false);
+    setSuccess(null);
+
     try {
       const data = await api.post<UploadResponse>('/api/processor/upload', formData);
       setUploadData(data);
-      
-      // Perform smart fallback auto-matching on uploaded columns
-      const nextMapping = { ...columnMapping };
-      SYSTEM_FIELDS.forEach(field => {
-        // If not already mapped to an existing column in the excel
-        if (!nextMapping[field.key] || !data.columns.includes(nextMapping[field.key])) {
-          const matched = findBestColumnMatch(field, data.columns);
-          if (matched) {
-            nextMapping[field.key] = matched;
-          } else if (field.required) {
-            nextMapping[field.key] = data.columns[0];
-          }
+      setDraftSiteId(activeSite.id);
+
+      const savedMapping = activeSite.column_mapping || {};
+      if (Object.values(savedMapping).some(isMappingConfigured)) {
+        setColumnMapping(savedMapping);
+        try {
+          const ok = await validateMapping(data.file_id, savedMapping);
+          setIsStudioOpen(!ok);
+          if (ok) setSuccess('저장된 매핑으로 자동 검증까지 완료했습니다. 바로 업데이트를 실행하세요.');
+        } catch (validateError: any) {
+          setIsStudioOpen(true);
+          setError(validateError.message || '저장된 매핑 자동 검증에 실패했습니다. 매핑을 확인해 주세요.');
         }
-      });
-      setColumnMapping(nextMapping);
-      
+      } else {
+        setIsSuggesting(true);
+        try {
+          const suggestion = await api.post<MappingPreviewResponse>(
+            `/api/processor/wholesale-sites/${activeSite.id}/mapping-suggestion`,
+            { file_id: data.file_id },
+          );
+          setColumnMapping(suggestion.column_mapping);
+          setMappingResult(suggestion);
+          setInitialMappingNotes(formatNotes(suggestion.notes));
+          setSuccess('AI가 1차 매핑과 변환 규칙을 만들었습니다. 내용을 확인한 뒤 매핑을 검증해 주세요.');
+        } catch (suggestionError: any) {
+          setColumnMapping(buildHeuristicMapping(data.columns));
+          setError(`AI 자동 매핑에 실패해 기본 컬럼 매핑을 적용했습니다. 직접 수정할 수 있습니다. (${suggestionError.message || '알 수 없는 오류'})`);
+        } finally {
+          setIsSuggesting(false);
+        }
+      }
     } catch (err: any) {
       setError(err.message || '엑셀 파일 해석에 실패했습니다.');
     } finally {
@@ -249,7 +529,19 @@ export default function UploadPage() {
   // Save Column Template mapping to WholesaleSite
   const handleSaveTemplate = async () => {
     if (!activeSite) return;
+    const missing = REQUIRED_MAPPING_FIELDS.filter(field => !isMappingConfigured(columnMapping[field.key]));
+    if (missing.length > 0) {
+      setError(null);
+      setMappingError(`필수 매핑 ${missing.length}개를 연결하거나 고정값을 지정해 주세요.`);
+      return;
+    }
+    if (!isMappingValidated) {
+      setError(null);
+      setMappingError('템플릿을 저장하기 전에 현재 규칙을 매핑 검증해 주세요.');
+      return;
+    }
     setError(null);
+    setMappingError(null);
     try {
       const updated = await api.put<WholesaleSite>(`/api/processor/wholesale-sites/${activeSite.id}`, {
         name: activeSite.name,
@@ -268,21 +560,76 @@ export default function UploadPage() {
     }
   };
 
+  const handleValidateMapping = async () => {
+    if (!activeSite || !uploadData) return;
+    setError(null);
+    setMappingError(null);
+    setSuccess(null);
+    setIsValidating(true);
+    try {
+      if (await validateMapping(uploadData.file_id, columnMapping)) {
+        setSuccess('매핑 검증이 완료되었습니다. 표준 형식 미리보기와 경고를 확인해 주세요.');
+      }
+    } catch (err: any) {
+      setIsMappingValidated(false);
+      setError(err.message || '매핑 검증에 실패했습니다.');
+    } finally {
+      setIsValidating(false);
+    }
+  };
+
+  const handleAiCorrection = async () => {
+    if (!activeSite || !uploadData || !mappingInstruction.trim()) return;
+    const beforeMapping = columnMapping;
+    setError(null);
+    setMappingError(null);
+    setSuccess(null);
+    setIsCorrecting(true);
+    setIsMappingValidated(false);
+    try {
+      const suggestion = await api.post<MappingPreviewResponse>(
+        `/api/processor/wholesale-sites/${activeSite.id}/mapping-suggestion`,
+        {
+          file_id: uploadData.file_id,
+          column_mapping: columnMapping,
+          instruction: mappingInstruction.trim(),
+        },
+      );
+      setColumnMapping(suggestion.column_mapping);
+      setMappingResult(suggestion);
+      setMappingInstruction('');
+      setAiCorrectionResult({
+        changes: diffMappings(beforeMapping, suggestion.column_mapping),
+        notes: formatNotes(suggestion.notes),
+      });
+      setSuccess('AI가 요청대로 매핑 규칙을 수정했습니다. 다시 매핑 검증을 해 주세요.');
+    } catch (err: any) {
+      setError(err.message || 'AI 매핑 수정에 실패했습니다. 현재 매핑은 그대로 유지됩니다.');
+    } finally {
+      setIsCorrecting(false);
+    }
+  };
+
   // Store uploaded supplier products in DB without product processing.
   const handleSaveProductsToDb = async () => {
     if (!activeSite || !uploadData) return;
-    
-    // Validate required fields
-    const missing = SYSTEM_FIELDS.filter(f => f.required && !columnMapping[f.key]);
+    const missing = REQUIRED_MAPPING_FIELDS.filter(field => !isMappingConfigured(columnMapping[field.key]));
     if (missing.length > 0) {
-      setError(`필수 매핑 컬럼이 설정되지 않았습니다: ${missing.map(m => m.label).join(', ')}`);
+      setError(null);
+      setMappingError(`필수 매핑 ${missing.length}개를 연결하거나 고정값을 지정해 주세요.`);
+      return;
+    }
+    if (!isMappingValidated) {
+      setError(null);
+      setMappingError('상품을 저장하기 전에 현재 규칙을 매핑 검증해 주세요.');
       return;
     }
     
     setError(null);
+    setMappingError(null);
     setIsProcessing(true);
     try {
-      const res = await api.post<{ task_id: string | null; import_id: string; total: number }>('/api/processor/process-db', {
+      const res = await api.post<{ task_id: string | null; import_id: string; total: number; new_count: number; updated_count: number; unchanged_count: number; removed_count: number; reprocessed_count: number }>('/api/processor/process-db', {
         file_id: uploadData.file_id,
         column_mapping: columnMapping,
         wholesale_site_id: activeSite.id,
@@ -290,8 +637,15 @@ export default function UploadPage() {
         kipris_enabled: true,
         start_processing: false
       });
-      
-      setSuccess(`${res.total}개의 상품을 DB에 저장했습니다. 상품 가공 화면에서 도매처와 상품을 선택해 가공할 수 있습니다.`);
+
+      setSuccess(`신규 ${res.new_count}개, 변동 ${res.updated_count}개, 단종 ${res.removed_count}개, 변경 없음 ${res.unchanged_count}개입니다. AI 재가공 대상 ${res.total}개만 상품 가공으로 보냈고, 나머지 변동은 상품 관리에 바로 반영했습니다.`);
+      setSavedRun(true);
+      removeUploadDraft(activeSite.id);
+      setDraftMappingCounts(current => {
+        const next = { ...current };
+        delete next[activeSite.id];
+        return next;
+      });
       // Clear file upload state
       setUploadData(null);
     } catch (err: any) {
@@ -314,14 +668,50 @@ export default function UploadPage() {
         </PillButton>
       </div>
 
+      <div className={styles.tabBar} role="tablist">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'upload'}
+          className={`${styles.tab} ${activeTab === 'upload' ? styles.tabActive : ''}`}
+          onClick={() => setActiveTab('upload')}
+        >
+          상품 업로드
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'history'}
+          className={`${styles.tab} ${activeTab === 'history' ? styles.tabActive : ''}`}
+          onClick={() => setActiveTab('history')}
+        >
+          업로드 이력
+        </button>
+      </div>
+
       {error && <div className={styles.error}>{error}</div>}
       {success && <div className={styles.success}>{success}</div>}
+      {savedRun && activeTab === 'upload' && (
+        <button
+          type="button"
+          className={styles.historyLink}
+          onClick={() => { setActiveTab('history'); setSavedRun(false); }}
+        >
+          📋 업로드 이력에서 변동 확인
+        </button>
+      )}
 
+      {activeTab === 'history' ? (
+        <ChangeHistoryPanel />
+      ) : (
+        <>
       {/* Grid of wholesale sites */}
       <div className={styles.sitesGrid}>
         {wholesaleSites.map((site) => {
           const isSelected = activeSite?.id === site.id;
           const mappedCount = Object.keys(site.column_mapping || {}).length;
+          const draftMappedCount = draftMappingCounts[site.id];
+          const hasDraft = draftMappedCount !== undefined;
           
           return (
             <div 
@@ -334,8 +724,12 @@ export default function UploadPage() {
                 <span className={styles.siteUrl}>
                   {site.homepage_url ? site.homepage_url : '웹 주소 정보 없음'}
                 </span>
-                <span className={`${styles.mappingBadge} ${mappedCount === 0 ? styles.mappingBadgeEmpty : ''}`}>
-                  {mappedCount > 0 ? `🔗 ${mappedCount}개 항목 매핑됨` : '⚠️ 템플릿 미설정'}
+                <span className={`${styles.mappingBadge} ${mappedCount === 0 && !hasDraft ? styles.mappingBadgeEmpty : ''}`}>
+                  {mappedCount > 0
+                    ? `🔗 ${mappedCount}개 항목 매핑됨`
+                    : hasDraft
+                      ? `✏️ ${draftMappedCount}개 작성 중`
+                      : '⚠️ 템플릿 미설정'}
                 </span>
               </div>
               <div className={styles.cardActions}>
@@ -376,7 +770,7 @@ export default function UploadPage() {
             onClick={() => fileInputRef.current?.click()}
           >
             <span className={styles.uploadIcon}>📥</span>
-            <h3>{isUploading ? '업로드 해석 중...' : '엑셀 파일을 업로드해 주세요'}</h3>
+            <h3>{isSuggesting ? 'AI가 매핑 규칙을 만드는 중...' : isUploading ? '업로드 해석 중...' : '엑셀 파일을 업로드해 주세요'}</h3>
             <p>클릭하거나 여기로 파일을 드래그합니다 (.xlsx, .xls)</p>
             <input 
               type="file" 
@@ -384,12 +778,26 @@ export default function UploadPage() {
               style={{ display: 'none' }}
               accept=".xlsx,.xls"
               onChange={handleFileSelect}
-              disabled={isUploading}
+              disabled={isUploading || isSuggesting}
             />
           </div>
 
+          {(isUploading || isSuggesting) && (
+            <div className={styles.mappingLoadingCard} role="status" aria-live="polite" aria-busy="true">
+              <div className={styles.loadingSignal} aria-hidden="true"><span /></div>
+              <div className={styles.loadingCopy}>
+                <span className={styles.loadingEyebrow}>AI Mapping Engine</span>
+                <strong>{isSuggesting ? '상품 양식을 분석해 매핑 규칙을 만들고 있습니다' : '엑셀 헤더와 상품 샘플을 읽고 있습니다'}</strong>
+                <p>완료되면 검증 가능한 컬럼 매핑만 표시합니다.</p>
+              </div>
+              <div className={styles.loadingSkeleton} aria-hidden="true">
+                <span /><span /><span />
+              </div>
+            </div>
+          )}
+
           {/* Visual Column Mapper */}
-          {uploadData && (
+          {uploadData && !isUploading && !isSuggesting && (
             <div className={styles.mappingWrapper}>
               {/* Excel Data Preview Section */}
               <div className={styles.previewWrapper}>
@@ -434,65 +842,172 @@ export default function UploadPage() {
                 )}
               </div>
 
-              <div className={styles.sectionHeader}>
-                <h2>Visual Column Mapper (컬럼 매핑 대입)</h2>
-                <p>도매처 엑셀 열 항목과 시스템의 표준 저장 필드를 시각적으로 연결합니다. 처음 한번만 설정하면 저장되어 계속 재사용 가능합니다.</p>
+              <button
+                type="button"
+                className={styles.studioToggle}
+                onClick={() => setIsStudioOpen(open => !open)}
+                aria-expanded={isStudioOpen}
+              >
+                ⚙️ 매핑 규칙 {isStudioOpen ? '접기' : '보기/수정'}
+              </button>
+
+              {isStudioOpen && (
+                <>
+              <div className={styles.mapperSectionHeader}>
+                <div>
+                  <span className={styles.mapperEyebrow}>Mapping Workspace</span>
+                  <h2>컬럼 매핑</h2>
+                  <p>엑셀 원본 컬럼과 고정값, AI 변환 규칙을 확인하고 필요하면 직접 수정하세요.</p>
+                </div>
+                <div className={styles.mappingStats} aria-label="매핑 현황">
+                  <span><strong>{configuredMappingCount}</strong> / {SYSTEM_FIELDS.length} 매핑</span>
+                  <span className={missingRequiredFields.length ? styles.missingStat : styles.completeStat}>
+                    필수 누락 {missingRequiredFields.length}
+                  </span>
+                </div>
               </div>
+
+              {initialMappingNotes.length > 0 && (
+                <div className={styles.initialNotes}>
+                  <strong>AI 1차 분석</strong>
+                  <span>{initialMappingNotes.join(' · ')}</span>
+                </div>
+              )}
+
+              {(missingRequiredFields.length > 0 || mappingError) && (
+                <div className={styles.mappingInlineError} role="alert" aria-live="polite">
+                  <div>
+                    <strong>{mappingError || `필수 매핑 ${missingRequiredFields.length}개가 필요합니다.`}</strong>
+                    <span>엑셀 컬럼을 선택하거나 AI가 만든 고정값을 확인해 주세요.</span>
+                  </div>
+                  {missingRequiredFields.length > 0 && (
+                    <div className={styles.missingFieldChips}>
+                      {missingRequiredFields.map(field => (
+                        <span key={field.key}>{field.label.replace(' (필수)', '')}</span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {SYSTEM_FIELD_GROUPS.map((group) => (
                 <div key={group.title} className={styles.mapperGroup}>
-                  <h3 className={styles.mapperGroupTitle}>{group.title}</h3>
+                  <h3 className={styles.mapperGroupTitle}>
+                    <span>{group.title}</span>
+                    <small>{group.fields.filter(field => isMappingConfigured(columnMapping[field.key])).length} / {group.fields.length}</small>
+                  </h3>
                   <div className={styles.mapperGrid}>
                     {group.fields.map((field) => {
+                      const value = columnMapping[field.key];
+                      const source = mappingSource(value);
+                      const defaultValue = mappingDefault(value);
+                      const rule = mappingRule(value);
+                      const valueMapEntries = Object.entries(rule?.value_map || {});
+                      const isConfigured = isMappingConfigured(value);
+                      const wasJustChanged = recentlyChangedFieldKeys.has(field.key);
                       return (
-                        <div key={field.key} className={styles.mappingField}>
-                          <span className={styles.fieldLabel}>
-                            {field.label}
-                            <span className={styles.helpWrap}>
-                              <button
-                                type="button"
-                                className={styles.helpTrigger}
-                                aria-label={`${field.label} 형식 도움말`}
-                              >
-                                ?
-                              </button>
-                              <span
-                                className={`${styles.helpTooltip} ${'examples' in field ? styles.optionHelpTooltip : ''}`}
-                                role="tooltip"
-                              >
-                                <strong>{field.helpText}</strong>
-                                <span>형식: {field.format}</span>
-                                <span>샘플: {field.sample}</span>
-                                {'examples' in field && (
-                                  <>
-                                    <span className={styles.exampleTitle}>옵션 예시</span>
-                                    <span className={styles.exampleTable}>
-                                      {field.examples.map((example) => (
-                                        <span key={example} className={styles.exampleRow}>
-                                          <span className={styles.exampleType}>{example.split(': ')[0]}</span>
-                                          <code className={styles.exampleCode}>{example.split(': ').slice(1).join(': ')}</code>
-                                        </span>
-                                      ))}
-                                    </span>
-                                    <span className={styles.optionHelpNote}>{field.note}</span>
-                                  </>
-                                )}
+                        <div
+                          key={field.key}
+                          className={`${styles.mappingField} ${isConfigured ? styles.mappingFieldConfigured : ''} ${wasJustChanged ? styles.mappingFieldChanged : ''}`}
+                        >
+                          <div className={styles.mappingFieldHeader}>
+                            <span className={styles.fieldLabel}>
+                              {field.label}
+                              <span className={styles.helpWrap}>
+                                <button
+                                  type="button"
+                                  className={styles.helpTrigger}
+                                  aria-label={`${field.label} 형식 도움말`}
+                                >
+                                  ?
+                                </button>
+                                <span
+                                  className={`${styles.helpTooltip} ${'examples' in field ? styles.optionHelpTooltip : ''}`}
+                                  role="tooltip"
+                                >
+                                  <strong>{field.helpText}</strong>
+                                  <span>형식: {field.format}</span>
+                                  <span>샘플: {field.sample}</span>
+                                  {'examples' in field && (
+                                    <>
+                                      <span className={styles.exampleTitle}>옵션 예시</span>
+                                      <span className={styles.exampleTable}>
+                                        {field.examples.map((example) => (
+                                          <span key={example} className={styles.exampleRow}>
+                                            <span className={styles.exampleType}>{example.split(': ')[0]}</span>
+                                            <code className={styles.exampleCode}>{example.split(': ').slice(1).join(': ')}</code>
+                                          </span>
+                                        ))}
+                                      </span>
+                                      <span className={styles.optionHelpNote}>{field.note}</span>
+                                    </>
+                                  )}
+                                </span>
                               </span>
                             </span>
-                          </span>
-                          <select
-                            className={styles.select}
-                            value={columnMapping[field.key] || ''}
-                            onChange={(e) => setColumnMapping({
-                              ...columnMapping,
-                              [field.key]: e.target.value
-                            })}
-                          >
-                            <option value="">-- 선택 안함 --</option>
-                            {uploadData.columns.map(col => (
-                              <option key={col} value={col}>{col}</option>
-                            ))}
-                          </select>
+                            <span className={styles.fieldBadges}>
+                              {wasJustChanged && <span className={styles.justChangedBadge}>방금 수정됨</span>}
+                              {hasMappingTransform(value) && <span className={styles.aiRuleBadge}>AI 변환</span>}
+                              <span className={isConfigured ? styles.configuredBadge : styles.unconfiguredBadge}>
+                                {isConfigured ? '설정됨' : '미설정'}
+                              </span>
+                            </span>
+                          </div>
+
+                          <label className={styles.sourceControl} htmlFor={`mapping-${field.key}`}>
+                            <span>엑셀 원본 컬럼</span>
+                            <select
+                              id={`mapping-${field.key}`}
+                              className={styles.select}
+                              value={source}
+                              onChange={(event) => {
+                                setColumnMapping({ ...columnMapping, [field.key]: event.target.value });
+                                setIsMappingValidated(false);
+                                setMappingError(null);
+                                setSuccess(null);
+                              }}
+                            >
+                              <option value="">-- 선택 안함 --</option>
+                              {source && !uploadData.columns.includes(source) && (
+                                <option value={source}>⚠ {source} (파일에 없음)</option>
+                              )}
+                              {uploadData.columns.map(col => (
+                                <option key={col} value={col}>{col}</option>
+                              ))}
+                            </select>
+                          </label>
+
+                          <div className={styles.ruleChips} aria-label={`${field.label} 현재 규칙`}>
+                            {source && <span className={styles.sourceRuleChip}>원본 · {source}</span>}
+                            {defaultValue && <span className={styles.defaultRuleChip}>{source ? '빈 값 기본값' : '고정값'} · {defaultValue}</span>}
+                            {valueMapEntries.length > 0 && <span className={styles.valueMapRuleChip}>값 치환 · {valueMapEntries.length}개</span>}
+                            {rule?.pattern && <span className={styles.transformRuleChip}>정규식 변환</span>}
+                            {rule?.regex_all && <span className={styles.transformRuleChip}>여러 값 추출</span>}
+                            {rule?.join_with && <span className={styles.transformRuleChip}>결합 · {rule.join_with}</span>}
+                            {!source && !defaultValue && !hasMappingTransform(value) && <span className={styles.emptyRuleChip}>규칙 없음</span>}
+                          </div>
+
+                          {defaultValue && (
+                            <div className={styles.fixedValueRule}>
+                              <span>{source ? '값이 비었을 때' : '고정값'}</span>
+                              <strong>{defaultValue}</strong>
+                            </div>
+                          )}
+
+                          {valueMapEntries.length > 0 && (
+                            <div className={styles.valueMapSummary}>
+                              <span>값 치환</span>
+                              <strong>{valueMapEntries.slice(0, 3).map(([from, to]) => `${from} → ${to}`).join(' · ')}{valueMapEntries.length > 3 ? ` · 외 ${valueMapEntries.length - 3}개` : ''}</strong>
+                            </div>
+                          )}
+
+                          {rule?.pattern && (
+                            <div className={styles.regexDetail}>
+                              <span>정규식</span>
+                              <code>{rule.pattern}</code>
+                              {rule.regex_group != null && <small>그룹 {rule.regex_group}</small>}
+                            </div>
+                          )}
                         </div>
                       );
                     })}
@@ -500,10 +1015,148 @@ export default function UploadPage() {
                 </div>
               ))}
 
+              <section className={styles.correctionPanel} aria-labelledby="ai-mapping-studio-title" aria-busy={isCorrecting}>
+                <div className={styles.studioMain}>
+                  <div className={styles.studioHeading}>
+                    <span className={styles.studioBadge}><i aria-hidden="true" /> AI Mapping Studio</span>
+                    <h3 id="ai-mapping-studio-title">원하는 결과를 말로 알려주세요</h3>
+                    <p>AI는 한 번만 규칙을 고치고, 이후 모든 상품에는 같은 규칙을 적용합니다.</p>
+                  </div>
+                  <div className={styles.studioComposer}>
+                    <textarea
+                      className={styles.instructionInput}
+                      value={mappingInstruction}
+                      onChange={(event) => setMappingInstruction(event.target.value)}
+                      placeholder="예: 원산지는 모두 상세정보 참조로, 판매 상태는 값이 없으면 판매중으로 바꿔줘"
+                      aria-label="AI 매핑 수정 요청"
+                      disabled={isCorrecting}
+                      rows={3}
+                    />
+                    <div className={styles.studioComposerFooter}>
+                      <span aria-live="polite">{mappingInstruction.trim() ? '요청을 보낼 준비가 됐습니다.' : '자연어로 바꿀 규칙을 입력하세요.'}</span>
+                      <PillButton
+                        variant="primary"
+                        className={styles.studioButton}
+                        onClick={handleAiCorrection}
+                        disabled={isCorrecting || isValidating || !mappingInstruction.trim()}
+                        type="button"
+                      >
+                        {isCorrecting ? '수정 중...' : <>AI로 수정 <span aria-hidden="true">↗</span></>}
+                      </PillButton>
+                    </div>
+                  </div>
+                </div>
+
+                {aiCorrectionResult && (
+                  <div className={styles.aiCorrectionResult} aria-live="polite">
+                    <div className={styles.resultHeader}>
+                      <span>AI 수정 결과</span>
+                      <strong>{aiCorrectionResult.changes.length > 0 ? `${aiCorrectionResult.changes.length}개 규칙 변경` : '변경된 규칙 없음'}</strong>
+                    </div>
+                    {aiCorrectionResult.changes.length > 0 ? (
+                      <div className={styles.resultChanges}>
+                        {aiCorrectionResult.changes.map(change => (
+                          <div key={change.fieldKey} className={styles.resultChangeRow}>
+                            <strong>{SYSTEM_FIELDS.find(field => field.key === change.fieldKey)?.label.replace(' (필수)', '') || change.fieldKey}</strong>
+                            <div>
+                              <span className={styles.beforeRule}>{describeMappingValue(change.before)}</span>
+                              <span className={styles.changeArrow} aria-hidden="true">→</span>
+                              <span className={styles.afterRule}>{describeMappingValue(change.after)}</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className={styles.noChanges}>현재 규칙이 이미 요청 내용과 일치합니다.</p>
+                    )}
+                    {aiCorrectionResult.notes.length > 0 && (
+                      <div className={styles.resultNotes}>
+                        <span>AI 설명</span>
+                        <p>{aiCorrectionResult.notes.join(' · ')}</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </section>
+
+              <div className={styles.validationBar}>
+                <span className={`${styles.validationState} ${isMappingValidated ? styles.validationComplete : styles.validationRequired}`}>
+                  {isMappingValidated ? '✓ 검증 완료' : '↻ 재검증 필요'}
+                </span>
+                <PillButton
+                  variant="primary"
+                  onClick={handleValidateMapping}
+                  disabled={isValidating || isSuggesting}
+                  type="button"
+                >
+                  {isValidating ? '검증 중...' : '매핑 검증'}
+                </PillButton>
+              </div>
+                </>
+              )}
+
+              {mappingResult && (
+                <div className={styles.standardPreview}>
+                  <div className={styles.standardPreviewHeader}>
+                    <div>
+                      <h3>표준 형식 매핑 미리보기</h3>
+                      <p>형식 예시와 변환된 상품 최대 5개를 비교해 주세요.</p>
+                    </div>
+                    {!isMappingValidated && <span className={styles.previewNotice}>현재 규칙은 검증 전입니다</span>}
+                  </div>
+                  {mappingResult.warnings?.length > 0 && (
+                    <div className={styles.warningList}>
+                      <strong>확인 필요</strong>
+                      <ul>
+                        {mappingResult.warnings.map((warning, index) => (
+                          <li key={index}>{displayWarning(warning)}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  {mappingResult.notes && (
+                    <p className={styles.mappingNotes}>
+                      {Array.isArray(mappingResult.notes) ? mappingResult.notes.join(' · ') : mappingResult.notes}
+                    </p>
+                  )}
+                  <div className={styles.previewTableContainer}>
+                    <table className={styles.previewTable}>
+                      <thead>
+                        <tr>
+                          <th className={styles.rowNumber}>구분</th>
+                          {SYSTEM_FIELDS.map((field) => <th key={field.key}>{field.label.replace(' (필수)', '')}</th>)}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {[mappingResult.standard_example, ...mappingResult.preview.slice(0, 5)].map((row, rowIndex) => (
+                          <tr key={rowIndex} className={rowIndex === 0 ? styles.examplePreviewRow : ''}>
+                            <td className={styles.rowNumber}>{rowIndex === 0 ? '형식 예시' : `상품 ${rowIndex}`}</td>
+                            {SYSTEM_FIELDS.map((field) => {
+                              const value = displayPreviewValue(previewFieldValue(row, field));
+                              const isMissing = field.required && rowIndex > 0 && !value;
+                              return (
+                                <td
+                                  key={field.key}
+                                  className={isMissing ? styles.missingValue : ''}
+                                  title={isMissing ? `${field.label}: 필수 값 없음` : value}
+                                >
+                                  {isMissing ? '필수 값 없음' : value || '-'}
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
               <div className={styles.mapperActions}>
                 <PillButton 
                   variant="secondary"
                   onClick={handleSaveTemplate}
+                  disabled={!isMappingValidated || isProcessing}
                   type="button"
                 >
                   💾 도매처 템플릿 저장
@@ -511,15 +1164,19 @@ export default function UploadPage() {
                 <PillButton 
                   variant="primary"
                   onClick={handleSaveProductsToDb}
-                  disabled={isProcessing}
+                  disabled={isProcessing || !isMappingValidated}
                   type="button"
                 >
-                  {isProcessing ? 'DB 저장 중...' : 'DB에 상품 저장'}
+                  {isProcessing
+                    ? (hadSavedMapping ? '업데이트 중...' : 'DB 저장 중...')
+                    : (hadSavedMapping ? '업데이트 실행' : 'DB에 상품 저장')}
                 </PillButton>
               </div>
             </div>
           )}
         </div>
+      )}
+        </>
       )}
 
       {/* Create site interactive Modal */}
