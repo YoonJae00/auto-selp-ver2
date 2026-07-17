@@ -196,7 +196,6 @@ function DetailModal({ task, onClose }: { task: Task; onClose: () => void }) {
   return (
     <div className={styles.modalOverlay} onClick={onClose}>
       <div className={styles.modalPanel} onClick={(e) => e.stopPropagation()}>
-        <span className={styles.panelAurora} aria-hidden />
         {/* Header */}
         <div className={styles.modalHeader}>
           <button className={styles.backBtn} onClick={onClose}>← 목록</button>
@@ -430,7 +429,6 @@ export default function IntelligenceCapsule() {
         {/* Compact list drawer, anchored to the orb's quadrant */}
         {isDrawerOpen && !selectedTask && (
           <div className={styles.drawer} style={drawerStyle}>
-            <span className={styles.panelAurora} aria-hidden />
             <ListView
               tasks={tasks}
               onSelect={handleSelectTask}

@@ -53,12 +53,13 @@
   z-index: 0;
 }
 
-/* Aurora stack — hue cycles as a whole for the shifting-rainbow feel */
+/* Aurora stack — hue cycles + slow circular rotation so colors flow around
+   the orb (Apple-Intelligence style). Paused at rest; runs on hover/active. */
 .orbAurora {
   position: absolute;
   inset: -20%;
   z-index: 1;
-  animation: auroraHue 14s linear infinite;
+  animation: auroraHue 14s linear infinite, orbSpin 9s linear infinite;
 }
 @keyframes auroraHue { to { filter: hue-rotate(360deg); } }
 
@@ -124,6 +125,22 @@
 .orbFailure .orbAurora  { filter: hue-rotate(-40deg) saturate(1.2); }
 .orbSuccess .auroraBlob,
 .orbFailure .auroraBlob { animation-duration: 16s; }
+
+/* Idle = frozen. Only flow on hover or while a task is running (.orbActive).
+   Pausing (not stopping) keeps position continuous across hover in/out. */
+.orbAurora,
+.auroraBlob,
+.orbGlowNear,
+.orbGlowFar { animation-play-state: paused; }
+
+.orb:hover .orbAurora,
+.orb:hover .auroraBlob,
+.orb:hover .orbGlowNear,
+.orb:hover .orbGlowFar,
+.orbActive .orbAurora,
+.orbActive .auroraBlob,
+.orbActive .orbGlowNear,
+.orbActive .orbGlowFar { animation-play-state: running; }
 
 @keyframes orbSpin  { to { transform: rotate(360deg); } }
 @keyframes orbBreathe {
@@ -230,71 +247,24 @@
   .orbGlowNear            { animation-duration: 30s; }
   .orbActive .orbGlowFar  { animation-duration: 8s; }
   .orb                    { transition-duration: 0.4s; }
-  .drawer::before,
-  .modalPanel::after      { animation-duration: 40s; }
-  .panelAurora            { animation-duration: 60s; }
 }
 
 /* ── Drawer (compact list) ───────────────────────────────────────────────── */
 
 .drawer {
   position: absolute;
-  isolation: isolate; /* stacking context so the aurora wash (z:-1) stays inside */
   width: 360px;
   max-height: 480px;
   background: rgba(255, 255, 255, 0.78);
   backdrop-filter: blur(30px) saturate(1.6);
   -webkit-backdrop-filter: blur(30px) saturate(1.6);
+  border: 1px solid rgba(255, 255, 255, 0.5);
   border-radius: 22px;
   box-shadow:
     0 20px 56px rgba(60, 40, 120, 0.18),
     inset 0 1px 0 rgba(255, 255, 255, 0.7);
   overflow: hidden;
   animation: drawerIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-/* Rotating pastel rainbow border. @property animates the conic angle;
-   without support it degrades to a static border (var(--angle) = 0deg). */
-@property --angle {
-  syntax: '<angle>';
-  initial-value: 0deg;
-  inherits: false;
-}
-.drawer::before,
-.modalPanel::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  padding: 1px;
-  --angle: 0deg;
-  background: conic-gradient(from var(--angle),
-    #ff9ec7, #a5b4fc, #c4b5fd, #fdba74, #7dd3fc, #ff9ec7);
-  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-  -webkit-mask-composite: xor;
-  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-  mask-composite: exclude;
-  opacity: 0.35;
-  pointer-events: none;
-  z-index: 5;
-  animation: borderSpin 12s linear infinite;
-}
-@keyframes borderSpin { to { --angle: 360deg; } }
-
-/* Iridescent aurora wash bleeding behind the frosted glass (slow hue cycle) */
-.panelAurora {
-  position: absolute;
-  inset: -30%;
-  z-index: -1;
-  pointer-events: none;
-  background:
-    radial-gradient(40% 40% at 25% 20%, rgba(255,45,149,0.5), transparent 70%),
-    radial-gradient(45% 45% at 80% 28%, rgba(47,107,255,0.45), transparent 70%),
-    radial-gradient(42% 42% at 62% 92%, rgba(255,157,60,0.4), transparent 70%);
-  filter: blur(40px);
-  opacity: 0.3;
-  will-change: filter;
-  animation: auroraHue 18s linear infinite;
 }
 
 @keyframes drawerIn {
@@ -437,7 +407,6 @@
 
 .modalPanel {
   position: relative;
-  isolation: isolate; /* stacking context so the aurora wash (z:-1) stays inside */
   width: 100%;
   max-width: 800px;
   height: calc(100vh - 48px);
@@ -445,6 +414,7 @@
   background: rgba(255, 255, 255, 0.82);
   backdrop-filter: blur(30px) saturate(1.6);
   -webkit-backdrop-filter: blur(30px) saturate(1.6);
+  border: 1px solid rgba(255, 255, 255, 0.5);
   border-radius: 28px;
   box-shadow:
     0 32px 80px rgba(60, 40, 120, 0.28),
