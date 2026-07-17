@@ -24,11 +24,20 @@
   outline: none;
   -webkit-tap-highlight-color: transparent;
   touch-action: none; /* let pointer drag own the gesture */
-  transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+  /* Resting: colors dimmed to a soft near-mono (aurora keyframes own their
+     layers' filter even when paused, so the dim lives here on the button). */
+  filter: grayscale(0.85) opacity(0.75) contrast(0.92);
+  transition:
+    transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1),
+    filter 0.4s ease;
 }
 
 .orb:hover { transform: scale(1.08); }
 .orb:active { transform: scale(1.02); }
+
+/* Color wakes up on hover or while a task runs */
+.orb:hover,
+.orbActive { filter: none; }
 
 /* Light glass body — clips the aurora into the circle, frosted translucent white */
 .orbBody {
