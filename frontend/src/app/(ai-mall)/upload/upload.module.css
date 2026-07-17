@@ -178,6 +178,91 @@
   background: rgba(255, 59, 48, 0.1);
 }
 
+.cardActionsLeft {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.editMappingBtn {
+  background: transparent;
+  border: none;
+  color: var(--primary);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  padding: 4px 8px;
+  border-radius: 6px;
+  transition: background 0.2s;
+}
+
+.editMappingBtn:hover {
+  background: var(--primary-soft, rgba(0, 122, 255, 0.1));
+}
+
+/* Edit-mapping-without-file modal */
+.editMappingModal {
+  max-width: 720px;
+  display: flex;
+  flex-direction: column;
+  max-height: 85vh;
+}
+
+.editMappingHint {
+  font-size: 13px;
+  color: var(--ink-muted-80);
+  margin: 0 0 16px 0;
+}
+
+.editMappingBody {
+  overflow-y: auto;
+  flex: 1;
+  padding-right: 4px;
+}
+
+.editMappingGroup {
+  margin-bottom: 20px;
+}
+
+.editMappingRow {
+  display: grid;
+  grid-template-columns: 200px 1fr;
+  gap: 12px;
+  align-items: center;
+  padding: 8px 0;
+}
+
+.editMappingLabel {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--ink);
+}
+
+.editMappingRuleNote {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--ink-muted-80);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.editMappingInputs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+@media (max-width: 640px) {
+  .editMappingRow {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+}
+
 .uploadBtn {
   background: var(--primary);
   color: white;

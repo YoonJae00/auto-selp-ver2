@@ -1,164 +1,229 @@
-/* ── Position: bottom-RIGHT ──────────────────────────────────────────────── */
+/* ── Container (draggable, absolutely positioned via inline left/top) ────── */
 
 .container {
   position: fixed;
-  bottom: 24px;
-  right: 24px;
   z-index: 1000;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 10px;
+  width: 60px;
+  height: 60px;
 }
 
-/* ── Capsule Wrapper (To contain outer glow without clipping) ───────────── */
-.capsuleWrapper {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-}
+.dragging { cursor: grabbing; }
+.dragging .orb { transition: none; cursor: grabbing; }
 
-/* ── Capsule ─────────────────────────────────────────────────────────────── */
+/* ── Intelligence Orb ────────────────────────────────────────────────────── */
 
-.capsule {
+.orb {
   position: relative;
-  display: flex;
-  align-items: center;
-  height: 44px;
-  padding: 0; /* Padding is 0 so capsuleInner handles inner padding */
+  width: 60px;
+  height: 60px;
+  padding: 0;
   border: none;
-  border-radius: 22px;
-  background: rgba(255, 255, 255, 0.85);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  box-shadow:
-    0 2px 8px rgba(0,0,0,0.08),
-    0 0 0 1px rgba(255,255,255,0.6) inset;
-  cursor: pointer;
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
-  outline: none;
-  z-index: 2; /* Sits above the glowRing */
-  overflow: hidden; /* Clips the rotating conic gradient to the rounded capsule shape */
-}
-
-.capsule:hover {
-  transform: scale(1.03);
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.12);
-}
-
-.capsule.loading {
-  padding: 1.5px; /* Creates the 1.5px gap for the rainbow border */
+  border-radius: 50%;
   background: transparent;
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+  cursor: grab;
+  outline: none;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: none; /* let pointer drag own the gesture */
+  /* Resting: colors dimmed to a soft near-mono (aurora keyframes own their
+     layers' filter even when paused, so the dim lives here on the button). */
+  filter: grayscale(0.85) opacity(0.75) contrast(0.92);
+  transition:
+    transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1),
+    filter 0.4s ease;
 }
 
-/* ── Inner Content (Apple glassmorphism) ── */
-.capsuleInner {
-  display: flex;
-  align-items: center;
-  width: 100%;
-  height: 100%;
-  padding: 0 20px;
-  border-radius: 21px; /* Fits inside the 22px capsule with 1.5px gap */
-  background: rgba(255, 255, 255, 0.9);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  z-index: 3;
-}
+.orb:hover { transform: scale(1.08); }
+.orb:active { transform: scale(1.02); }
 
-/* ── Rainbow Border Layer ── */
-.rainbowBorder {
+/* Color wakes up on hover or while a task runs */
+.orb:hover,
+.orbActive { filter: none; }
+
+/* Light glass body — clips the aurora into the circle, frosted translucent white */
+.orbBody {
   position: absolute;
-  inset: -50%; /* Large enough to cover the rotation area */
+  inset: 0;
+  border-radius: 50%;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.55);
+  backdrop-filter: blur(6px) saturate(1.3);
+  -webkit-backdrop-filter: blur(6px) saturate(1.3);
+  box-shadow:
+    0 8px 24px rgba(120, 80, 200, 0.28),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.7);
+}
+
+/* Smooth conic rainbow disc — blue→purple→pink→orange→cyan in spectral order
+   so the blurred blend stays clean (no muddy mixing). Rotates + hue-cycles to
+   "flow" like the Apple-Intelligence glow. Paused at rest; runs on hover/active. */
+.orbAurora {
+  position: absolute;
+  inset: -30%;
+  z-index: 0;
   background: conic-gradient(
     from 0deg,
-    #ff3b30, #ff9500, #34c759, #007aff, #af52de, #ff3b30
+    #3b82f6, #8b5cf6, #ec4899, #f97316, #22d3ee, #3b82f6
   );
-  animation: spinRainbow 3s linear infinite;
+  filter: blur(9px) saturate(1.3);
+  will-change: transform, filter;
+  animation: orbSpin 7s linear infinite, auroraHue 12s linear infinite;
+}
+@keyframes auroraHue { to { filter: blur(9px) saturate(1.3) hue-rotate(360deg); } }
+
+/* Glass core: bright top-center highlight over the disc for a sphere feel */
+.orbCore {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
   z-index: 1;
+  background: radial-gradient(circle at 50% 38%, rgba(255,255,255,0.72) 0%, rgba(255,255,255,0.15) 42%, rgba(255,255,255,0) 66%);
+}
+
+/* State: only speed differs. Same rainbow palette in every state —
+   status is conveyed by the glyph (✓/✕) and the outer glow color. */
+.orbActive .orbAurora { animation-duration: 4s, 8s; }
+
+/* Idle = frozen. Only flow on hover or while a task is running (.orbActive).
+   Pausing (not stopping) keeps position continuous across hover in/out. */
+.orbAurora,
+.orbGlowNear,
+.orbGlowFar { animation-play-state: paused; }
+
+.orb:hover .orbAurora,
+.orb:hover .orbGlowNear,
+.orb:hover .orbGlowFar,
+.orbActive .orbAurora,
+.orbActive .orbGlowNear,
+.orbActive .orbGlowFar { animation-play-state: running; }
+
+@keyframes orbSpin  { to { transform: rotate(360deg); } }
+@keyframes orbBreathe {
+  0%,100% { transform: scale(1);    opacity: 0.5; }
+  50%     { transform: scale(1.1);  opacity: 0.72; }
+}
+@keyframes orbPulse {
+  0%,100% { transform: scale(1);    opacity: 0.7; }
+  50%     { transform: scale(1.22); opacity: 0.98; }
+}
+
+/* Glass sheen reflection on top */
+.orbSheen {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 34% 24%, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0) 40%),
+    radial-gradient(circle at 68% 84%, rgba(255,255,255,0.1) 0%, rgba(255,255,255,0) 42%);
+  mix-blend-mode: screen;
   pointer-events: none;
+  z-index: 2;
 }
 
-@keyframes spinRainbow {
-  from { transform: rotate(0deg); }
-  to   { transform: rotate(360deg); }
-}
-
-.glowRing {
+/* Two-layer outer glow: near dense ring + far soft bloom */
+.orbGlowNear {
   position: absolute;
   inset: -6px;
-  border-radius: 28px;
-  /* Small bright arc (0-40deg) + rest transparent → after blur looks ambient */
+  border-radius: 50%;
+  z-index: -1;
+  pointer-events: none;
+  will-change: transform;
   background: conic-gradient(
     from 0deg,
-    rgba(167, 139, 250, 0)   0deg,
-    rgba(167, 139, 250, 0.9) 10deg,
-    rgba(96,  165, 250, 0.9) 22deg,
-    rgba(52,  211, 153, 0.7) 36deg,
-    rgba(52,  211, 153, 0)   48deg,
-    rgba(167, 139, 250, 0)   360deg
+    rgba(59,130,246,0.7), rgba(139,92,246,0.7), rgba(236,72,153,0.65),
+    rgba(249,115,22,0.6), rgba(34,211,238,0.65), rgba(59,130,246,0.7)
   );
-  filter: blur(14px);
-  animation: orbitGlow 4.5s linear infinite;
-  z-index: 1; /* Renders behind button (which has z-index 2) */
+  filter: blur(12px);
+  opacity: 0.7;
+  animation: orbSpin 10s linear infinite;
+}
+.orbGlowFar {
+  position: absolute;
+  inset: -20px;
+  border-radius: 50%;
+  z-index: -2;
   pointer-events: none;
+  will-change: transform, opacity;
+  background: radial-gradient(circle, rgba(130,90,246,0.45), rgba(40,10,90,0) 70%);
+  filter: blur(28px);
+  opacity: 0.6;
+  animation: orbBreathe 6s ease-in-out infinite;
 }
 
-@keyframes orbitGlow {
-  from { transform: rotate(0deg); }
-  to   { transform: rotate(360deg); }
+/* Active: brighter, faster. Failure: red glow. Success/idle: calm default glow. */
+.orbActive .orbGlowNear { animation-duration: 5s; opacity: 0.95; }
+.orbActive .orbGlowFar  { animation: orbPulse 2.4s ease-in-out infinite; opacity: 0.95; }
+.orbFailure .orbGlowNear {
+  background: conic-gradient(from 0deg,
+    rgba(255,60,90,0.75), rgba(255,120,80,0.6), rgba(255,60,90,0.75));
+}
+.orbFailure .orbGlowFar  { background: radial-gradient(circle, rgba(255,60,90,0.55), rgba(90,10,20,0) 70%); }
+
+/* Progress ring (conic sweep masked into a thin ring around the orb) */
+.orbRing {
+  position: absolute;
+  inset: -5px;
+  border-radius: 50%;
+  z-index: 3;
+  pointer-events: none;
+  background: conic-gradient(
+    from -90deg,
+    rgba(124, 58, 237, 0.95) calc(var(--p, 0) * 1%),
+    rgba(124, 58, 237, 0.14) 0
+  );
+  -webkit-mask: radial-gradient(circle, transparent 56%, #000 58%);
+  mask: radial-gradient(circle, transparent 56%, #000 58%);
 }
 
-
-/* ── Capsule content ─────────────────────────────────────────────────────── */
-
-.capsuleContent {
+/* Content (progress % or status glyph) */
+.orbContent {
+  position: absolute;
+  inset: 0;
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--ink);
-  white-space: nowrap;
+  justify-content: center;
+  z-index: 4;
+  pointer-events: none;
+  color: #4c1d95;
+  text-shadow: 0 0 6px rgba(255,255,255,0.9), 0 1px 2px rgba(255,255,255,0.8);
 }
 
-.capsuleIcon { font-size: 14px; }
-
-.miniBar {
-  width: 52px;
-  height: 3px;
-  background: rgba(0, 0, 0, 0.08);
-  border-radius: 2px;
-  overflow: hidden;
+.orbPercent {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
 }
+.orbPercent i { font-size: 9px; font-style: normal; opacity: 0.85; margin-left: 1px; }
+.orbIcon { font-size: 24px; font-weight: 700; line-height: 1; }
 
-.miniBarFill {
-  height: 100%;
-  background: linear-gradient(90deg, #a78bfa, #60a5fa, #34d399);
-  border-radius: 2px;
-  transition: width 0.4s ease;
+@media (prefers-reduced-motion: reduce) {
+  .orbAurora              { animation-duration: 30s, 40s; }
+  .orbActive .orbAurora   { animation-duration: 20s, 30s; }
+  .orbGlowNear            { animation-duration: 30s; }
+  .orbActive .orbGlowFar  { animation-duration: 8s; }
+  .orb                    { transition-duration: 0.4s; }
 }
 
 /* ── Drawer (compact list) ───────────────────────────────────────────────── */
 
 .drawer {
+  position: absolute;
   width: 360px;
   max-height: 480px;
-  background: rgba(255, 255, 255, 0.92);
-  backdrop-filter: blur(28px);
-  -webkit-backdrop-filter: blur(28px);
-  border: 1px solid rgba(0, 0, 0, 0.06);
-  border-radius: 20px;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.14);
+  background: rgba(255, 255, 255, 0.78);
+  backdrop-filter: blur(30px) saturate(1.6);
+  -webkit-backdrop-filter: blur(30px) saturate(1.6);
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  border-radius: 22px;
+  box-shadow:
+    0 20px 56px rgba(60, 40, 120, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.7);
   overflow: hidden;
-  animation: drawerIn 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+  animation: drawerIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 @keyframes drawerIn {
-  from { opacity: 0; transform: translateY(10px) scale(0.97); }
+  from { opacity: 0; transform: translateY(10px) scale(0.96); }
   to   { opacity: 1; transform: translateY(0) scale(1); }
 }
 
@@ -279,15 +344,15 @@
 .modalOverlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.45);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  background: rgba(40, 30, 70, 0.32);
+  backdrop-filter: blur(14px) saturate(1.2);
+  -webkit-backdrop-filter: blur(14px) saturate(1.2);
   z-index: 2000;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 24px;
-  animation: overlayIn 0.2s ease;
+  animation: overlayIn 0.22s ease;
 }
 
 @keyframes overlayIn {
@@ -296,21 +361,39 @@
 }
 
 .modalPanel {
+  position: relative;
   width: 100%;
   max-width: 800px;
   height: calc(100vh - 48px);
   max-height: 820px;
-  background: #fff;
-  border-radius: 24px;
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.22);
+  background: rgba(255, 255, 255, 0.82);
+  backdrop-filter: blur(30px) saturate(1.6);
+  -webkit-backdrop-filter: blur(30px) saturate(1.6);
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  border-radius: 28px;
+  box-shadow:
+    0 32px 80px rgba(60, 40, 120, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.8);
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  animation: modalIn 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+  animation: modalIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Neon gradient accent strip across the top of the modal */
+.modalPanel::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 4px;
+  background: linear-gradient(90deg, #ff2d95, #a855f7, #2f6bff, #22e0ff, #ff9d3c);
+  z-index: 6;
 }
 
 @keyframes modalIn {
-  from { opacity: 0; transform: translateY(24px) scale(0.97); }
+  from { opacity: 0; transform: translateY(24px) scale(0.96); }
   to   { opacity: 1; transform: translateY(0) scale(1); }
 }
 
@@ -318,8 +401,9 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 20px 24px 16px;
+  padding: 22px 24px 16px;
   border-bottom: 1px solid rgba(0,0,0,0.07);
+  background: linear-gradient(180deg, rgba(168, 85, 247, 0.08), rgba(168, 85, 247, 0));
   flex-shrink: 0;
 }
 
@@ -589,14 +673,15 @@
   display: block;
   width: 100%;
   padding: 12px 0;
-  background: var(--primary);
+  background: linear-gradient(90deg, #a855f7, #6366f1, #2f6bff);
   color: white;
   text-align: center;
   border-radius: 12px;
   font-size: 14px;
   font-weight: 600;
   text-decoration: none;
-  transition: background 0.2s ease;
+  box-shadow: 0 6px 20px rgba(120, 60, 220, 0.3);
+  transition: filter 0.2s ease, box-shadow 0.2s ease;
 }
 
-.downloadBtn:hover { background: var(--primary-focus); }
+.downloadBtn:hover { filter: brightness(1.08); box-shadow: 0 8px 26px rgba(120, 60, 220, 0.42); }

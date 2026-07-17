@@ -1,8 +1,22 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { useTaskStore, Task, CompletedRow } from '@/store/taskStore';
 import styles from './IntelligenceCapsule.module.css';
+
+// ─── Orb positioning ─────────────────────────────────────────────────────────
+
+const ORB_SIZE = 60;
+const POS_KEY = 'intelligence-orb-position';
+
+function clampPos(p: { x: number; y: number }) {
+  const maxX = Math.max(16, window.innerWidth - ORB_SIZE - 16);
+  const maxY = Math.max(16, window.innerHeight - ORB_SIZE - 16);
+  return {
+    x: Math.min(Math.max(16, p.x), maxX),
+    y: Math.min(Math.max(16, p.y), maxY),
+  };
+}
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -290,28 +304,97 @@ export default function IntelligenceCapsule() {
   const { tasks, removeTask, clearCompleted } = useTaskStore();
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
-  const [isMounted, setIsMounted] = React.useState(false);
+  const [isMounted, setIsMounted] = useState(false);
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
+  const [dragging, setDragging] = useState(false);
 
-  React.useEffect(() => { setIsMounted(true); }, []);
+  const dragState = useRef<{ startX: number; startY: number; origX: number; origY: number; moved: boolean } | null>(null);
+  const clickRef = useRef<() => void>(() => {});
+
+  // Latest toggle handler (kept behavior: closing the drawer clears any selection).
+  clickRef.current = () => {
+    setIsDrawerOpen((prev) => {
+      if (prev) setSelectedTaskId(null);
+      return !prev;
+    });
+  };
+
+  const handlePointerMove = useCallback((e: PointerEvent) => {
+    const d = dragState.current;
+    if (!d) return;
+    const dx = e.clientX - d.startX;
+    const dy = e.clientY - d.startY;
+    if (!d.moved && (Math.abs(dx) > 5 || Math.abs(dy) > 5)) {
+      d.moved = true;
+      setDragging(true);
+    }
+    if (d.moved) setPos(clampPos({ x: d.origX + dx, y: d.origY + dy }));
+  }, []);
+
+  const handlePointerUp = useCallback(() => {
+    window.removeEventListener('pointermove', handlePointerMove);
+    window.removeEventListener('pointerup', handlePointerUp);
+    const d = dragState.current;
+    dragState.current = null;
+    setDragging(false);
+    if (d && !d.moved) {
+      clickRef.current(); // <5px travel → treat as a click
+    } else if (d) {
+      setPos((prev) => {
+        if (prev) localStorage.setItem(POS_KEY, JSON.stringify(prev));
+        return prev;
+      });
+    }
+  }, [handlePointerMove]);
+
+  const handlePointerDown = (e: React.PointerEvent) => {
+    if (!pos) return;
+    e.preventDefault();
+    dragState.current = { startX: e.clientX, startY: e.clientY, origX: pos.x, origY: pos.y, moved: false };
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+  };
+
+  // Mount + restore saved position (SSR-safe: window only touched after mount).
+  useEffect(() => {
+    setIsMounted(true);
+    let p: { x: number; y: number } | null = null;
+    try {
+      const saved = localStorage.getItem(POS_KEY);
+      if (saved) p = JSON.parse(saved);
+    } catch { /* ignore corrupt value */ }
+    if (!p || typeof p.x !== 'number' || typeof p.y !== 'number') {
+      p = { x: window.innerWidth - ORB_SIZE - 24, y: window.innerHeight - ORB_SIZE - 24 };
+    }
+    setPos(clampPos(p));
+  }, []);
+
+  // Keep the orb inside the viewport when the window resizes.
+  useEffect(() => {
+    const onResize = () => setPos((prev) => (prev ? clampPos(prev) : prev));
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
+  // Clean up drag listeners if unmounted mid-drag.
+  useEffect(() => () => {
+    window.removeEventListener('pointermove', handlePointerMove);
+    window.removeEventListener('pointerup', handlePointerUp);
+  }, [handlePointerMove, handlePointerUp]);
 
   const activeTasks = useMemo(
     () => tasks.filter((t) => t.status === 'PENDING' || t.status === 'PROGRESS'),
     [tasks]
   );
 
-  if (!isMounted || tasks.length === 0) return null;
+  // Stays mounted at zero tasks (e.g. after 완료 지우기) — orb idles instead of vanishing.
+  if (!isMounted || !pos) return null;
 
   const isActive = activeTasks.length > 0;
-  const displayTask = isActive ? activeTasks[activeTasks.length - 1] : tasks[tasks.length - 1];
+  const displayTask: Task | undefined = isActive ? activeTasks[activeTasks.length - 1] : tasks[tasks.length - 1];
   const selectedTask = selectedTaskId ? tasks.find((t) => t.id === selectedTaskId) : null;
-  const displayTime = typeof displayTask.result?.processing_time_ms === 'number'
-    ? formatMs(displayTask.result.processing_time_ms)
-    : null;
-
-  const handleCapsuleClick = () => {
-    setIsDrawerOpen((prev) => !prev);
-    if (isDrawerOpen) setSelectedTaskId(null);
-  };
+  const isFailure = !isActive && displayTask?.status === 'FAILURE';
+  const progress = displayTask?.progress ?? 0;
 
   const handleSelectTask = (id: string) => {
     setSelectedTaskId(id);
@@ -323,6 +406,16 @@ export default function IntelligenceCapsule() {
     setIsDrawerOpen(true); // return to drawer
   };
 
+  // Anchor the drawer to the orb's quadrant so it never runs off-screen.
+  const onRight = pos.x + ORB_SIZE / 2 > window.innerWidth / 2;
+  const onBottom = pos.y + ORB_SIZE / 2 > window.innerHeight / 2;
+  const drawerStyle: React.CSSProperties = {
+    [onRight ? 'right' : 'left']: 0,
+    [onBottom ? 'bottom' : 'top']: ORB_SIZE + 12,
+  };
+
+  const orbStateClass = isActive ? styles.orbActive : isFailure ? styles.orbFailure : styles.orbSuccess;
+
   return (
     <>
       {/* Full-screen detail modal (rendered outside container for z-index) */}
@@ -330,10 +423,13 @@ export default function IntelligenceCapsule() {
         <DetailModal task={selectedTask} onClose={handleCloseModal} />
       )}
 
-      <div className={`${styles.container} ${isActive ? styles.active : ''}`}>
-        {/* Compact list drawer */}
+      <div
+        className={`${styles.container} ${dragging ? styles.dragging : ''}`}
+        style={{ left: pos.x, top: pos.y }}
+      >
+        {/* Compact list drawer, anchored to the orb's quadrant */}
         {isDrawerOpen && !selectedTask && (
-          <div className={styles.drawer}>
+          <div className={styles.drawer} style={drawerStyle}>
             <ListView
               tasks={tasks}
               onSelect={handleSelectTask}
@@ -342,39 +438,32 @@ export default function IntelligenceCapsule() {
           </div>
         )}
 
-        {/* Capsule Wrapper */}
-        <div className={styles.capsuleWrapper}>
-          {isActive && <div className={styles.glowRing} />}
-          <button
-            className={`${styles.capsule} ${isActive ? styles.loading : ''}`}
-            onClick={handleCapsuleClick}
-            aria-label="작업 현황 열기"
-          >
-            {isActive && <div className={styles.rainbowBorder} />}
-            <div className={styles.capsuleInner}>
-              <div className={styles.capsuleContent}>
-                {isActive ? (
-                  <>
-                    <span className={styles.capsuleIcon}>⚡</span>
-                    <span>{taskLabel(displayTask)} 중... ({displayTask.progress}%)</span>
-                    <div className={styles.miniBar}>
-                      <div className={styles.miniBarFill} style={{ width: `${displayTask.progress}%` }} />
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <span className={styles.capsuleIcon}>{displayTask.status === 'FAILURE' ? '❌' : '✅'}</span>
-                    <span>
-                      {taskLabel(displayTask)} {displayTask.status === 'FAILURE'
-                        ? '실패'
-                        : `완료${displayTime ? ` · ${displayTime}` : ''}`}
-                    </span>
-                  </>
-                )}
-              </div>
-            </div>
-          </button>
-        </div>
+        {/* Draggable Intelligence orb */}
+        <button
+          type="button"
+          className={`${styles.orb} ${orbStateClass}`}
+          onPointerDown={handlePointerDown}
+          aria-label="작업 현황 열기"
+          title={!displayTask ? '작업 현황' : isActive ? `${taskLabel(displayTask)} 중... (${progress}%)` : taskLabel(displayTask)}
+        >
+          <span className={styles.orbGlowFar} aria-hidden />
+          <span className={styles.orbGlowNear} aria-hidden />
+          <span className={styles.orbBody}>
+            <span className={styles.orbAurora} aria-hidden />
+            <span className={styles.orbCore} aria-hidden />
+          </span>
+          <span className={styles.orbSheen} aria-hidden />
+          {isActive && (
+            <span className={styles.orbRing} style={{ '--p': progress } as React.CSSProperties} aria-hidden />
+          )}
+          <span className={styles.orbContent}>
+            {isActive ? (
+              <span className={styles.orbPercent}>{progress}<i>%</i></span>
+            ) : (
+              <span className={styles.orbIcon}>{!displayTask ? '✦' : isFailure ? '✕' : '✓'}</span>
+            )}
+          </span>
+        </button>
       </div>
     </>
   );

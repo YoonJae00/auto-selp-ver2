@@ -19,7 +19,9 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
-    throw new Error(error.detail || response.statusText);
+    const err = new Error(error.detail || response.statusText);
+    (err as Error & { status?: number }).status = response.status;
+    throw err;
   }
 
   return response.json();

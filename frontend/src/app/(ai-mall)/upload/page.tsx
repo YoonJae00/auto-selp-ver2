@@ -278,6 +278,144 @@ const displayWarning = (warning: MappingPreviewResponse['warnings'][number]) => 
   return [warning.row ? `${warning.row}행` : '', fieldLabel, message].filter(Boolean).join(' · ') || '매핑 결과를 확인해 주세요.';
 };
 
+// AI Mapping Studio panel — shared by the main upload flow and the edit-mapping modal.
+function MappingStudioPanel({ instruction, onInstructionChange, onSubmit, isCorrecting, isValidating, result }: {
+  instruction: string;
+  onInstructionChange: (value: string) => void;
+  onSubmit: () => void;
+  isCorrecting: boolean;
+  isValidating: boolean;
+  result: AiCorrectionResult | null;
+}) {
+  return (
+    <section className={styles.correctionPanel} aria-labelledby="ai-mapping-studio-title" aria-busy={isCorrecting}>
+      <div className={styles.studioMain}>
+        <div className={styles.studioHeading}>
+          <span className={styles.studioBadge}><i aria-hidden="true" /> AI Mapping Studio</span>
+          <h3 id="ai-mapping-studio-title">원하는 결과를 말로 알려주세요</h3>
+          <p>AI는 한 번만 규칙을 고치고, 이후 모든 상품에는 같은 규칙을 적용합니다.</p>
+        </div>
+        <div className={styles.studioComposer}>
+          <textarea
+            className={styles.instructionInput}
+            value={instruction}
+            onChange={(event) => onInstructionChange(event.target.value)}
+            placeholder="예: 원산지는 모두 상세정보 참조로, 판매 상태는 값이 없으면 판매중으로 바꿔줘"
+            aria-label="AI 매핑 수정 요청"
+            disabled={isCorrecting}
+            rows={3}
+          />
+          <div className={styles.studioComposerFooter}>
+            <span aria-live="polite">{instruction.trim() ? '요청을 보낼 준비가 됐습니다.' : '자연어로 바꿀 규칙을 입력하세요.'}</span>
+            <PillButton
+              variant="primary"
+              className={styles.studioButton}
+              onClick={onSubmit}
+              disabled={isCorrecting || isValidating || !instruction.trim()}
+              type="button"
+            >
+              {isCorrecting ? '수정 중...' : <>AI로 수정 <span aria-hidden="true">↗</span></>}
+            </PillButton>
+          </div>
+        </div>
+      </div>
+
+      {result && (
+        <div className={styles.aiCorrectionResult} aria-live="polite">
+          <div className={styles.resultHeader}>
+            <span>AI 수정 결과</span>
+            <strong>{result.changes.length > 0 ? `${result.changes.length}개 규칙 변경` : '변경된 규칙 없음'}</strong>
+          </div>
+          {result.changes.length > 0 ? (
+            <div className={styles.resultChanges}>
+              {result.changes.map(change => (
+                <div key={change.fieldKey} className={styles.resultChangeRow}>
+                  <strong>{SYSTEM_FIELDS.find(field => field.key === change.fieldKey)?.label.replace(' (필수)', '') || change.fieldKey}</strong>
+                  <div>
+                    <span className={styles.beforeRule}>{describeMappingValue(change.before)}</span>
+                    <span className={styles.changeArrow} aria-hidden="true">→</span>
+                    <span className={styles.afterRule}>{describeMappingValue(change.after)}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className={styles.noChanges}>현재 규칙이 이미 요청 내용과 일치합니다.</p>
+          )}
+          {result.notes.length > 0 && (
+            <div className={styles.resultNotes}>
+              <span>AI 설명</span>
+              <p>{result.notes.join(' · ')}</p>
+            </div>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
+// 표준 형식 매핑 미리보기 — shared by the main upload flow and the edit-mapping modal.
+function StandardPreviewPanel({ result, isValidated }: { result: MappingPreviewResponse; isValidated: boolean }) {
+  return (
+    <div className={styles.standardPreview}>
+      <div className={styles.standardPreviewHeader}>
+        <div>
+          <h3>표준 형식 매핑 미리보기</h3>
+          <p>형식 예시와 변환된 상품 최대 5개를 비교해 주세요.</p>
+        </div>
+        {!isValidated && <span className={styles.previewNotice}>현재 규칙은 검증 전입니다</span>}
+      </div>
+      {result.warnings?.length > 0 && (
+        <div className={styles.warningList}>
+          <strong>확인 필요</strong>
+          <ul>
+            {result.warnings.map((warning, index) => (
+              <li key={index}>{displayWarning(warning)}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {result.notes && (
+        <p className={styles.mappingNotes}>
+          {Array.isArray(result.notes) ? result.notes.join(' · ') : result.notes}
+        </p>
+      )}
+      <div className={styles.previewTableContainer}>
+        <table className={styles.previewTable}>
+          <thead>
+            <tr>
+              <th className={styles.rowNumber}>구분</th>
+              {SYSTEM_FIELDS.map((field) => <th key={field.key}>{field.label.replace(' (필수)', '')}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {[result.standard_example, ...result.preview.slice(0, 5)].map((row, rowIndex) => (
+              <tr key={rowIndex} className={rowIndex === 0 ? styles.examplePreviewRow : ''}>
+                <td className={styles.rowNumber}>{rowIndex === 0 ? '형식 예시' : `상품 ${rowIndex}`}</td>
+                {SYSTEM_FIELDS.map((field) => {
+                  const value = displayPreviewValue(previewFieldValue(row, field));
+                  const isMissing = field.required && rowIndex > 0 && !value;
+                  return (
+                    <td
+                      key={field.key}
+                      className={isMissing ? styles.missingValue : ''}
+                      title={isMissing ? `${field.label}: 필수 값 없음` : value}
+                    >
+                      {isMissing ? '필수 값 없음' : value || '-'}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+const lastUploadKey = (siteId: string) => `auto-selp:last-upload:${siteId}`;
+
 export default function UploadPage() {
   const [wholesaleSites, setWholesaleSites] = useState<WholesaleSite[]>([]);
   const [activeSite, setActiveSite] = useState<WholesaleSite | null>(null);
@@ -308,6 +446,19 @@ export default function UploadPage() {
   const [isStudioOpen, setIsStudioOpen] = useState(true); // collapse mapping studio for auto-validated mapped suppliers
   const [activeTab, setActiveTab] = useState<'upload' | 'history'>('upload');
   const [savedRun, setSavedRun] = useState(false); // show 업로드 이력 link after a successful save
+
+  // Edit-mapping-without-file modal
+  const [editMappingSite, setEditMappingSite] = useState<WholesaleSite | null>(null);
+  const [editMapping, setEditMapping] = useState<Record<string, MappingValue>>({});
+  const [editMappingError, setEditMappingError] = useState<string | null>(null);
+  const [editMappingSaving, setEditMappingSaving] = useState(false);
+  const [editLastUpload, setEditLastUpload] = useState<UploadResponse | null>(null); // saved file_id/columns for AI 수정·미리보기
+  const [editInstruction, setEditInstruction] = useState('');
+  const [editCorrectionResult, setEditCorrectionResult] = useState<AiCorrectionResult | null>(null);
+  const [editMappingResult, setEditMappingResult] = useState<MappingPreviewResponse | null>(null);
+  const [editIsCorrecting, setEditIsCorrecting] = useState(false);
+  const [editIsValidating, setEditIsValidating] = useState(false);
+  const [editIsValidated, setEditIsValidated] = useState(false);
   
   // Feedback
   const [error, setError] = useState<string | null>(null);
@@ -489,6 +640,11 @@ export default function UploadPage() {
       const data = await api.post<UploadResponse>('/api/processor/upload', formData);
       setUploadData(data);
       setDraftSiteId(activeSite.id);
+      try {
+        localStorage.setItem(lastUploadKey(activeSite.id), JSON.stringify({ file_id: data.file_id, filename: data.filename, columns: data.columns }));
+      } catch {
+        // localStorage unavailable: AI 수정/미리보기는 다음 세션에 비활성화될 뿐 업로드는 정상 동작
+      }
 
       const savedMapping = activeSite.column_mapping || {};
       if (Object.values(savedMapping).some(isMappingConfigured)) {
@@ -655,6 +811,140 @@ export default function UploadPage() {
     }
   };
 
+  // --- Edit mapping without re-uploading a file ---
+  // Suggest source column names seen across every saved mapping (no file = no live column list).
+  const sourceSuggestions = Array.from(new Set(
+    wholesaleSites.flatMap(site => Object.values(site.column_mapping || {}).map(mappingSource).filter(Boolean))
+  ));
+  const editMissingFields = REQUIRED_MAPPING_FIELDS.filter(field => !isMappingConfigured(editMapping[field.key]));
+
+  const openEditMapping = (site: WholesaleSite, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setEditMappingSite(site);
+    setEditMapping(site.column_mapping || {});
+    setEditMappingError(null);
+    setEditInstruction('');
+    setEditCorrectionResult(null);
+    setEditMappingResult(null);
+    setEditIsValidated(false);
+    let lastUpload: UploadResponse | null = null;
+    try {
+      const parsed = JSON.parse(localStorage.getItem(lastUploadKey(site.id)) || 'null');
+      if (parsed?.file_id && Array.isArray(parsed.columns)) lastUpload = { preview: [], ...parsed };
+    } catch {
+      lastUpload = null;
+    }
+    setEditLastUpload(lastUpload);
+  };
+
+  // Shared 404 handling: the sample file expired server-side, drop to text-only fallback.
+  const handleEditSampleExpired = (siteId: string) => {
+    try { localStorage.removeItem(lastUploadKey(siteId)); } catch { /* ignore */ }
+    setEditLastUpload(null);
+    setEditMappingResult(null);
+    setEditIsValidated(false);
+    setEditMappingError('샘플 파일이 만료되어 AI 수정/미리보기를 쓸 수 없습니다. 새 파일을 업로드하면 다시 활성화됩니다.');
+  };
+
+  const handleEditAiCorrection = async () => {
+    if (!editMappingSite || !editLastUpload || !editInstruction.trim()) return;
+    const before = editMapping;
+    setEditMappingError(null);
+    setEditIsCorrecting(true);
+    setEditIsValidated(false);
+    try {
+      const suggestion = await api.post<MappingPreviewResponse>(
+        `/api/processor/wholesale-sites/${editMappingSite.id}/mapping-suggestion`,
+        { file_id: editLastUpload.file_id, column_mapping: editMapping, instruction: editInstruction.trim() },
+      );
+      setEditMapping(suggestion.column_mapping);
+      setEditMappingResult(suggestion);
+      setEditInstruction('');
+      setEditCorrectionResult({
+        changes: diffMappings(before, suggestion.column_mapping),
+        notes: formatNotes(suggestion.notes),
+      });
+    } catch (err: any) {
+      if (err?.status === 404) handleEditSampleExpired(editMappingSite.id);
+      else setEditMappingError(err.message || 'AI 매핑 수정에 실패했습니다.');
+    } finally {
+      setEditIsCorrecting(false);
+    }
+  };
+
+  // Manual field edits invalidate a prior preview validation.
+  const editSetField = (key: string, source: string, defaultValue: string) => {
+    setEditField(key, source, defaultValue);
+    setEditIsValidated(false);
+  };
+
+  const handleEditValidate = async () => {
+    if (!editMappingSite || !editLastUpload) return;
+    setEditMappingError(null);
+    setEditIsValidating(true);
+    try {
+      const result = await api.post<MappingPreviewResponse>(
+        `/api/processor/wholesale-sites/${editMappingSite.id}/mapping-preview`,
+        { file_id: editLastUpload.file_id, column_mapping: editMapping },
+      );
+      setEditMapping(result.column_mapping);
+      setEditMappingResult(result);
+      setEditIsValidated(REQUIRED_MAPPING_FIELDS.every(field => isMappingConfigured(result.column_mapping[field.key])));
+    } catch (err: any) {
+      if (err?.status === 404) handleEditSampleExpired(editMappingSite.id);
+      else setEditMappingError(err.message || '매핑 검증에 실패했습니다.');
+    } finally {
+      setEditIsValidating(false);
+    }
+  };
+
+  // Set source/default for one field, preserving any advanced rule (pattern/regex/join/value_map).
+  const setEditField = (key: string, nextSource: string, nextDefault: string) => {
+    setEditMapping(current => {
+      const next = { ...current };
+      const rule = mappingRule(current[key]);
+      const hasAdvanced = Boolean(rule && (rule.pattern || rule.regex_all || rule.regex_group != null || rule.join_with || Object.keys(rule.value_map || {}).length));
+      const src = nextSource.trim();
+      const def = nextDefault.trim();
+      if (!src && !def) {
+        delete next[key];
+      } else if (hasAdvanced) {
+        next[key] = { ...rule, source: src || null, default: def || null };
+      } else if (def) {
+        next[key] = { source: src || null, default: def };
+      } else {
+        next[key] = src; // string stays string when no default/advanced rule
+      }
+      return next;
+    });
+  };
+
+  const handleSaveEditMapping = async () => {
+    if (!editMappingSite) return;
+    if (editMissingFields.length > 0) {
+      setEditMappingError(`필수 매핑 ${editMissingFields.length}개를 연결하거나 고정값을 지정해 주세요.`);
+      return;
+    }
+    setEditMappingError(null);
+    setEditMappingSaving(true);
+    try {
+      const updated = await api.put<WholesaleSite>(`/api/processor/wholesale-sites/${editMappingSite.id}`, {
+        name: editMappingSite.name,
+        homepage_url: editMappingSite.homepage_url,
+        column_mapping: editMapping,
+      });
+      setWholesaleSites(list => list.map(s => s.id === updated.id ? updated : s));
+      if (activeSite?.id === updated.id) setActiveSite(updated);
+      setEditMappingSite(null);
+      setSuccess('도매처 매핑이 저장되었습니다.');
+      setTimeout(() => setSuccess(null), 3000);
+    } catch (err: any) {
+      setEditMappingError(err.message || '매핑 저장에 실패했습니다.');
+    } finally {
+      setEditMappingSaving(false);
+    }
+  };
+
   return (
     <div className={styles.container}>
       <div className={styles.header}>
@@ -733,13 +1023,24 @@ export default function UploadPage() {
                 </span>
               </div>
               <div className={styles.cardActions}>
-                <button 
-                  type="button" 
-                  className={styles.deleteBtn}
-                  onClick={(e) => handleDeleteSite(site.id, e)}
-                >
-                  삭제
-                </button>
+                <div className={styles.cardActionsLeft}>
+                  <button
+                    type="button"
+                    className={styles.deleteBtn}
+                    onClick={(e) => handleDeleteSite(site.id, e)}
+                  >
+                    삭제
+                  </button>
+                  {Object.values(site.column_mapping || {}).some(isMappingConfigured) && (
+                    <button
+                      type="button"
+                      className={styles.editMappingBtn}
+                      onClick={(e) => openEditMapping(site, e)}
+                    >
+                      매핑 수정
+                    </button>
+                  )}
+                </div>
                 {isSelected && (
                   <span style={{ fontSize: '12px', color: 'var(--primary)', fontWeight: 600 }}>선택됨</span>
                 )}
@@ -1015,69 +1316,14 @@ export default function UploadPage() {
                 </div>
               ))}
 
-              <section className={styles.correctionPanel} aria-labelledby="ai-mapping-studio-title" aria-busy={isCorrecting}>
-                <div className={styles.studioMain}>
-                  <div className={styles.studioHeading}>
-                    <span className={styles.studioBadge}><i aria-hidden="true" /> AI Mapping Studio</span>
-                    <h3 id="ai-mapping-studio-title">원하는 결과를 말로 알려주세요</h3>
-                    <p>AI는 한 번만 규칙을 고치고, 이후 모든 상품에는 같은 규칙을 적용합니다.</p>
-                  </div>
-                  <div className={styles.studioComposer}>
-                    <textarea
-                      className={styles.instructionInput}
-                      value={mappingInstruction}
-                      onChange={(event) => setMappingInstruction(event.target.value)}
-                      placeholder="예: 원산지는 모두 상세정보 참조로, 판매 상태는 값이 없으면 판매중으로 바꿔줘"
-                      aria-label="AI 매핑 수정 요청"
-                      disabled={isCorrecting}
-                      rows={3}
-                    />
-                    <div className={styles.studioComposerFooter}>
-                      <span aria-live="polite">{mappingInstruction.trim() ? '요청을 보낼 준비가 됐습니다.' : '자연어로 바꿀 규칙을 입력하세요.'}</span>
-                      <PillButton
-                        variant="primary"
-                        className={styles.studioButton}
-                        onClick={handleAiCorrection}
-                        disabled={isCorrecting || isValidating || !mappingInstruction.trim()}
-                        type="button"
-                      >
-                        {isCorrecting ? '수정 중...' : <>AI로 수정 <span aria-hidden="true">↗</span></>}
-                      </PillButton>
-                    </div>
-                  </div>
-                </div>
-
-                {aiCorrectionResult && (
-                  <div className={styles.aiCorrectionResult} aria-live="polite">
-                    <div className={styles.resultHeader}>
-                      <span>AI 수정 결과</span>
-                      <strong>{aiCorrectionResult.changes.length > 0 ? `${aiCorrectionResult.changes.length}개 규칙 변경` : '변경된 규칙 없음'}</strong>
-                    </div>
-                    {aiCorrectionResult.changes.length > 0 ? (
-                      <div className={styles.resultChanges}>
-                        {aiCorrectionResult.changes.map(change => (
-                          <div key={change.fieldKey} className={styles.resultChangeRow}>
-                            <strong>{SYSTEM_FIELDS.find(field => field.key === change.fieldKey)?.label.replace(' (필수)', '') || change.fieldKey}</strong>
-                            <div>
-                              <span className={styles.beforeRule}>{describeMappingValue(change.before)}</span>
-                              <span className={styles.changeArrow} aria-hidden="true">→</span>
-                              <span className={styles.afterRule}>{describeMappingValue(change.after)}</span>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className={styles.noChanges}>현재 규칙이 이미 요청 내용과 일치합니다.</p>
-                    )}
-                    {aiCorrectionResult.notes.length > 0 && (
-                      <div className={styles.resultNotes}>
-                        <span>AI 설명</span>
-                        <p>{aiCorrectionResult.notes.join(' · ')}</p>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </section>
+              <MappingStudioPanel
+                instruction={mappingInstruction}
+                onInstructionChange={setMappingInstruction}
+                onSubmit={handleAiCorrection}
+                isCorrecting={isCorrecting}
+                isValidating={isValidating}
+                result={aiCorrectionResult}
+              />
 
               <div className={styles.validationBar}>
                 <span className={`${styles.validationState} ${isMappingValidated ? styles.validationComplete : styles.validationRequired}`}>
@@ -1095,62 +1341,7 @@ export default function UploadPage() {
                 </>
               )}
 
-              {mappingResult && (
-                <div className={styles.standardPreview}>
-                  <div className={styles.standardPreviewHeader}>
-                    <div>
-                      <h3>표준 형식 매핑 미리보기</h3>
-                      <p>형식 예시와 변환된 상품 최대 5개를 비교해 주세요.</p>
-                    </div>
-                    {!isMappingValidated && <span className={styles.previewNotice}>현재 규칙은 검증 전입니다</span>}
-                  </div>
-                  {mappingResult.warnings?.length > 0 && (
-                    <div className={styles.warningList}>
-                      <strong>확인 필요</strong>
-                      <ul>
-                        {mappingResult.warnings.map((warning, index) => (
-                          <li key={index}>{displayWarning(warning)}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                  {mappingResult.notes && (
-                    <p className={styles.mappingNotes}>
-                      {Array.isArray(mappingResult.notes) ? mappingResult.notes.join(' · ') : mappingResult.notes}
-                    </p>
-                  )}
-                  <div className={styles.previewTableContainer}>
-                    <table className={styles.previewTable}>
-                      <thead>
-                        <tr>
-                          <th className={styles.rowNumber}>구분</th>
-                          {SYSTEM_FIELDS.map((field) => <th key={field.key}>{field.label.replace(' (필수)', '')}</th>)}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {[mappingResult.standard_example, ...mappingResult.preview.slice(0, 5)].map((row, rowIndex) => (
-                          <tr key={rowIndex} className={rowIndex === 0 ? styles.examplePreviewRow : ''}>
-                            <td className={styles.rowNumber}>{rowIndex === 0 ? '형식 예시' : `상품 ${rowIndex}`}</td>
-                            {SYSTEM_FIELDS.map((field) => {
-                              const value = displayPreviewValue(previewFieldValue(row, field));
-                              const isMissing = field.required && rowIndex > 0 && !value;
-                              return (
-                                <td
-                                  key={field.key}
-                                  className={isMissing ? styles.missingValue : ''}
-                                  title={isMissing ? `${field.label}: 필수 값 없음` : value}
-                                >
-                                  {isMissing ? '필수 값 없음' : value || '-'}
-                                </td>
-                              );
-                            })}
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
+              {mappingResult && <StandardPreviewPanel result={mappingResult} isValidated={isMappingValidated} />}
 
               <div className={styles.mapperActions}>
                 <PillButton 
@@ -1177,6 +1368,130 @@ export default function UploadPage() {
         </div>
       )}
         </>
+      )}
+
+      {/* Edit saved mapping without re-uploading a file */}
+      {editMappingSite && (
+        <div className={styles.modalOverlay} onClick={() => setEditMappingSite(null)}>
+          <div className={`${styles.modalContent} ${styles.editMappingModal}`} onClick={(e) => e.stopPropagation()}>
+            <h2 className={styles.modalTitle}>{editMappingSite.name} - 매핑 수정</h2>
+            <p className={styles.editMappingHint}>
+              {editLastUpload
+                ? `마지막 업로드 파일(${editLastUpload.filename})로 AI 수정과 매핑 미리보기를 쓸 수 있습니다. 저장한 매핑은 다음 엑셀 업로드 시 자동 검증됩니다.`
+                : '파일 없이 저장된 매핑을 수정합니다. 새 파일을 업로드하면 AI 수정·미리보기가 활성화되고, 저장한 매핑은 다음 업로드 시 자동 검증됩니다.'}
+            </p>
+
+            {editMappingError && (
+              <div className={styles.mappingInlineError} role="alert">
+                <div><strong>{editMappingError}</strong></div>
+              </div>
+            )}
+
+            <datalist id="edit-mapping-sources">
+              {sourceSuggestions.map(col => <option key={col} value={col} />)}
+            </datalist>
+
+            <div className={styles.editMappingBody}>
+              {SYSTEM_FIELD_GROUPS.map(group => (
+                <div key={group.title} className={styles.editMappingGroup}>
+                  <h3 className={styles.mapperGroupTitle}><span>{group.title}</span></h3>
+                  {group.fields.map(field => {
+                    const value = editMapping[field.key];
+                    const source = mappingSource(value);
+                    return (
+                      <div key={field.key} className={styles.editMappingRow}>
+                        <span className={styles.editMappingLabel}>
+                          {field.label}
+                          {hasMappingTransform(value) && (
+                            <span className={styles.editMappingRuleNote} title={describeMappingValue(value)}>
+                              고급 규칙 유지: {describeMappingValue(value)}
+                            </span>
+                          )}
+                        </span>
+                        <div className={styles.editMappingInputs}>
+                          {editLastUpload ? (
+                            <select
+                              className={styles.select}
+                              value={source}
+                              onChange={(e) => editSetField(field.key, e.target.value, mappingDefault(value))}
+                            >
+                              <option value="">-- 선택 안함 --</option>
+                              {source && !editLastUpload.columns.includes(source) && (
+                                <option value={source}>⚠ {source} (파일에 없음)</option>
+                              )}
+                              {editLastUpload.columns.map(col => (
+                                <option key={col} value={col}>{col}</option>
+                              ))}
+                            </select>
+                          ) : (
+                            <input
+                              type="text"
+                              className={styles.input}
+                              list="edit-mapping-sources"
+                              placeholder="원본 컬럼"
+                              value={source}
+                              onChange={(e) => editSetField(field.key, e.target.value, mappingDefault(value))}
+                            />
+                          )}
+                          <input
+                            type="text"
+                            className={styles.input}
+                            placeholder="기본값/고정값"
+                            value={mappingDefault(value)}
+                            onChange={(e) => editSetField(field.key, source, e.target.value)}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ))}
+
+              {editLastUpload && (
+                <>
+                  <MappingStudioPanel
+                    instruction={editInstruction}
+                    onInstructionChange={setEditInstruction}
+                    onSubmit={handleEditAiCorrection}
+                    isCorrecting={editIsCorrecting}
+                    isValidating={editIsValidating}
+                    result={editCorrectionResult}
+                  />
+
+                  <div className={styles.validationBar}>
+                    <span className={`${styles.validationState} ${editIsValidated ? styles.validationComplete : styles.validationRequired}`}>
+                      {editIsValidated ? '✓ 검증 완료' : '↻ 미리보기로 확인'}
+                    </span>
+                    <PillButton
+                      variant="primary"
+                      onClick={handleEditValidate}
+                      disabled={editIsValidating || editIsCorrecting}
+                      type="button"
+                    >
+                      {editIsValidating ? '검증 중...' : '매핑 검증'}
+                    </PillButton>
+                  </div>
+
+                  {editMappingResult && <StandardPreviewPanel result={editMappingResult} isValidated={editIsValidated} />}
+                </>
+              )}
+            </div>
+
+            <div className={styles.modalActions}>
+              <PillButton variant="secondary" onClick={() => setEditMappingSite(null)} type="button">
+                취소
+              </PillButton>
+              <PillButton
+                variant="primary"
+                onClick={handleSaveEditMapping}
+                disabled={editMappingSaving || editMissingFields.length > 0}
+                type="button"
+              >
+                {editMappingSaving ? '저장 중...' : '매핑 저장'}
+              </PillButton>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Create site interactive Modal */}
