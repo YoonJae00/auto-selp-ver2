@@ -445,9 +445,16 @@ export default function IntelligenceCapsule() {
           aria-label="작업 현황 열기"
           title={isActive ? `${taskLabel(displayTask)} 중... (${progress}%)` : taskLabel(displayTask)}
         >
-          <span className={styles.orbGlow} aria-hidden />
+          <span className={styles.orbGlowFar} aria-hidden />
+          <span className={styles.orbGlowNear} aria-hidden />
           <span className={styles.orbBody}>
-            <span className={styles.orbGradient} />
+            <span className={styles.orbCore} aria-hidden />
+            <span className={styles.orbAurora} aria-hidden>
+              <span className={`${styles.auroraBlob} ${styles.blob1}`} />
+              <span className={`${styles.auroraBlob} ${styles.blob2}`} />
+              <span className={`${styles.auroraBlob} ${styles.blob3}`} />
+              <span className={`${styles.auroraBlob} ${styles.blob4}`} />
+            </span>
           </span>
           <span className={styles.orbSheen} aria-hidden />
           {isActive && (
