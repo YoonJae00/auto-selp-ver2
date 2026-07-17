@@ -387,13 +387,14 @@ export default function IntelligenceCapsule() {
     [tasks]
   );
 
-  if (!isMounted || tasks.length === 0 || !pos) return null;
+  // Stays mounted at zero tasks (e.g. after 완료 지우기) — orb idles instead of vanishing.
+  if (!isMounted || !pos) return null;
 
   const isActive = activeTasks.length > 0;
-  const displayTask = isActive ? activeTasks[activeTasks.length - 1] : tasks[tasks.length - 1];
+  const displayTask: Task | undefined = isActive ? activeTasks[activeTasks.length - 1] : tasks[tasks.length - 1];
   const selectedTask = selectedTaskId ? tasks.find((t) => t.id === selectedTaskId) : null;
-  const isFailure = !isActive && displayTask.status === 'FAILURE';
-  const progress = displayTask.progress ?? 0;
+  const isFailure = !isActive && displayTask?.status === 'FAILURE';
+  const progress = displayTask?.progress ?? 0;
 
   const handleSelectTask = (id: string) => {
     setSelectedTaskId(id);
@@ -443,7 +444,7 @@ export default function IntelligenceCapsule() {
           className={`${styles.orb} ${orbStateClass}`}
           onPointerDown={handlePointerDown}
           aria-label="작업 현황 열기"
-          title={isActive ? `${taskLabel(displayTask)} 중... (${progress}%)` : taskLabel(displayTask)}
+          title={!displayTask ? '작업 현황' : isActive ? `${taskLabel(displayTask)} 중... (${progress}%)` : taskLabel(displayTask)}
         >
           <span className={styles.orbGlowFar} aria-hidden />
           <span className={styles.orbGlowNear} aria-hidden />
@@ -459,7 +460,7 @@ export default function IntelligenceCapsule() {
             {isActive ? (
               <span className={styles.orbPercent}>{progress}<i>%</i></span>
             ) : (
-              <span className={styles.orbIcon}>{isFailure ? '✕' : '✓'}</span>
+              <span className={styles.orbIcon}>{!displayTask ? '✦' : isFailure ? '✕' : '✓'}</span>
             )}
           </span>
         </button>
