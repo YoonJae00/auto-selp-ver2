@@ -308,6 +308,12 @@ export default function UploadPage() {
   const [isStudioOpen, setIsStudioOpen] = useState(true); // collapse mapping studio for auto-validated mapped suppliers
   const [activeTab, setActiveTab] = useState<'upload' | 'history'>('upload');
   const [savedRun, setSavedRun] = useState(false); // show 업로드 이력 link after a successful save
+
+  // Edit-mapping-without-file modal
+  const [editMappingSite, setEditMappingSite] = useState<WholesaleSite | null>(null);
+  const [editMapping, setEditMapping] = useState<Record<string, MappingValue>>({});
+  const [editMappingError, setEditMappingError] = useState<string | null>(null);
+  const [editMappingSaving, setEditMappingSaving] = useState(false);
   
   // Feedback
   const [error, setError] = useState<string | null>(null);
@@ -655,6 +661,67 @@ export default function UploadPage() {
     }
   };
 
+  // --- Edit mapping without re-uploading a file ---
+  // Suggest source column names seen across every saved mapping (no file = no live column list).
+  const sourceSuggestions = Array.from(new Set(
+    wholesaleSites.flatMap(site => Object.values(site.column_mapping || {}).map(mappingSource).filter(Boolean))
+  ));
+  const editMissingFields = REQUIRED_MAPPING_FIELDS.filter(field => !isMappingConfigured(editMapping[field.key]));
+
+  const openEditMapping = (site: WholesaleSite, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setEditMappingSite(site);
+    setEditMapping(site.column_mapping || {});
+    setEditMappingError(null);
+  };
+
+  // Set source/default for one field, preserving any advanced rule (pattern/regex/join/value_map).
+  const setEditField = (key: string, nextSource: string, nextDefault: string) => {
+    setEditMapping(current => {
+      const next = { ...current };
+      const rule = mappingRule(current[key]);
+      const hasAdvanced = Boolean(rule && (rule.pattern || rule.regex_all || rule.regex_group != null || rule.join_with || Object.keys(rule.value_map || {}).length));
+      const src = nextSource.trim();
+      const def = nextDefault.trim();
+      if (!src && !def) {
+        delete next[key];
+      } else if (hasAdvanced) {
+        next[key] = { ...rule, source: src || null, default: def || null };
+      } else if (def) {
+        next[key] = { source: src || null, default: def };
+      } else {
+        next[key] = src; // string stays string when no default/advanced rule
+      }
+      return next;
+    });
+  };
+
+  const handleSaveEditMapping = async () => {
+    if (!editMappingSite) return;
+    if (editMissingFields.length > 0) {
+      setEditMappingError(`필수 매핑 ${editMissingFields.length}개를 연결하거나 고정값을 지정해 주세요.`);
+      return;
+    }
+    setEditMappingError(null);
+    setEditMappingSaving(true);
+    try {
+      const updated = await api.put<WholesaleSite>(`/api/processor/wholesale-sites/${editMappingSite.id}`, {
+        name: editMappingSite.name,
+        homepage_url: editMappingSite.homepage_url,
+        column_mapping: editMapping,
+      });
+      setWholesaleSites(list => list.map(s => s.id === updated.id ? updated : s));
+      if (activeSite?.id === updated.id) setActiveSite(updated);
+      setEditMappingSite(null);
+      setSuccess('도매처 매핑이 저장되었습니다.');
+      setTimeout(() => setSuccess(null), 3000);
+    } catch (err: any) {
+      setEditMappingError(err.message || '매핑 저장에 실패했습니다.');
+    } finally {
+      setEditMappingSaving(false);
+    }
+  };
+
   return (
     <div className={styles.container}>
       <div className={styles.header}>
@@ -733,13 +800,24 @@ export default function UploadPage() {
                 </span>
               </div>
               <div className={styles.cardActions}>
-                <button 
-                  type="button" 
-                  className={styles.deleteBtn}
-                  onClick={(e) => handleDeleteSite(site.id, e)}
-                >
-                  삭제
-                </button>
+                <div className={styles.cardActionsLeft}>
+                  <button
+                    type="button"
+                    className={styles.deleteBtn}
+                    onClick={(e) => handleDeleteSite(site.id, e)}
+                  >
+                    삭제
+                  </button>
+                  {Object.values(site.column_mapping || {}).some(isMappingConfigured) && (
+                    <button
+                      type="button"
+                      className={styles.editMappingBtn}
+                      onClick={(e) => openEditMapping(site, e)}
+                    >
+                      매핑 수정
+                    </button>
+                  )}
+                </div>
                 {isSelected && (
                   <span style={{ fontSize: '12px', color: 'var(--primary)', fontWeight: 600 }}>선택됨</span>
                 )}
@@ -1177,6 +1255,82 @@ export default function UploadPage() {
         </div>
       )}
         </>
+      )}
+
+      {/* Edit saved mapping without re-uploading a file */}
+      {editMappingSite && (
+        <div className={styles.modalOverlay} onClick={() => setEditMappingSite(null)}>
+          <div className={`${styles.modalContent} ${styles.editMappingModal}`} onClick={(e) => e.stopPropagation()}>
+            <h2 className={styles.modalTitle}>{editMappingSite.name} - 매핑 수정</h2>
+            <p className={styles.editMappingHint}>
+              파일 없이 저장된 매핑을 수정합니다. 다음 엑셀 업로드 시 저장된 매핑으로 자동 검증됩니다.
+            </p>
+
+            {editMappingError && (
+              <div className={styles.mappingInlineError} role="alert">
+                <div><strong>{editMappingError}</strong></div>
+              </div>
+            )}
+
+            <datalist id="edit-mapping-sources">
+              {sourceSuggestions.map(col => <option key={col} value={col} />)}
+            </datalist>
+
+            <div className={styles.editMappingBody}>
+              {SYSTEM_FIELD_GROUPS.map(group => (
+                <div key={group.title} className={styles.editMappingGroup}>
+                  <h3 className={styles.mapperGroupTitle}><span>{group.title}</span></h3>
+                  {group.fields.map(field => {
+                    const value = editMapping[field.key];
+                    return (
+                      <div key={field.key} className={styles.editMappingRow}>
+                        <span className={styles.editMappingLabel}>
+                          {field.label}
+                          {hasMappingTransform(value) && (
+                            <span className={styles.editMappingRuleNote} title={describeMappingValue(value)}>
+                              고급 규칙 유지: {describeMappingValue(value)}
+                            </span>
+                          )}
+                        </span>
+                        <div className={styles.editMappingInputs}>
+                          <input
+                            type="text"
+                            className={styles.input}
+                            list="edit-mapping-sources"
+                            placeholder="원본 컬럼"
+                            value={mappingSource(value)}
+                            onChange={(e) => setEditField(field.key, e.target.value, mappingDefault(value))}
+                          />
+                          <input
+                            type="text"
+                            className={styles.input}
+                            placeholder="기본값/고정값"
+                            value={mappingDefault(value)}
+                            onChange={(e) => setEditField(field.key, mappingSource(value), e.target.value)}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ))}
+            </div>
+
+            <div className={styles.modalActions}>
+              <PillButton variant="secondary" onClick={() => setEditMappingSite(null)} type="button">
+                취소
+              </PillButton>
+              <PillButton
+                variant="primary"
+                onClick={handleSaveEditMapping}
+                disabled={editMappingSaving || editMissingFields.length > 0}
+                type="button"
+              >
+                {editMappingSaving ? '저장 중...' : '매핑 저장'}
+              </PillButton>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Create site interactive Modal */}
