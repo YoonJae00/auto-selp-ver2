@@ -16,7 +16,7 @@ tags: [frontend, landing-page, live-task-graph, css-animation, svg-flow, glassmo
 # Premium Landing Page Redesign with Interactive Live Task Graph
 
 ## Context
-Auto-Selp's main marketing entrypoint was a placeholder page with basic typography and standard pill actions. This layout didn't convey the sophistication of the backend's 5-stage AI processing pipeline (Upload, LLM Refining, Keywords & KIPRIS validation, Category mapping, and Smart Upsert & Database synchronization). To address this, we overhauled the marketing layout with a high-fidelity Apple-inspired aesthetic and built a lightweight, interactive SVG/React DAG pipeline simulator that visually demonstrates the live data processing sequence.
+Auto-Selp's main marketing entrypoint was a placeholder page with basic typography and standard pill actions. This layout didn't convey the sophistication of the backend's 5-stage AI processing pipeline (Upload, LLM Refining, Keyword validation, Category mapping, and Smart Upsert & Database synchronization). To address this, we overhauled the marketing layout with a high-fidelity Apple-inspired aesthetic and built a lightweight, interactive SVG/React DAG pipeline simulator that visually demonstrates the live data processing sequence.
 
 ## Guidance
 Use an "Interactive Live Task Graph" pattern to visually illustrate complex multi-step backend pipelines on marketing and overview pages:
@@ -54,7 +54,7 @@ For complex SaaS tools, static copy and bullet points fail to capture the value 
 - Glassmorphic simulator dashboard (`LiveTaskGraph.tsx`) with 5 animated processing stages:
   1. `도매처 업로드` -> supplier raw data parse
   2. `상품명 가공` -> LLM refining and character cleanup
-  3. `키워드 & 상표권` -> search query integration & KIPRIS copyright filtering
+  3. `키워드 & 상표권` -> search query integration & AI brand filtering
   4. `카테고리 매핑` -> Naver/Coupang automated mapping
   5. `스마트 갱신` -> Smart Upsert price/stock state save
 - High-fidelity 6-card feature grid with micro-interactions and hover scales.

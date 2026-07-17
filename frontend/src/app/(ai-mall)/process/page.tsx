@@ -180,7 +180,7 @@ const renderAttributes = (product: Product, realTimeMappedAttributes?: any) => {
 };
 
 export default function ProcessPage() {
-  const { llmProvider, visionLlmProvider, kiprisEnabled } = useSettingsStore();
+  const { llmProvider, visionLlmProvider } = useSettingsStore();
   const { tasks, addTask, updateTask } = useTaskStore();
 
   const [wholesaleSites, setWholesaleSites] = useState<WholesaleSite[]>([]);
@@ -405,7 +405,6 @@ export default function ProcessPage() {
         column_mapping: activeSite.column_mapping || { original_name: 'original_name' },
         llm_provider: llmProvider,
         vision_llm_provider: visionLlmProvider,
-        kipris_enabled: kiprisEnabled,
       });
 
       addTask({

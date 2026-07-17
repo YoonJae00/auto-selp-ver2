@@ -18,7 +18,6 @@ os.environ.setdefault("Coupang_Access_Key", "test")
 os.environ.setdefault("Coupang_Secret_Key", "test")
 os.environ.setdefault("GEMINI_API_KEY", "test")
 os.environ.setdefault("OPENAI_API_KEY", "test")
-os.environ.setdefault("KIPRIS_API_KEY", "test")
 os.environ.setdefault("INTERNAL_SERVICE_TOKEN", "internal-test-token")
 
 from config import Settings
@@ -367,7 +366,6 @@ def test_settings_require_internal_service_token(monkeypatch):
             Coupang_Secret_Key="test",
             GEMINI_API_KEY="test",
             OPENAI_API_KEY="test",
-            KIPRIS_API_KEY="test",
         )
 
 

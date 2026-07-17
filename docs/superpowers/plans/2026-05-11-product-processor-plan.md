@@ -2,11 +2,10 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 엑셀 업로드, 유연한 컬럼 매핑, 3단계 가공 파이프라인(정제->키워드->카테고리), KIPRIS MCP 연동, 그리고 Celery 기반 비동기 처리를 구현합니다.
+**Goal:** 엑셀 업로드, 유연한 컬럼 매핑, 3단계 가공 파이프라인(정제->키워드->카테고리), 그리고 Celery 기반 비동기 처리를 구현합니다.
 
 **Architecture:** 
 - **Product Processor Service**: FastAPI 기반 엔진.
-- **KIPRIS MCP Server**: 상표권 조회를 위한 별도 컨테이너.
 - **Worker**: Celery를 통한 병렬 처리.
 
 ---
@@ -17,7 +16,7 @@
     - `services/processor/assets/trademark_blacklist.py` (유명 브랜드명 리스트).
     - `services/processor/assets/keyword_stop_words.py` (불용어 리스트).
 - [ ] **Step 2: Config 업데이트**
-    - `services/processor/config.py`: Naver, Coupang, Gemini, KIPRIS 키 설정 추가.
+    - `services/processor/config.py`: Naver, Coupang, Gemini 키 설정 추가.
 
 ### Task 2: 외부 API 클라이언트 및 인증 모듈 (TDD)
 
@@ -46,8 +45,8 @@
     - 네이버/쿠팡 API 호출 + LLM 유의어 생성 추가 검색.
 - [ ] **Step 2: Phase 2 - 품질 점수 필터링 알고리즘**
     - 경쟁도, 길이, 롱테일 보너스, 수량 패턴 제거 로직 구현.
-- [ ] **Step 3: Phase 3 - 상표권 검증 (LLM & KIPRIS MCP 하이브리드)**
-    - LLM이 '모르는 단어'나 '의심되는 브랜드'를 식별하면, 해당 단어만 KIPRIS MCP로 정밀 조회하여 사용 여부 결정.
+- [ ] **Step 3: Phase 3 - 브랜드 의심어 검증**
+    - LLM이 고유 브랜드나 상표로 의심되는 단어를 식별하면 키워드에서 제외.
 
 ### Task 4: Stage 3 - 카테고리 매칭 (네이버/쿠팡)
 
@@ -67,5 +66,4 @@
 
 ## 자체 검토 (Self-Review)
 1. **Spec 반영 확인**: `product.md`에 명시된 3단계 재시도, HMAC/CEA 인증, 3-Phase 키워드 큐레이션이 모두 반영됨.
-2. **KIPRIS MCP**: 별도 컨테이너로 운영하며 API 키를 환경 변수로 전달하는 구조 확인.
-3. **유연성**: 사용자 지정 컬럼 매핑 요구사항 반영됨.
+2. **유연성**: 사용자 지정 컬럼 매핑 요구사항 반영됨.

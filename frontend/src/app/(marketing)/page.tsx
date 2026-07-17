@@ -31,7 +31,7 @@ const capabilities = [
   {
     label: '검색과 안전',
     title: '검색어 정리와 상표권 확인을 한 흐름으로',
-    description: '불필요한 표현을 정리하고 키워드를 선별한 뒤 KIPRIS 확인 결과와 제외 사유를 함께 남깁니다.',
+    description: '불필요한 표현을 정리하고 AI가 브랜드로 의심한 키워드와 제외 사유를 함께 남깁니다.',
   },
   {
     label: '마켓 준비',
@@ -51,7 +51,7 @@ const faqs = [
   },
   {
     question: '상표권 문제를 완전히 막을 수 있나요?',
-    answer: 'KIPRIS 조회와 금지어 검사를 통해 의심 키워드를 찾고 제외 근거를 보여줍니다. 최종 법적 판단을 대신하지는 않으며 판매 전 확인 절차를 줄이는 보조 도구입니다.',
+    answer: '금지어 검사와 AI 분류를 통해 의심 키워드를 찾고 제외 근거를 보여줍니다. 최종 법적 판단을 대신하지는 않으며 판매 전 확인 절차를 줄이는 보조 도구입니다.',
   },
   {
     question: '어떤 쇼핑몰을 지원하나요?',
@@ -99,7 +99,6 @@ export default function LandingPage() {
         <div className={styles.trustItems}>
           <span>NAVER 스마트스토어</span>
           <span>쿠팡</span>
-          <span>KIPRIS</span>
           <span>Excel</span>
         </div>
       </section>

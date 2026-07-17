@@ -18,7 +18,7 @@ The current DB-backed flow is:
 4. `_run_db_pipeline` loops through non-completed products.
 5. Each product runs these stages inline:
    - product name refinement
-   - keyword curation and KIPRIS warnings
+   - keyword curation and brand-suspicion warnings
    - Naver and Coupang category mapping
    - product and platform mapping persistence
 6. Celery `update_state` emits progress metadata consumed by the frontend Intelligence Capsule.

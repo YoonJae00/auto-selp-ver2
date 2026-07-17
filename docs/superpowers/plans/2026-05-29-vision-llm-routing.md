@@ -22,7 +22,6 @@
   interface SettingsState {
     llmProvider: string;
     visionLlmProvider: string; // <-- Add this
-    kiprisEnabled: boolean;
     columnMapping: {
       original_name: string;
       refined_name: string;
@@ -32,7 +31,6 @@
     };
     setLlmProvider: (provider: string) => void;
     setVisionLlmProvider: (provider: string) => void; // <-- Add this
-    setKiprisEnabled: (enabled: boolean) => void;
     setColumnMapping: (mapping: Partial<SettingsState['columnMapping']>) => void;
   }
   ```
@@ -40,7 +38,6 @@
   ```typescript
   llmProvider: 'gemini',
   visionLlmProvider: 'gemini', // Default to gemini
-  kiprisEnabled: true,
   // ...
   setLlmProvider: (provider) => set({ llmProvider: provider }),
   setVisionLlmProvider: (provider) => set({ visionLlmProvider: provider }),
@@ -49,7 +46,7 @@
 - [x] **Step 2: Add Vision LLM Selector in Settings UI**
   Modify `frontend/src/app/(ai-mall)/settings/page.tsx` around line 25 to render the new select group:
   ```tsx
-  const { llmProvider, setLlmProvider, visionLlmProvider, setVisionLlmProvider, kiprisEnabled, setKiprisEnabled } = useSettingsStore();
+  const { llmProvider, setLlmProvider, visionLlmProvider, setVisionLlmProvider } = useSettingsStore();
 
   // ... In render section after the basic LLM engine:
   <div className={styles.formGroup}>
@@ -89,7 +86,7 @@
 - [x] **Step 1: Fetch and Forward `visionLlmProvider` in processing triggers**
   Modify `frontend/src/app/(ai-mall)/process/page.tsx` where requests to `/process-products` or `/process-db` are made to include the state.
   ```typescript
-  const { llmProvider, visionLlmProvider, kiprisEnabled, columnMapping } = useSettingsStore();
+  const { llmProvider, visionLlmProvider, columnMapping } = useSettingsStore();
 
   // inside api dispatch handlers:
   const payload = {
@@ -97,7 +94,6 @@
     column_mapping: columnMapping,
     llm_provider: llmProvider,
     vision_llm_provider: visionLlmProvider, // <-- Add this
-    kipris_enabled: kiprisEnabled,
   };
   ```
 
@@ -127,7 +123,6 @@
       column_mapping: Dict[str, str]
       llm_provider: Optional[str] = "gemini"
       vision_llm_provider: Optional[str] = "gemini" # <-- Add this
-      kipris_enabled: Optional[bool] = True
       wholesale_site_id: Optional[UUID] = None
       start_processing: Optional[bool] = True
 
@@ -137,7 +132,6 @@
       column_mapping: Dict[str, str]
       llm_provider: Optional[str] = "gemini"
       vision_llm_provider: Optional[str] = "gemini" # <-- Add this
-      kipris_enabled: Optional[bool] = True
   ```
 
 - [x] **Step 2: Update FastAPI routes to forward parameter**
@@ -148,7 +142,6 @@
           file_path, 
           col_mapping, 
           request.llm_provider, 
-          request.kipris_enabled,
           request.vision_llm_provider # <-- Add this
       )
 
@@ -157,7 +150,6 @@
           str(request.import_id) if request.import_id else None,
           request.column_mapping,
           request.llm_provider,
-          request.kipris_enabled,
           product_ids or None,
           request.vision_llm_provider, # <-- Add this
       )
@@ -192,13 +184,12 @@
       import_id: str | None,
       column_mapping: dict,
       llm_provider: str = "gemini",
-      kipris_enabled: bool = True,
       product_ids: list[str] | None = None,
       vision_llm_provider: str = "gemini", # <-- Add this
   ):
       # ...
       return loop.run_until_complete(
-          _run_db_pipeline(self, import_id, column_mapping, llm_provider, kipris_enabled, product_ids, vision_llm_provider)
+          _run_db_pipeline(self, import_id, column_mapping, llm_provider, product_ids, vision_llm_provider)
       )
   ```
 
@@ -490,7 +481,7 @@
 
 - [x] **Step 5: Run all graph tests**
   Verify the full product processor graph behaves successfully.
-  Run: `DATABASE_URL=postgresql+asyncpg://admin:password@localhost:5432/autoselp INTERNAL_SERVICE_TOKEN=internal-test-token NAVER_API_KEY=test NAVER_SECRET_KEY=test NAVER_CUSTOMER_ID=test NAVER_CLIENT_ID=test NAVER_CLIENT_SECRET=test Coupang_Access_Key=test Coupang_Secret_Key=test GEMINI_API_KEY=test OPENAI_API_KEY=test KIPRIS_API_KEY=test PYTHONPATH=services/processor pytest services/processor/tests/`
+  Run: `DATABASE_URL=postgresql+asyncpg://admin:password@localhost:5432/autoselp INTERNAL_SERVICE_TOKEN=internal-test-token NAVER_API_KEY=test NAVER_SECRET_KEY=test NAVER_CUSTOMER_ID=test NAVER_CLIENT_ID=test NAVER_CLIENT_SECRET=test Coupang_Access_Key=test Coupang_Secret_Key=test GEMINI_API_KEY=test OPENAI_API_KEY=test PYTHONPATH=services/processor pytest services/processor/tests/`
   Expected: PASS (All 63 tests pass)
 
 - [x] **Step 6: Commit all vision LLM implementation**

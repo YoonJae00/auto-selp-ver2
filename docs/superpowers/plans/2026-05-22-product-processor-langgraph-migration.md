@@ -827,7 +827,7 @@ Inside `_run_db_pipeline`, keep this setup:
 ```python
 prompt_manager = PromptManager(db)
 llm_client = get_llm_client(llm_provider, prompt_manager)
-keyword_engine = KeywordEngine(llm_client, kipris_enabled=kipris_enabled)
+keyword_engine = KeywordEngine(llm_client)
 category_mapper = CategoryMapper()
 ```
 

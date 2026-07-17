@@ -9,7 +9,6 @@ os.environ.setdefault("Coupang_Access_Key", "test")
 os.environ.setdefault("Coupang_Secret_Key", "test")
 os.environ.setdefault("GEMINI_API_KEY", "test")
 os.environ.setdefault("OPENAI_API_KEY", "test")
-os.environ.setdefault("KIPRIS_API_KEY", "test")
 os.environ.setdefault("INTERNAL_SERVICE_TOKEN", "internal-test-token")
 
 import pytest
@@ -224,4 +223,3 @@ async def test_delete_endpoint_prevents_unauthorized_deletion(test_session):
         prod_in_db = prod_res.scalar_one_or_none()
         assert prod_in_db is not None
         assert prod_in_db.original_name == "Other User Product"
-

@@ -16,7 +16,6 @@ for key in (
     "Coupang_Secret_Key",
     "GEMINI_API_KEY",
     "OPENAI_API_KEY",
-    "KIPRIS_API_KEY",
 ):
     os.environ.setdefault(key, "test")
 
