@@ -398,7 +398,6 @@ async def start_processing(request: ProcessRequest):
         file_path,
         request.column_mapping,
         request.llm_provider,
-        request.kipris_enabled,
         request.vision_llm_provider,
     )
     return {"task_id": task.id}
@@ -683,7 +682,6 @@ async def start_db_processing(
         str(import_id),
         col_mapping,
         request.llm_provider,
-        request.kipris_enabled,
         None,
         request.vision_llm_provider,
     )
@@ -757,7 +755,6 @@ async def start_selected_products_processing(
         str(request.import_id) if request.import_id else None,
         request.column_mapping,
         request.llm_provider,
-        request.kipris_enabled,
         product_ids or None,
         request.vision_llm_provider,
     )

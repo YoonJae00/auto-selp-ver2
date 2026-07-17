@@ -15,19 +15,7 @@ def mock_llm():
 
 @pytest.mark.asyncio
 async def test_keyword_engine_curation_returns_warnings(mock_llm):
-    # KIPRIS 클라이언트 모킹
-    with patch("utils.keyword_engine.KiprisClient") as mock_kipris_class, \
-         patch("clients.naver_ad_client.NaverAdClient.get_keyword_stats") as mock_naver:
-        
-        mock_kipris = mock_kipris_class.return_value
-        # "동의어1"은 상표권이 있는 것으로 설정
-        async def mock_search(word):
-            if word == "동의어1":
-                return {"exists": True, "title": "동의어1 상표", "details": [{"title": "동의어1 상표"}]}
-            return {"exists": False, "title": "", "details": []}
-        
-        mock_kipris.search_trademark = AsyncMock(side_effect=mock_search)
-        
+    with patch("clients.naver_ad_client.NaverAdClient.get_keyword_stats") as mock_naver:
         mock_naver.return_value = {"keywordList": [{"relKeyword": "연관키워드1"}]}
         
         engine = KeywordEngine(mock_llm)
@@ -40,7 +28,7 @@ async def test_keyword_engine_curation_returns_warnings(mock_llm):
         # "동의어1"은 warnings에 있어야 함
         warning_keywords = [w["keyword"] for w in warnings]
         assert "동의어1" in warning_keywords
-        assert any(w["keyword"] == "동의어1" and w["info"]["exists"] for w in warnings)
+        assert any(w["keyword"] == "동의어1" and w["type"] == "llm_suspected" for w in warnings)
         
         # "테스트 상품", "연관키워드1" 등은 safe에 있어야 함
         assert "테스트 상품" in safe
@@ -50,11 +38,7 @@ async def test_keyword_engine_curation_returns_warnings(mock_llm):
 @pytest.mark.asyncio
 async def test_keyword_engine_trademark_blacklist(mock_llm):
     with patch("utils.keyword_engine.TRADEMARK_BLACKLIST", ["블랙리스트"]), \
-         patch("utils.keyword_engine.KiprisClient") as mock_kipris_class, \
          patch("clients.naver_ad_client.NaverAdClient.get_keyword_stats") as mock_naver:
-        
-        mock_kipris = mock_kipris_class.return_value
-        mock_kipris.search_trademark = AsyncMock(return_value={"exists": False, "title": "", "details": []})
         mock_naver.return_value = {"keywordList": [{"relKeyword": "블랙리스트 키워드"}]}
         
         engine = KeywordEngine(mock_llm)

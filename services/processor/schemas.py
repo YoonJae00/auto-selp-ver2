@@ -8,7 +8,6 @@ class ProcessRequest(BaseModel):
     column_mapping: Dict[str, Any]
     llm_provider: Optional[str] = "gemini"
     vision_llm_provider: Optional[str] = "gemini"
-    kipris_enabled: Optional[bool] = True
     wholesale_site_id: Optional[UUID] = None
     start_processing: Optional[bool] = True
 
@@ -136,7 +135,6 @@ class DBProcessRequest(BaseModel):
     column_mapping: Dict[str, Any]
     llm_provider: Optional[str] = "gemini"
     vision_llm_provider: Optional[str] = "gemini"
-    kipris_enabled: Optional[bool] = True
 
 # --- Wholesale Site Schemas ---
 

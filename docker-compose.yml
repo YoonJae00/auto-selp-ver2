@@ -84,20 +84,6 @@ services:
         condition: service_started
     restart: always
 
-  kipris-mcp:
-    image: python:3.11-slim
-    command: >
-      bash -c "apt-get update && apt-get install -y git &&
-      git clone https://github.com/nuri428/mcp_kipris.git /app &&
-      cd /app && pip install uv && uv sync && uv pip install fastapi uvicorn pydantic &&
-      uv run python /wrapper/kipris_wrapper.py"
-    environment:
-      - KIPRIS_API_KEY=${KIPRIS_API_KEY}
-    ports:
-      - "8080:8080"
-    volumes:
-      - ./services/kipris/kipris_wrapper.py:/wrapper/kipris_wrapper.py
-
 volumes:
   postgres_data:
   uploads_data:

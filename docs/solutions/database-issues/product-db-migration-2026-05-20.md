@@ -82,7 +82,7 @@ class ProductPlatformMapping(Base):
 Celery Task가 가동될 때 Excel을 읽어서 한 건씩 DB에 upsert하고, 실시간 가공 진행 상태 및 warnings를 DB 레코드에 direct 반영하도록 전면 수정하였습니다.
 ```python
 @shared_task(bind=True)
-def process_db_products_task(self, import_id: str, column_mapping: dict, llm_provider: str, kipris_enabled: bool):
+def process_db_products_task(self, import_id: str, column_mapping: dict, llm_provider: str):
     # Loop over pending products for this import_id and process them row-by-row
     # Update product status to 'processing' -> 'completed'/'failed'
     # Core-Platform Mapping insert
@@ -108,4 +108,3 @@ def process_db_products_task(self, import_id: str, column_mapping: dict, llm_pro
 
 ## Related Issues
 - GitHub #42 (Product DB Migration)
-- docs/solutions/architecture-patterns/kipris-api-cost-optimization.md

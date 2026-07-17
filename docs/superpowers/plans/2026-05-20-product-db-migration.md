@@ -132,7 +132,7 @@ sequenceDiagram
     
     loop pending 상품 순회
         Worker->>DB: 6. pending 상품 하나씩 조회
-        Worker->>LLM/KIPRIS: 7. 상품명 정제, 카테고리 분류, 상표권 조회
+        Worker->>LLM: 7. 상품명 정제, 카테고리 분류, 브랜드 의심어 분류
         Worker->>DB: 8. products 가공 데이터 및 status='completed' 업데이트
         Worker->>DB: 9. product_platform_mappings 테이블 생성/업데이트
     end

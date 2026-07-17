@@ -4,7 +4,6 @@ import { persist, createJSONStorage } from 'zustand/middleware';
 interface SettingsState {
   llmProvider: string;
   visionLlmProvider: string;
-  kiprisEnabled: boolean;
   columnMapping: {
     original_name: string;
     refined_name: string;
@@ -14,7 +13,6 @@ interface SettingsState {
   };
   setLlmProvider: (provider: string) => void;
   setVisionLlmProvider: (provider: string) => void;
-  setKiprisEnabled: (enabled: boolean) => void;
   setColumnMapping: (mapping: Partial<SettingsState['columnMapping']>) => void;
 }
 
@@ -23,7 +21,6 @@ export const useSettingsStore = create<SettingsState>()(
     (set) => ({
       llmProvider: 'gemini',
       visionLlmProvider: 'gemini',
-      kiprisEnabled: true,
       columnMapping: {
         original_name: '',
         refined_name: '정제상품명',
@@ -33,7 +30,6 @@ export const useSettingsStore = create<SettingsState>()(
       },
       setLlmProvider: (provider) => set({ llmProvider: provider }),
       setVisionLlmProvider: (provider) => set({ visionLlmProvider: provider }),
-      setKiprisEnabled: (enabled) => set({ kiprisEnabled: enabled }),
       setColumnMapping: (mapping) => 
         set((state) => ({ columnMapping: { ...state.columnMapping, ...mapping } })),
     }),

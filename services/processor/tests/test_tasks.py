@@ -13,7 +13,6 @@ os.environ.setdefault("Coupang_Access_Key", "test")
 os.environ.setdefault("Coupang_Secret_Key", "test")
 os.environ.setdefault("GEMINI_API_KEY", "test")
 os.environ.setdefault("OPENAI_API_KEY", "test")
-os.environ.setdefault("KIPRIS_API_KEY", "test")
 os.environ.setdefault("INTERNAL_SERVICE_TOKEN", "internal-test-token")
 
 from tasks import _run_pipeline
@@ -168,7 +167,7 @@ async def test_run_db_pipeline_delegates_products_to_langgraph_and_preserves_pro
         mock_keyword_engine_class.return_value = object()
         mock_category_mapper_class.return_value = object()
 
-        result = await _run_db_pipeline(mock_task, str(import_id), {}, "gemini", True)
+        result = await _run_db_pipeline(mock_task, str(import_id), {}, "gemini")
 
     assert result["status"] == "Completed"
     assert result["total"] == 2

@@ -634,7 +634,6 @@ export default function UploadPage() {
         column_mapping: columnMapping,
         wholesale_site_id: activeSite.id,
         llm_provider: 'gemini',
-        kipris_enabled: true,
         start_processing: false
       });
 

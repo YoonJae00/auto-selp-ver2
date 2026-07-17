@@ -162,7 +162,7 @@ class OpenAIClient(LLMClient):
     async def classify_brand_keywords(self, keywords: list[str]) -> dict:
         """
         키워드 목록을 배치로 분류: 브랜드 의심 vs 일반 명사
-        LLM 1회 호출로 처리 → KIPRIS 호출 최소화
+        LLM 1회 호출로 처리
         """
         if not keywords:
             return {"brand_suspected": [], "generic": []}
@@ -198,7 +198,7 @@ class OpenAIClient(LLMClient):
             return {"brand_suspected": brand_suspected, "generic": generic}
         except Exception as e:
             logger.error(f"OpenAI brand classification failed: {e}")
-            # 실패 시 모두 generic으로 처리 (KIPRIS 호출 안 함)
+            # 실패 시 모두 generic으로 처리
             return {"brand_suspected": [], "generic": keywords}
 
     async def _download_image(self, url: str) -> bytes | None:

@@ -22,7 +22,6 @@ def process_excel_task(
     file_path: str,
     column_mapping: dict,
     llm_provider: str = "gemini",
-    kipris_enabled: bool = True,
     vision_llm_provider: str = "gemini",
 ):
     """엑셀 가공 전체 파이프라인 Celery Task"""
@@ -31,7 +30,7 @@ def process_excel_task(
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
     return loop.run_until_complete(
-        _run_pipeline(self, file_path, column_mapping, llm_provider, kipris_enabled, vision_llm_provider)
+        _run_pipeline(self, file_path, column_mapping, llm_provider, vision_llm_provider)
     )
 
 
@@ -40,7 +39,6 @@ async def _run_pipeline(
     file_path: str,
     column_mapping: dict,
     llm_provider: str,
-    kipris_enabled: bool = True,
     vision_llm_provider: str = "gemini",
 ):
     df = pd.read_excel(file_path)
@@ -52,7 +50,7 @@ async def _run_pipeline(
         prompt_manager = PromptManager(db)
         llm_client = get_llm_client(llm_provider, prompt_manager)
         vision_llm_client = get_vision_llm_client(vision_llm_provider, prompt_manager)
-        keyword_engine = KeywordEngine(llm_client, kipris_enabled=kipris_enabled)
+        keyword_engine = KeywordEngine(llm_client)
         category_mapper = CategoryMapper()
 
         orig_col       = column_mapping.get("original_name")
@@ -205,7 +203,6 @@ def process_db_products_task(
     import_id: str | None,
     column_mapping: dict,
     llm_provider: str = "gemini",
-    kipris_enabled: bool = True,
     product_ids: list[str] | None = None,
     vision_llm_provider: str = "gemini",
 ):
@@ -215,7 +212,7 @@ def process_db_products_task(
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
     return loop.run_until_complete(
-        _run_db_pipeline(self, import_id, column_mapping, llm_provider, kipris_enabled, product_ids, vision_llm_provider)
+        _run_db_pipeline(self, import_id, column_mapping, llm_provider, product_ids, vision_llm_provider)
     )
 
 
@@ -224,7 +221,6 @@ async def _run_db_pipeline(
     import_id: str,
     column_mapping: dict,
     llm_provider: str,
-    kipris_enabled: bool = True,
     product_ids: list[str] | None = None,
     vision_llm_provider: str = "gemini",
 ):
@@ -267,7 +263,7 @@ async def _run_db_pipeline(
         prompt_manager = PromptManager(db)
         llm_client = get_llm_client(llm_provider, prompt_manager)
         vision_llm_client = get_vision_llm_client(vision_llm_provider, prompt_manager)
-        keyword_engine = KeywordEngine(llm_client, kipris_enabled=kipris_enabled)
+        keyword_engine = KeywordEngine(llm_client)
         category_mapper = CategoryMapper()
         marketplace_client = MarketplaceClient()
 
