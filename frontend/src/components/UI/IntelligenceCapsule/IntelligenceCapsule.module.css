@@ -44,101 +44,46 @@
     inset 0 0 0 1px rgba(255, 255, 255, 0.7);
 }
 
-/* Soft light core behind the aurora (adds glassy depth, no dark) */
+/* Smooth conic rainbow disc — blue→purple→pink→orange→cyan in spectral order
+   so the blurred blend stays clean (no muddy mixing). Rotates + hue-cycles to
+   "flow" like the Apple-Intelligence glow. Paused at rest; runs on hover/active. */
+.orbAurora {
+  position: absolute;
+  inset: -30%;
+  z-index: 0;
+  background: conic-gradient(
+    from 0deg,
+    #3b82f6, #8b5cf6, #ec4899, #f97316, #22d3ee, #3b82f6
+  );
+  filter: blur(9px) saturate(1.3);
+  will-change: transform, filter;
+  animation: orbSpin 7s linear infinite, auroraHue 12s linear infinite;
+}
+@keyframes auroraHue { to { filter: blur(9px) saturate(1.3) hue-rotate(360deg); } }
+
+/* Glass core: bright top-center highlight over the disc for a sphere feel */
 .orbCore {
   position: absolute;
   inset: 0;
   border-radius: 50%;
-  background: radial-gradient(circle at 50% 45%, rgba(255,255,255,0.75) 0%, rgba(255,255,255,0) 70%);
-  z-index: 0;
-}
-
-/* Aurora stack — hue cycles + slow circular rotation so colors flow around
-   the orb (Apple-Intelligence style). Paused at rest; runs on hover/active. */
-.orbAurora {
-  position: absolute;
-  inset: -20%;
   z-index: 1;
-  animation: auroraHue 14s linear infinite, orbSpin 9s linear infinite;
-}
-@keyframes auroraHue { to { filter: hue-rotate(360deg); } }
-
-/* Each aurora ribbon: organic asymmetric shape, blurred; normal-blend so
-   saturated color reads clearly over the light glass body */
-.auroraBlob {
-  position: absolute;
-  mix-blend-mode: normal;
-  filter: blur(7px);
-  opacity: 0.8;
-  will-change: transform, border-radius;
+  background: radial-gradient(circle at 50% 38%, rgba(255,255,255,0.72) 0%, rgba(255,255,255,0.15) 42%, rgba(255,255,255,0) 66%);
 }
 
-.blob1 { /* magenta / pink */
-  inset: 8% 20% 30% 6%;
-  background: radial-gradient(circle at 40% 40%, #ff2d95, #d81ce0 46%, transparent 72%);
-  border-radius: 60% 40% 55% 45%;
-  animation: blobMorphA 9s ease-in-out infinite;
-}
-.blob2 { /* cyan / blue */
-  inset: 22% 6% 10% 24%;
-  background: radial-gradient(circle at 55% 45%, #22e0ff, #2f6bff 50%, transparent 74%);
-  border-radius: 45% 55% 42% 58%;
-  animation: blobMorphB 11s ease-in-out infinite;
-}
-.blob3 { /* purple */
-  inset: 4% 10% 24% 26%;
-  background: radial-gradient(circle at 50% 50%, #a855f7, #6d28d9 48%, transparent 72%);
-  border-radius: 52% 48% 60% 40%;
-  animation: blobMorphC 13s ease-in-out infinite;
-}
-.blob4 { /* orange */
-  inset: 34% 30% 6% 12%;
-  background: radial-gradient(circle at 50% 50%, #ff9d3c, #ff5e3a 50%, transparent 72%);
-  border-radius: 50% 50% 45% 55%;
-  opacity: 0.75;
-  animation: blobMorphD 10s ease-in-out infinite;
-}
-
-@keyframes blobMorphA {
-  0%,100% { transform: rotate(0deg) scale(1);      border-radius: 60% 40% 55% 45%; }
-  50%     { transform: rotate(180deg) scale(1.15); border-radius: 42% 58% 40% 60%; }
-}
-@keyframes blobMorphB {
-  0%,100% { transform: rotate(0deg) scale(1.05);   border-radius: 45% 55% 42% 58%; }
-  50%     { transform: rotate(-160deg) scale(0.9); border-radius: 58% 42% 60% 40%; }
-}
-@keyframes blobMorphC {
-  0%,100% { transform: rotate(0deg) scale(0.95);   border-radius: 52% 48% 60% 40%; }
-  50%     { transform: rotate(200deg) scale(1.2);  border-radius: 40% 60% 45% 55%; }
-}
-@keyframes blobMorphD {
-  0%,100% { transform: rotate(0deg) scale(1);        border-radius: 50% 50% 45% 55%; }
-  50%     { transform: rotate(-220deg) scale(1.12);  border-radius: 60% 40% 55% 45%; }
-}
-
-/* State: active swirls faster; completed/failure calm down + tint via hue-rotate */
-.orbActive  .orbAurora  { animation-duration: 8s; }
-.orbActive  .auroraBlob { animation-duration: 6.5s; opacity: 1; }
-.orbSuccess .orbAurora,
-.orbFailure .orbAurora  { animation: none; }
-.orbSuccess .orbAurora  { filter: hue-rotate(70deg) saturate(0.9); }
-.orbFailure .orbAurora  { filter: hue-rotate(-40deg) saturate(1.2); }
-.orbSuccess .auroraBlob,
-.orbFailure .auroraBlob { animation-duration: 16s; }
+/* State: only speed differs. Same rainbow palette in every state —
+   status is conveyed by the glyph (✓/✕) and the outer glow color. */
+.orbActive .orbAurora { animation-duration: 4s, 8s; }
 
 /* Idle = frozen. Only flow on hover or while a task is running (.orbActive).
    Pausing (not stopping) keeps position continuous across hover in/out. */
 .orbAurora,
-.auroraBlob,
 .orbGlowNear,
 .orbGlowFar { animation-play-state: paused; }
 
 .orb:hover .orbAurora,
-.orb:hover .auroraBlob,
 .orb:hover .orbGlowNear,
 .orb:hover .orbGlowFar,
 .orbActive .orbAurora,
-.orbActive .auroraBlob,
 .orbActive .orbGlowNear,
 .orbActive .orbGlowFar { animation-play-state: running; }
 
@@ -175,11 +120,11 @@
   will-change: transform;
   background: conic-gradient(
     from 0deg,
-    rgba(255,45,149,0.7), rgba(47,107,255,0.7), rgba(168,85,247,0.7),
-    rgba(255,157,60,0.6), rgba(255,45,149,0.7)
+    rgba(59,130,246,0.7), rgba(139,92,246,0.7), rgba(236,72,153,0.65),
+    rgba(249,115,22,0.6), rgba(34,211,238,0.65), rgba(59,130,246,0.7)
   );
   filter: blur(12px);
-  opacity: 0.75;
+  opacity: 0.7;
   animation: orbSpin 10s linear infinite;
 }
 .orbGlowFar {
@@ -189,17 +134,19 @@
   z-index: -2;
   pointer-events: none;
   will-change: transform, opacity;
-  background: radial-gradient(circle, rgba(150,60,255,0.5), rgba(40,10,90,0) 70%);
+  background: radial-gradient(circle, rgba(130,90,246,0.45), rgba(40,10,90,0) 70%);
   filter: blur(28px);
-  opacity: 0.65;
+  opacity: 0.6;
   animation: orbBreathe 6s ease-in-out infinite;
 }
 
+/* Active: brighter, faster. Failure: red glow. Success/idle: calm default glow. */
 .orbActive .orbGlowNear { animation-duration: 5s; opacity: 0.95; }
 .orbActive .orbGlowFar  { animation: orbPulse 2.4s ease-in-out infinite; opacity: 0.95; }
-.orbSuccess .orbGlowNear { filter: blur(12px) hue-rotate(70deg); opacity: 0.5; }
-.orbFailure .orbGlowNear { filter: blur(12px) hue-rotate(-40deg); }
-.orbSuccess .orbGlowFar  { background: radial-gradient(circle, rgba(52,211,153,0.5), rgba(10,60,50,0) 70%); }
+.orbFailure .orbGlowNear {
+  background: conic-gradient(from 0deg,
+    rgba(255,60,90,0.75), rgba(255,120,80,0.6), rgba(255,60,90,0.75));
+}
 .orbFailure .orbGlowFar  { background: radial-gradient(circle, rgba(255,60,90,0.55), rgba(90,10,20,0) 70%); }
 
 /* Progress ring (conic sweep masked into a thin ring around the orb) */
@@ -241,9 +188,8 @@
 .orbIcon { font-size: 24px; font-weight: 700; line-height: 1; }
 
 @media (prefers-reduced-motion: reduce) {
-  .orbAurora              { animation-duration: 40s; }
-  .auroraBlob             { animation-duration: 30s; }
-  .orbActive .auroraBlob  { animation-duration: 24s; }
+  .orbAurora              { animation-duration: 30s, 40s; }
+  .orbActive .orbAurora   { animation-duration: 20s, 30s; }
   .orbGlowNear            { animation-duration: 30s; }
   .orbActive .orbGlowFar  { animation-duration: 8s; }
   .orb                    { transition-duration: 0.4s; }
