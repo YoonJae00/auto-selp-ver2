@@ -73,6 +73,18 @@ LEGACY_FIELD_ALIASES = {
     "image_list_1": ["images_list"],
 }
 
+WHOLESALE_STATUS_MAP = {
+    "정상": "판매중",
+    "판매중": "판매중",
+    "품절": "품절",
+    "일시품절": "품절",
+    "판매중지": "판매중지",
+    "중지": "판매중지",
+    "단종": "단종",
+}
+WHOLESALE_STATUS_VALUES = tuple(WHOLESALE_STATUS_MAP)
+UNAVAILABLE_WHOLESALE_STATUSES = {"품절", "판매중지", "단종"}
+
 
 def is_blank(value: Any) -> bool:
     if value is None:
@@ -93,6 +105,11 @@ def clean_text(value: Any) -> str | None:
     if isinstance(value, (datetime, pd.Timestamp)):
         return value.isoformat()
     return str(value).strip()
+
+
+def normalize_wholesale_status(value: Any) -> str | None:
+    text = clean_text(value)
+    return WHOLESALE_STATUS_MAP.get(text) if text else None
 
 
 def resolve_field_header(field_name: str, mapping: dict[str, Any], columns: list[str]) -> str | None:
@@ -485,7 +502,7 @@ def build_standard_options(
     option_skus = split_csv_text(option_skus_raw)
     product_code_text = clean_text(product_code) or ""
     status_text = clean_text(wholesale_status) or ""
-    option_usable = status_text not in {"품절", "판매중지", "중지"}
+    option_usable = status_text not in UNAVAILABLE_WHOLESALE_STATUSES
 
     standard_options: list[dict[str, Any]] = []
     for index, option_name in enumerate(option_names):
@@ -621,12 +638,24 @@ def parse_wholesale_row(row: pd.Series, mapping: dict[str, Any]) -> dict[str, An
         mapped_values["option_price_deltas_raw"],
     )
     warnings = list(option_result["warnings"])
+    raw_wholesale_status = clean_text(mapped_values["wholesale_status"])
+    wholesale_status = normalize_wholesale_status(raw_wholesale_status)
+    invalid_wholesale_status = raw_wholesale_status is not None and wholesale_status is None
+    if invalid_wholesale_status:
+        warnings.append(
+            {
+                "code": "invalid_wholesale_status",
+                "field": "wholesale_status",
+                "message": "Unsupported wholesale status.",
+                "raw_value": raw_wholesale_status,
+            }
+        )
     standard_options = (
         []
-        if option_result["warnings"]
+        if option_result["warnings"] or invalid_wholesale_status
         else build_standard_options(
             product_code=mapped_values["product_code"],
-            wholesale_status=mapped_values["wholesale_status"],
+            wholesale_status=wholesale_status,
             option_values_raw=mapped_values["option_values_raw"],
             price_wholesale_raw=mapped_values["price_wholesale_raw"],
             option_image_urls_raw=mapped_values["option_image_urls_raw"],
@@ -647,7 +676,7 @@ def parse_wholesale_row(row: pd.Series, mapping: dict[str, Any]) -> dict[str, An
             )
 
     product_data = {
-        "wholesale_status": clean_text(mapped_values["wholesale_status"]),
+        "wholesale_status": wholesale_status,
         "wholesale_product_id": clean_text(mapped_values["wholesale_product_id"]),
         "product_code": clean_text(mapped_values["product_code"]),
         "original_name": clean_text(mapped_values["original_name"]) or "",

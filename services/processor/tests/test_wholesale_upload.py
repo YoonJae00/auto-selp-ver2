@@ -1,4 +1,5 @@
 import pandas as pd
+import pytest
 
 from utils.wholesale_upload import (
     REQUIRED_WHOLESALE_FIELDS,
@@ -203,7 +204,7 @@ def test_parse_wholesale_row_normalizes_supplier_schema():
         "wholesale_registered_at": "등록일",
     }
     parsed = parse_wholesale_row(row, mapping)
-    assert parsed["product_data"]["wholesale_status"] == "정상"
+    assert parsed["product_data"]["wholesale_status"] == "판매중"
     assert parsed["product_data"]["wholesale_product_id"] == "12345"
     assert parsed["product_data"]["product_code"] == "ABC-001"
     assert parsed["product_data"]["original_name"] == "테스트 상품"
@@ -304,7 +305,7 @@ def test_parse_wholesale_row_emits_standard_options_with_images_and_price_deltas
             "option_sale_price": None,
             "option_price_delta": 0,
             "option_stock_quantity": None,
-            "option_status": "정상",
+            "option_status": "판매중",
             "option_usable": True,
             "option_main_image_url": "https://img.example/black.jpg",
             "option_extra_image_urls": [],
@@ -331,7 +332,7 @@ def test_parse_wholesale_row_emits_standard_options_with_images_and_price_deltas
             "option_sale_price": None,
             "option_price_delta": 1000,
             "option_stock_quantity": None,
-            "option_status": "정상",
+            "option_status": "판매중",
             "option_usable": True,
             "option_main_image_url": "https://img.example/large.jpg",
             "option_extra_image_urls": [],
@@ -343,6 +344,62 @@ def test_parse_wholesale_row_emits_standard_options_with_images_and_price_deltas
                 "option_image_urls_raw": "https://img.example/black.jpg,https://img.example/large.jpg",
             },
         },
+    ]
+
+
+@pytest.mark.parametrize(
+    ("raw_status", "canonical_status"),
+    [("일시품절", "품절"), ("중지", "판매중지"), ("단종", "단종")],
+)
+def test_parse_wholesale_row_normalizes_unavailable_statuses(raw_status, canonical_status):
+    row = pd.Series(
+        {
+            "상태": raw_status,
+            "제품번호": "12345",
+            "상품코드": "ABC-001",
+            "상품명": "테스트 상품",
+            "옵션값": "블랙",
+            "가격": "12000",
+            "원산지": "국내",
+            "목록이미지1": "https://img.example/1.jpg",
+            "상세이미지": "https://img.example/detail.jpg",
+        }
+    )
+
+    parsed = parse_wholesale_row(row, {})
+
+    assert parsed["product_data"]["wholesale_status"] == canonical_status
+    assert parsed["product_data"]["standard_options"][0]["option_status"] == canonical_status
+    assert parsed["product_data"]["standard_options"][0]["option_usable"] is False
+    assert parsed["warnings"] == []
+
+
+def test_parse_wholesale_row_rejects_unknown_status_and_suppresses_options():
+    row = pd.Series(
+        {
+            "상태": " 정상상태 ",
+            "제품번호": "12345",
+            "상품코드": "ABC-001",
+            "상품명": "테스트 상품",
+            "옵션값": "블랙",
+            "가격": "12000",
+            "원산지": "국내",
+            "목록이미지1": "https://img.example/1.jpg",
+            "상세이미지": "https://img.example/detail.jpg",
+        }
+    )
+
+    parsed = parse_wholesale_row(row, {})
+
+    assert parsed["product_data"]["wholesale_status"] is None
+    assert parsed["product_data"]["standard_options"] == []
+    assert parsed["warnings"] == [
+        {
+            "code": "invalid_wholesale_status",
+            "field": "wholesale_status",
+            "message": "Unsupported wholesale status.",
+            "raw_value": "정상상태",
+        }
     ]
 
 

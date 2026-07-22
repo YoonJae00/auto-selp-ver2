@@ -463,6 +463,110 @@ async def test_mapping_suggestion_repair_is_owned_sanitized_and_previewed(test_d
 
 
 @pytest.mark.anyio
+async def test_mapping_preview_rejects_unknown_wholesale_status(test_db, tmp_path, monkeypatch):
+    user_id = uuid.uuid4()
+    site_id = uuid.uuid4()
+    file_id = str(uuid.uuid4())
+    (tmp_path / f"{file_id}_products.xlsx").write_bytes(b"placeholder")
+    mapping = {
+        "wholesale_status": "상태",
+        "wholesale_product_id": "제품번호",
+        "product_code": "상품코드",
+        "original_name": "상품명",
+        "price_wholesale_raw": "가격",
+        "origin": "원산지",
+        "image_list_1": "목록이미지1",
+        "image_detail": "상세이미지",
+    }
+    row = {
+        "상태": "정상상태",
+        "제품번호": "W-1",
+        "상품코드": "P-1",
+        "상품명": "테스트 상품",
+        "가격": "1000",
+        "원산지": "국내",
+        "목록이미지1": "u1",
+        "상세이미지": "d1",
+    }
+    monkeypatch.setattr(processor_main, "UPLOAD_DIR", str(tmp_path))
+    monkeypatch.setattr(processor_main.pd, "read_excel", lambda *_args, **_kwargs: pd.DataFrame([row]))
+
+    async with test_db() as session:
+        session.add(WholesaleSite(id=site_id, user_id=user_id, name="공급처", column_mapping=mapping))
+        await session.commit()
+
+        with pytest.raises(HTTPException) as exc_info:
+            await processor_main.preview_wholesale_site_mapping(
+                site_id,
+                WholesaleMappingPreviewRequest(file_id=file_id, column_mapping=mapping),
+                current_user={"id": user_id},
+                db=session,
+            )
+
+    assert exc_info.value.status_code == 400
+    assert "row 1" in exc_info.value.detail
+    assert "정상상태" in exc_info.value.detail
+    assert "판매중" in exc_info.value.detail
+    assert "일시품절" in exc_info.value.detail
+
+
+@pytest.mark.anyio
+async def test_process_db_rejects_unknown_status_before_mutation(test_db, tmp_path, monkeypatch):
+    user_id = uuid.uuid4()
+    site_id = uuid.uuid4()
+    file_id = str(uuid.uuid4())
+    (tmp_path / f"{file_id}_products.xlsx").write_bytes(b"placeholder")
+    mapping = {
+        "wholesale_status": "상태",
+        "wholesale_product_id": "제품번호",
+        "product_code": "상품코드",
+        "original_name": "상품명",
+        "price_wholesale_raw": "가격",
+        "origin": "원산지",
+        "image_list_1": "목록이미지1",
+        "image_detail": "상세이미지",
+    }
+    row = {
+        "상태": "정상상태",
+        "제품번호": "W-1",
+        "상품코드": "P-1",
+        "상품명": "테스트 상품",
+        "가격": "1000",
+        "원산지": "국내",
+        "목록이미지1": "u1",
+        "상세이미지": "d1",
+    }
+    monkeypatch.setattr(processor_main, "UPLOAD_DIR", str(tmp_path))
+    monkeypatch.setattr(processor_main.pd, "read_excel", lambda *_args, **_kwargs: pd.DataFrame([row]))
+
+    async with test_db() as session:
+        session.add(WholesaleSite(id=site_id, user_id=user_id, name="공급처", column_mapping=mapping))
+        await session.commit()
+
+        with pytest.raises(HTTPException) as exc_info:
+            await processor_main.start_db_processing(
+                ProcessRequest(
+                    file_id=file_id,
+                    column_mapping={},
+                    wholesale_site_id=site_id,
+                    start_processing=False,
+                ),
+                current_user={"id": user_id},
+                db=session,
+            )
+
+        assert exc_info.value.status_code == 400
+        assert "row 1" in exc_info.value.detail
+        assert "정상상태" in exc_info.value.detail
+        assert await session.scalar(
+            select(func.count()).select_from(ProductImport).where(ProductImport.user_id == user_id)
+        ) == 0
+        assert await session.scalar(
+            select(func.count()).select_from(Product).where(Product.user_id == user_id)
+        ) == 0
+
+
+@pytest.mark.anyio
 async def test_process_db_only_imports_new_and_supplier_scoped_changes(test_db, tmp_path, monkeypatch):
     user_id = uuid.uuid4()
     site_id = uuid.uuid4()
