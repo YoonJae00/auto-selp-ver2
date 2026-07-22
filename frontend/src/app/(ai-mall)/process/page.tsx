@@ -430,7 +430,7 @@ export default function ProcessPage() {
   const handleGenerateMarketplaceNames = async () => {
     if (!smartstoreSelected || completedSelectedIds.length === 0) return;
 
-    const taskId = crypto.randomUUID();
+    const taskId = `smartstore-naming-${Date.now()}`;
     addTask({
       id: taskId,
       filename: `${activeSite?.name || '선택'} 상품`,

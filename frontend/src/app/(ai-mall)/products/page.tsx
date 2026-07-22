@@ -526,16 +526,28 @@ export default function ProductsPage() {
     const firstLabel = first.option_display_name || first.option_sku || '-';
 
     return (
-      <div className={styles.standardOptionPreview}>
-        {first.option_main_image_url ? (
-          <img src={first.option_main_image_url} alt="" className={styles.standardOptionImage} />
-        ) : null}
-        <div className={styles.standardOptionText}>
-          <span className={styles.optionCount}>옵션 {product.standard_options.length}개</span>
-          <span>{firstLabel}</span>
-          <span>{formatPrice(first.option_supply_price)}</span>
-        </div>
-      </div>
+      <details className={styles.optionDetails}>
+        <summary className={styles.optionSummary}>
+          <span className={styles.standardOptionPreview}>
+            {first.option_main_image_url ? (
+              <img src={first.option_main_image_url} alt="" className={styles.standardOptionImage} />
+            ) : null}
+            <span className={styles.standardOptionText}>
+              <span className={styles.optionCount}>옵션 {product.standard_options.length}개</span>
+              <span>{firstLabel}</span>
+              <span>{formatPrice(first.option_supply_price)}</span>
+            </span>
+          </span>
+        </summary>
+        <ul className={styles.optionTree}>
+          {product.standard_options.map((option, index) => (
+            <li key={`${product.id}-${option.option_sku || option.option_display_name}-${index}`} className={styles.optionItem}>
+              <span className={styles.optionName}>{option.option_display_name || option.option_sku || '-'}</span>
+              <span className={styles.optionPrice}>{formatPrice(option.option_supply_price)}</span>
+            </li>
+          ))}
+        </ul>
+      </details>
     );
   };
 

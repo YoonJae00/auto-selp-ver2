@@ -48,6 +48,7 @@ from schemas import (
 from utils.prompt_manager import PromptManager
 from utils.wholesale_upload import (
     STANDARD_PRODUCT_EXAMPLE,
+    WHOLESALE_STATUS_VALUES,
     build_mapping_preview,
     json_safe_row,
     parse_wholesale_row,
@@ -189,6 +190,7 @@ def mapping_preview_response(
     mapping_warnings: list[str] | None = None,
 ):
     preview, row_warnings = build_mapping_preview(dataframe, mapping)
+    reject_invalid_wholesale_status(row_warnings)
     warnings = [{"message": warning} for warning in (mapping_warnings or [])] + row_warnings
     missing = validate_required_mappings(mapping, list(dataframe.columns))
     if missing:
@@ -200,6 +202,22 @@ def mapping_preview_response(
         "warnings": warnings,
         "notes": notes or [],
     }
+
+
+def reject_invalid_wholesale_status(warnings: list[dict]):
+    invalid = [warning for warning in warnings if warning.get("code") == "invalid_wholesale_status"]
+    if not invalid:
+        return
+    values = ", ".join(WHOLESALE_STATUS_VALUES)
+    errors = "; ".join(
+        f"row {warning['row']}: {warning.get('raw_value', '')!r}"
+        for warning in invalid
+    )
+    raise HTTPException(
+        status_code=400,
+        detail=f"Invalid wholesale status ({errors}). Allowed values: {values}",
+    )
+
 
 @app.post("/wholesale-sites", response_model=WholesaleSiteResponse)
 async def create_wholesale_site(
@@ -457,16 +475,20 @@ async def start_db_processing(
         )
 
     parsed_rows = []
-    for _, row in df.iterrows():
+    row_warnings_with_numbers = []
+    for row_number, (_, row) in enumerate(df.iterrows(), start=1):
         parsed_row = parse_wholesale_row(row, col_mapping)
         product_data = parsed_row["product_data"]
         row_warnings = parsed_row["warnings"]
+        row_warnings_with_numbers.extend({"row": row_number, **warning} for warning in row_warnings)
         product_warnings = (
             {"warnings": row_warnings, "supplier_warnings": row_warnings}
             if row_warnings
             else None
         )
         parsed_rows.append((product_data, product_warnings))
+
+    reject_invalid_wholesale_status(row_warnings_with_numbers)
 
     duplicate_codes = [
         code

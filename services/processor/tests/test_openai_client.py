@@ -84,3 +84,7 @@ async def test_wholesale_mapping_uses_direct_parse_without_beta_access():
         "notes": ["상품코드는 자체상품코드를 사용합니다."],
     }
     parse.assert_awaited_once()
+    prompt = parse.call_args.kwargs["messages"][1]["content"]
+    assert "map that source only to price_wholesale_raw" in prompt
+    assert "do not map it to option_price_deltas_raw" in prompt
+    assert "first price as the base wholesale price and computes deltas (0,1000)" in prompt
