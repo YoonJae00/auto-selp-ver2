@@ -590,6 +590,10 @@
   flex: none;
 }
 
+.keywordDetails[open] .keywordMore {
+  display: none;
+}
+
 .keywordDetails,
 .attributeDetails {
   min-width: 220px;
