@@ -1,6 +1,8 @@
 import { AuthState } from '@/store/authTypes';
 
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost';
+const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/+$/, '');
+
+export const apiUrl = (path: string) => `${API_BASE_URL}${path}`;
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const isFormData = options.body instanceof FormData;
@@ -11,7 +13,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     ...options.headers,
   };
 
-  const response = await fetch(`${BASE_URL}${path}`, {
+  const response = await fetch(apiUrl(path), {
     ...options,
     headers,
     credentials: 'include', // Important for sending/receiving cookies

@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { api } from '@/lib/api';
+import { api, apiUrl } from '@/lib/api';
 import { changeTooltip } from '@/lib/fieldChanges';
 import PillButton from '@/components/UI/PillButton/PillButton';
 import styles from './products.module.css';
@@ -475,8 +475,7 @@ export default function ProductsPage() {
         product_ids: Array.from(selectedIds),
       };
 
-      const BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost';
-      const response = await fetch(`${BASE_URL}/api/processor/products/export`, {
+      const response = await fetch(apiUrl('/api/processor/products/export'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { useTaskStore } from '@/store/taskStore';
 import { useAuthStore } from '@/store/authStore';
-import { api } from '@/lib/api';
+import { api, apiUrl } from '@/lib/api';
 
 /**
  * Hook to poll the status of active tasks (PENDING or PROGRESS)
@@ -48,7 +48,7 @@ export function useTaskPolling() {
               warnings: res.meta.warnings,
             });
           } else if (res.state === 'SUCCESS') {
-            const downloadUrl = `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost'}/api/processor/download/${task.id}`;
+            const downloadUrl = apiUrl(`/api/processor/download/${task.id}`);
             updateTask(task.id, { 
               progress: 100, 
               status: 'SUCCESS', 
