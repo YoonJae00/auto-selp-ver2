@@ -38,7 +38,7 @@ export interface Task {
   startTime: number;
   warnings?: Record<number, any[]>;
   result?: any;
-  kind?: 'ai-processing' | 'smartstore-naming';
+  kind?: 'ai-processing' | 'smartstore-naming' | 'main-image-processing';
   poll?: boolean;
 }
 

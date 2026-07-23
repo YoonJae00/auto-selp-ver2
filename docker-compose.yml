@@ -61,6 +61,19 @@ services:
       - uploads_data:/app/uploads
     restart: always
 
+  image-worker:
+    build: ./services/processor
+    command: celery -A tasks.celery_app worker --loglevel=info -Q image --concurrency=1
+    env_file: .env
+    environment:
+      U2NET_HOME: /app/uploads/.u2net
+    depends_on:
+      - db
+      - redis
+    volumes:
+      - uploads_data:/app/uploads
+    restart: always
+
   marketplace:
     build: ./services/marketplace
     env_file: .env

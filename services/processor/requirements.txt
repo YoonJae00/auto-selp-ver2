@@ -8,6 +8,8 @@ celery
 pandas
 openpyxl
 httpx
+Pillow
+rembg[cpu]
 pytest
 pytest-asyncio
 respx

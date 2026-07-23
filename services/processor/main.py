@@ -8,7 +8,7 @@ import pandas as pd
 from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, Request, Header
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
-from typing import Dict, Optional, List
+from typing import Dict, Optional, List, Literal
 from celery.result import AsyncResult
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, func, text, delete
@@ -20,7 +20,7 @@ import urllib.parse
 from collections import Counter
 from datetime import datetime
 
-from tasks import process_excel_task, process_db_products_task
+from tasks import process_excel_task, process_db_products_task, process_main_images_task
 from celery_app import celery_app
 from database import get_db, engine, Base
 from models import Prompt, ProcessingTask, ProductImport, Product, ProductPlatformMapping, WholesaleSite, ProductChangeLog
@@ -44,6 +44,8 @@ from schemas import (
     ProductDeleteResponse,
     WholesaleMappingSuggestionRequest,
     WholesaleMappingPreviewRequest,
+    MainImageProcessRequest,
+    MainImageProcessResponse,
 )
 from utils.prompt_manager import PromptManager
 from utils.wholesale_upload import (
@@ -56,6 +58,12 @@ from utils.wholesale_upload import (
     validate_required_mappings,
 )
 from utils.product_name import select_product_name
+from utils.main_image import (
+    delete_processed_image,
+    has_processed_image,
+    processed_image_path,
+    processed_main_image_url,
+)
 from clients.llm_factory import get_llm_client
 from clients.marketplace_client import MarketplaceClient
 from clients.openai_client import OpenAIClient
@@ -543,6 +551,7 @@ async def start_db_processing(
     )
     db.add(import_run)
     new_count = updated_count = unchanged_count = reprocess_count = 0
+    processed_images_to_delete = []
     # (product, change_type, changed_fields, field_changes) — logs built after flush so new product ids resolve.
     change_specs = []
 
@@ -581,6 +590,10 @@ async def start_db_processing(
             existing_product.field_changes = field_changes
             existing_product.warnings = product_warnings
             existing_product.raw_metadata = product_data["raw_metadata"]
+            if "images_list" in changed_fields:
+                existing_product.processed_image_path = None
+                existing_product.image_processing_status = "not_started"
+                processed_images_to_delete.append((existing_product.user_id, existing_product.id))
 
             changed_at = datetime.utcnow()
             for platform_mapping in existing_product.platform_mappings:
@@ -672,6 +685,8 @@ async def start_db_processing(
     if not request.start_processing:
         import_run.status = "imported"
         await db.commit()
+        for user_id, product_id in processed_images_to_delete:
+            delete_processed_image(user_id, product_id)
         return {
             "task_id": None,
             "import_id": import_id,
@@ -686,6 +701,8 @@ async def start_db_processing(
     if reprocess_count == 0:
         import_run.status = "completed"
         await db.commit()
+        for user_id, product_id in processed_images_to_delete:
+            delete_processed_image(user_id, product_id)
         return {
             "task_id": None,
             "import_id": import_id,
@@ -698,6 +715,8 @@ async def start_db_processing(
         }
 
     await db.commit()
+    for user_id, product_id in processed_images_to_delete:
+        delete_processed_image(user_id, product_id)
 
     # 3. Celery 비동기 태스크 시작
     task = process_db_products_task.delay(
@@ -720,6 +739,47 @@ async def start_db_processing(
         "removed_count": removed_count,
         "reprocessed_count": reprocess_count,
     }
+
+
+@app.post("/products/process-main-images", response_model=MainImageProcessResponse)
+async def start_main_image_processing(
+    request: MainImageProcessRequest,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    product_ids = list(dict.fromkeys(request.product_ids))
+    result = await db.execute(
+        select(Product).where(
+            Product.user_id == current_user["id"],
+            Product.id.in_(product_ids),
+        )
+    )
+    products = result.scalars().all()
+    if len(products) != len(product_ids):
+        raise HTTPException(status_code=404, detail="Some selected products were not found.")
+
+    ineligible = [
+        product.id
+        for product in products
+        if product.status != "completed"
+        or not next(
+            (url.strip() for url in (product.images_list or []) if isinstance(url, str) and url.strip()),
+            None,
+        )
+    ]
+    if ineligible:
+        raise HTTPException(
+            status_code=422,
+            detail="Selected products must be completed and have a representative image URL.",
+        )
+
+    task = process_main_images_task.apply_async(
+        args=[str(current_user["id"]), [str(product_id) for product_id in product_ids]],
+        queue="image",
+    )
+    db.add(ProcessingTask(task_id=task.id, user_id=current_user["id"]))
+    await db.commit()
+    return {"task_id": task.id, "total": len(product_ids)}
 
 
 @app.post("/process-products")
@@ -797,6 +857,9 @@ async def list_products(
     size: int = 20,
     search: Optional[str] = None,
     status: Optional[str] = None,
+    image_processing_status: Optional[
+        Literal["not_started", "processing", "completed", "failed"]
+    ] = None,
     import_id: Optional[uuid.UUID] = None,
     wholesale_site_id: Optional[uuid.UUID] = None,
     needs_sync: Optional[bool] = None,
@@ -814,6 +877,8 @@ async def list_products(
         filters.append(Product.original_name.ilike(f"%{search}%"))
     if status:
         filters.append(Product.status == status)
+    if image_processing_status:
+        filters.append(Product.image_processing_status == image_processing_status)
     if import_id:
         filters.append(Product.import_id == import_id)
     if wholesale_site_id:
@@ -863,6 +928,13 @@ async def product_stats(
     status_result = await db.execute(status_stmt)
     counts = {status: count for status, count in status_result.all()}
 
+    image_status_result = await db.execute(
+        select(Product.image_processing_status, func.count())
+        .where(Product.user_id == current_user["id"], *site_filter)
+        .group_by(Product.image_processing_status)
+    )
+    image_counts = {status: count for status, count in image_status_result.all()}
+
     named_stmt = (
         select(func.count())
         .select_from(ProductPlatformMapping)
@@ -882,8 +954,28 @@ async def product_stats(
         "processing": counts.get("processing", 0),
         "completed": counts.get("completed", 0),
         "failed": counts.get("failed", 0),
-        "smartstore_named": named_result.scalar() or 0
+        "smartstore_named": named_result.scalar() or 0,
+        "image_completed": image_counts.get("completed", 0),
+        "image_failed": image_counts.get("failed", 0),
     }
+
+
+@app.get("/products/{product_id}/processed-main-image")
+async def get_processed_main_image(
+    product_id: uuid.UUID,
+    current_user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(Product).where(
+            Product.id == product_id,
+            Product.user_id == current_user["id"],
+        )
+    )
+    product = result.scalar_one_or_none()
+    if not product or not has_processed_image(product):
+        raise HTTPException(status_code=404, detail="Processed image not found.")
+    return FileResponse(processed_image_path(product.user_id, product.id), media_type="image/jpeg")
 
 
 @app.post("/products/generate-marketplace-names", response_model=MarketplaceNameResponse)
@@ -1043,7 +1135,11 @@ async def get_marketplace_snapshot(
             "minimum_selling": product.price_min_selling,
         },
         "images": {
-            "list": product.images_list or [],
+            "list": (
+                [processed_main_image_url(product), *(product.images_list or [])[1:]]
+                if has_processed_image(product)
+                else product.images_list or []
+            ),
             "detail_content": product.image_detail,
         },
         "options": product.option_variants or [],
@@ -1178,6 +1274,9 @@ async def delete_products(
     )
     res_del = await db.execute(del_stmt)
     await db.commit()
+
+    for product_id in target_ids:
+        delete_processed_image(current_user["id"], product_id)
 
     deleted_count = res_del.rowcount
     return ProductDeleteResponse(

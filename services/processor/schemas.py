@@ -1,4 +1,4 @@
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 from datetime import datetime
 from typing import Optional, Dict, List, Any, Literal
 from uuid import UUID
@@ -48,6 +48,7 @@ class ProductPlatformMappingResponse(BaseModel):
 
 class ProductResponse(BaseModel):
     id: UUID
+    user_id: UUID = Field(exclude=True)
     import_id: Optional[UUID] = None
     wholesale_site_id: Optional[UUID] = None
     product_code: Optional[str] = None
@@ -62,6 +63,8 @@ class ProductResponse(BaseModel):
     option_variants: Optional[List] = None
     standard_options: Optional[List[Dict[str, Any]]] = None
     images_list: Optional[List] = None
+    image_processing_status: Literal["not_started", "processing", "completed", "failed"] = "not_started"
+    processed_image_path: Optional[str] = Field(default=None, exclude=True)
     image_detail: Optional[str] = None
     wholesale_status: Optional[str] = None
     wholesale_registered_at: Optional[str] = None
@@ -81,6 +84,13 @@ class ProductResponse(BaseModel):
     platform_mappings: List[ProductPlatformMappingResponse] = []
     model_config = ConfigDict(from_attributes=True)
 
+    @computed_field
+    @property
+    def processed_main_image_url(self) -> Optional[str]:
+        from utils.main_image import processed_main_image_url
+
+        return processed_main_image_url(self)
+
 class ProductListResponse(BaseModel):
     total: int
     page: int
@@ -94,6 +104,17 @@ class ProductStatsResponse(BaseModel):
     completed: int
     failed: int
     smartstore_named: int
+    image_completed: int
+    image_failed: int
+
+
+class MainImageProcessRequest(BaseModel):
+    product_ids: List[UUID] = Field(min_length=1)
+
+
+class MainImageProcessResponse(BaseModel):
+    task_id: str
+    total: int
 
 class ProductImportResponse(BaseModel):
     id: UUID

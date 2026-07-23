@@ -1,6 +1,8 @@
 import asyncio
 import time
 import re as _re
+import uuid
+from datetime import datetime
 import pandas as pd
 import logging
 from celery_app import celery_app
@@ -12,6 +14,7 @@ from clients.llm_factory import get_llm_client, get_vision_llm_client
 from clients.marketplace_client import MarketplaceClient
 from database import SessionLocal
 from graphs.product_processor import ProductProcessingContext, process_product_with_graph
+from utils.main_image import download_image, process_main_image, save_processed_image
 
 logger = logging.getLogger(__name__)
 
@@ -332,4 +335,124 @@ async def _run_db_pipeline(
         "completed_rows": completed_rows,
         "total": total_rows,
         "import_id": import_id,
+    }
+
+
+@celery_app.task(bind=True)
+def process_main_images_task(self, user_id: str, product_ids: list[str]):
+    """Process representative images serially on the dedicated image queue."""
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    if loop.is_closed():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    return loop.run_until_complete(_run_main_image_pipeline(self, user_id, product_ids))
+
+
+async def _run_main_image_pipeline(task_instance, user_id: str, product_ids: list[str]):
+    from models import Product
+    from sqlalchemy import select
+
+    user_uuid = uuid.UUID(user_id)
+    product_uuids = [uuid.UUID(product_id) for product_id in product_ids]
+    completed_rows: list[dict] = []
+    all_warnings: dict[str, list[dict]] = {}
+    total_rows = len(product_uuids)
+    marketplace_client = MarketplaceClient()
+
+    async with SessionLocal() as db:
+        result = await db.execute(
+            select(Product).where(Product.user_id == user_uuid, Product.id.in_(product_uuids))
+        )
+        products_by_id = {product.id: product for product in result.scalars().all()}
+
+        for index, product_id in enumerate(product_uuids):
+            product = products_by_id.get(product_id)
+            current_name = product.original_name if product else str(product_id)
+            row = {"product_id": str(product_id), "name": current_name}
+
+            task_instance.update_state(
+                state="PROGRESS",
+                meta={
+                    "percent": int(index / total_rows * 100) if total_rows else 100,
+                    "current": index + 1,
+                    "total": total_rows,
+                    "stage": "main_image_processing",
+                    "current_name": current_name,
+                    "completed_rows": completed_rows,
+                    "warnings": all_warnings,
+                },
+            )
+
+            try:
+                if product is None:
+                    raise ValueError("Product no longer exists.")
+                source_url = next(
+                    (
+                        url.strip()
+                        for url in (product.images_list or [])
+                        if isinstance(url, str) and url.strip()
+                    ),
+                    None,
+                )
+                if product.status != "completed" or not source_url:
+                    raise ValueError("Product is not eligible for representative image processing.")
+
+                product.image_processing_status = "processing"
+                await db.commit()
+
+                source_bytes = await download_image(source_url)
+                output_bytes = process_main_image(source_bytes, product.id)
+                output_path = save_processed_image(output_bytes, product.user_id, product.id)
+                product.processed_image_path = str(output_path)
+                product.image_processing_status = "completed"
+                product.updated_at = datetime.now()
+                await db.commit()
+                row["status"] = "completed"
+
+                try:
+                    await marketplace_client.request_draft_generation(product)
+                except Exception as error:
+                    logger.error(
+                        "Failed to refresh marketplace drafts after image processing for %s: %s",
+                        product.id,
+                        error,
+                    )
+            except Exception as error:
+                warning = {
+                    "stage": "main_image_processing",
+                    "key": "main_image_processing",
+                    "message": str(error),
+                }
+                all_warnings[str(product_id)] = [warning]
+                row.update({"status": "failed", "error": str(error)})
+                if product is not None:
+                    product.image_processing_status = "failed"
+                    product.warnings = merge_product_warnings(product.warnings, warning)
+                    product.updated_at = datetime.now()
+                    await db.commit()
+                logger.error("Representative image processing failed for %s: %s", product_id, error)
+
+            completed_rows.append(row)
+            task_instance.update_state(
+                state="PROGRESS",
+                meta={
+                    "percent": int((index + 1) / total_rows * 100) if total_rows else 100,
+                    "current": index + 1,
+                    "total": total_rows,
+                    "stage": "completed_row",
+                    "current_name": current_name,
+                    "completed_rows": completed_rows,
+                    "warnings": all_warnings,
+                },
+            )
+
+    return {
+        "status": "Completed",
+        "warnings": all_warnings,
+        "completed_rows": completed_rows,
+        "total": total_rows,
     }

@@ -31,7 +31,11 @@ const STAGE_META: Record<string, { label: string; icon: string }> = {
 
 const STAGE_ORDER = ['refining', 'keywords', 'categorizing', 'extracting'];
 
-const taskLabel = (task: Task) => task.kind === 'smartstore-naming' ? '스마트스토어 상품명' : 'AI 기본 가공';
+const taskLabel = (task: Task) => ({
+  'ai-processing': 'AI 기본 가공',
+  'smartstore-naming': '스마트스토어 상품명',
+  'main-image-processing': '대표이미지 AI',
+}[task.kind || 'ai-processing']);
 
 function formatMs(ms: number): string {
   return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`;
@@ -245,7 +249,7 @@ function DetailModal({ task, onClose }: { task: Task; onClose: () => void }) {
         </div>
 
         {/* Download */}
-        {task.status === 'SUCCESS' && task.resultPath && (
+        {task.kind !== 'main-image-processing' && task.status === 'SUCCESS' && task.resultPath && (
           <div className={styles.downloadSection}>
             <a href={task.resultPath} className={styles.downloadBtn} target="_blank" rel="noopener noreferrer">
               ⬇ 결과 파일 다운로드

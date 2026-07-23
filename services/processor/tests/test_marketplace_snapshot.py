@@ -141,7 +141,7 @@ def test_marketplace_snapshot_success(monkeypatch):
         response = client.get(
             f"/internal/products/{product_id}/marketplace-snapshot",
             params={"user_id": str(user_id)},
-            headers={"X-Internal-Service-Token": "internal-test-token"},
+            headers={"X-Internal-Service-Token": processor_main.settings.INTERNAL_SERVICE_TOKEN},
         )
     finally:
         processor_main.app.dependency_overrides.clear()
@@ -224,6 +224,37 @@ def test_marketplace_snapshot_success(monkeypatch):
     assert len(stmt._with_options) == 1
 
 
+def test_marketplace_snapshot_prefers_existing_processed_image(monkeypatch, tmp_path):
+    from utils import main_image
+
+    product_id = uuid.uuid4()
+    user_id = uuid.uuid4()
+    product = build_product(product_id, user_id)
+    product.image_processing_status = "completed"
+    monkeypatch.setattr(main_image, "PROCESSED_IMAGE_ROOT", tmp_path)
+    target = main_image.processed_image_path(user_id, product_id)
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"jpeg")
+    product.processed_image_path = str(target)
+    fake_db = FakeDB(product=product)
+    client = make_client(fake_db, monkeypatch)
+
+    try:
+        response = client.get(
+            f"/internal/products/{product_id}/marketplace-snapshot",
+            params={"user_id": str(user_id)},
+            headers={"X-Internal-Service-Token": processor_main.settings.INTERNAL_SERVICE_TOKEN},
+        )
+    finally:
+        processor_main.app.dependency_overrides.clear()
+        client.close()
+
+    assert response.status_code == 200
+    images = response.json()["images"]["list"]
+    assert images[0].startswith(f"/api/processor/products/{product_id}/processed-main-image?v=")
+    assert images[1:] == ["https://img.example/2.jpg"]
+
+
 def test_marketplace_snapshot_keywords_null_returns_empty_list(monkeypatch):
     product_id = uuid.uuid4()
     user_id = uuid.uuid4()
@@ -236,7 +267,7 @@ def test_marketplace_snapshot_keywords_null_returns_empty_list(monkeypatch):
         response = client.get(
             f"/internal/products/{product_id}/marketplace-snapshot",
             params={"user_id": str(user_id)},
-            headers={"X-Internal-Service-Token": "internal-test-token"},
+            headers={"X-Internal-Service-Token": processor_main.settings.INTERNAL_SERVICE_TOKEN},
         )
     finally:
         processor_main.app.dependency_overrides.clear()
@@ -284,7 +315,7 @@ def test_marketplace_snapshot_returns_404_for_absent_or_wrong_owner(monkeypatch)
         wrong_owner = client.get(
             f"/internal/products/{product_id}/marketplace-snapshot",
             params={"user_id": str(other_user_id)},
-            headers={"X-Internal-Service-Token": "internal-test-token"},
+            headers={"X-Internal-Service-Token": processor_main.settings.INTERNAL_SERVICE_TOKEN},
         )
     finally:
         processor_main.app.dependency_overrides.clear()
@@ -298,7 +329,7 @@ def test_marketplace_snapshot_returns_404_for_absent_or_wrong_owner(monkeypatch)
         absent = absent_client.get(
             f"/internal/products/{uuid.uuid4()}/marketplace-snapshot",
             params={"user_id": str(owner_id)},
-            headers={"X-Internal-Service-Token": "internal-test-token"},
+            headers={"X-Internal-Service-Token": processor_main.settings.INTERNAL_SERVICE_TOKEN},
         )
     finally:
         processor_main.app.dependency_overrides.clear()
@@ -335,7 +366,7 @@ def test_marketplace_snapshot_prefers_explicit_smartstore_over_legacy_naver(monk
             response = client.get(
                 f"/internal/products/{product_id}/marketplace-snapshot",
                 params={"user_id": str(user_id)},
-                headers={"X-Internal-Service-Token": "internal-test-token"},
+                headers={"X-Internal-Service-Token": processor_main.settings.INTERNAL_SERVICE_TOKEN},
             )
         finally:
             processor_main.app.dependency_overrides.clear()
@@ -385,7 +416,7 @@ def test_marketplace_snapshot_with_list_attributes(monkeypatch):
         response = client.get(
             f"/internal/products/{product_id}/marketplace-snapshot",
             params={"user_id": str(user_id)},
-            headers={"X-Internal-Service-Token": "internal-test-token"},
+            headers={"X-Internal-Service-Token": processor_main.settings.INTERNAL_SERVICE_TOKEN},
         )
     finally:
         processor_main.app.dependency_overrides.clear()

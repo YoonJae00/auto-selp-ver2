@@ -448,6 +448,23 @@
   width: 76px;
 }
 
+.imageComparisonCell {
+  width: 140px;
+  min-width: 140px;
+}
+
+.imageComparison {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.comparisonArrow {
+  color: var(--ink-muted-48);
+  font-size: 13px;
+  font-weight: 800;
+}
+
 .productImage,
 .imagePlaceholder {
   width: 52px;
@@ -787,6 +804,11 @@
 }
 
 .status_pending {
+  background: #eef2ff;
+  color: #4f46e5;
+}
+
+.status_not_started {
   background: #eef2ff;
   color: #4f46e5;
 }

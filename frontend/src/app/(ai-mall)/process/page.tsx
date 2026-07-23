@@ -38,6 +38,8 @@ interface Product {
   option_variants?: { name: string; price_wholesale: number | null; position: number }[] | null;
   images_list: string[] | null;
   image_detail: string | null;
+  image_processing_status: 'not_started' | 'processing' | 'completed' | 'failed';
+  processed_main_image_url: string | null;
   wholesale_status: string | null;
   original_name: string;
   refined_name: string | null;
@@ -63,6 +65,8 @@ interface ProcessorStats {
   completed: number;
   failed: number;
   smartstore_named: number;
+  image_completed: number;
+  image_failed: number;
 }
 
 interface MarketplaceNameResponse {
@@ -85,16 +89,29 @@ const formatPrice = (value: number | null) => {
   return `${value.toLocaleString('ko-KR')}원`;
 };
 
-const firstImage = (product: Product) => {
+const originalFirstImage = (product: Product) => {
   const image = product.images_list?.find(Boolean) || product.image_detail;
   return image || '';
 };
+
+const firstImage = (product: Product) => product.processed_main_image_url || originalFirstImage(product);
+
+const hasProcessableImage = (product: Product) => (
+  product.status === 'completed' && !!product.images_list?.some((image) => image?.trim())
+);
 
 const processingStatusLabel: Record<Product['status'], string> = {
   pending: '대기',
   processing: '가공 중',
   completed: '완료',
   failed: '실패',
+};
+
+const imageProcessingStatusLabel: Record<Product['image_processing_status'], string> = {
+  not_started: '미가공',
+  processing: '가공 중',
+  completed: '완료',
+  failed: '확인 필요',
 };
 
 // ─── Attribute Parsing Helpers (DRY & Type-Safe) ───────────────────────────────
@@ -194,9 +211,10 @@ export default function ProcessPage() {
   const [isLoadingProducts, setIsLoadingProducts] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
   const [isGeneratingMarketplaceNames, setIsGeneratingMarketplaceNames] = useState(false);
-  const [workMode, setWorkMode] = useState<'ai' | 'marketplace'>('ai');
+  const [workMode, setWorkMode] = useState<'ai' | 'marketplace' | 'image'>('ai');
   const [smartstoreSelected, setSmartstoreSelected] = useState(true);
   const [statusFilter, setStatusFilter] = useState('');
+  const [imageStatusFilter, setImageStatusFilter] = useState('');
   const [completedOnly, setCompletedOnly] = useState(false);
   const [sortMode, setSortMode] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -210,11 +228,15 @@ export default function ProcessPage() {
     [activeSiteId, wholesaleSites],
   );
   const totalPages = Math.ceil(total / pageSize) || 1;
-  const isAllSelected = products.length > 0 && products.every((product) => selectedIds.has(product.id));
+  const selectableProducts = workMode === 'image'
+    ? products.filter(hasProcessableImage)
+    : products;
+  const isAllSelected = selectableProducts.length > 0 && selectableProducts.every((product) => selectedIds.has(product.id));
   const completedSelectedIds = useMemo(
     () => products.filter((product) => selectedIds.has(product.id) && product.status === 'completed').map((product) => product.id),
     [products, selectedIds],
   );
+  const imageEligibleSelectedIds = Array.from(selectedIds);
 
   useEffect(() => {
     const fetchSites = async () => {
@@ -252,8 +274,11 @@ export default function ProcessPage() {
       if (activeSearchQuery.trim()) {
         params.append('search', activeSearchQuery.trim());
       }
-      const effectiveStatus = workMode === 'marketplace' ? 'completed' : completedOnly ? 'completed' : statusFilter;
+      const effectiveStatus = workMode !== 'ai' ? 'completed' : completedOnly ? 'completed' : statusFilter;
       if (effectiveStatus) params.append('status', effectiveStatus);
+      if (workMode === 'image' && imageStatusFilter) {
+        params.append('image_processing_status', imageStatusFilter);
+      }
       if (sortMode === 'price_asc') {
         params.append('sort_by', 'price_wholesale');
         params.append('sort_order', 'asc');
@@ -273,7 +298,7 @@ export default function ProcessPage() {
     } finally {
       setIsLoadingProducts(false);
     }
-  }, [activeSiteId, page, pageSize, statusFilter, completedOnly, sortMode, activeSearchQuery, workMode]);
+  }, [activeSiteId, page, pageSize, statusFilter, imageStatusFilter, completedOnly, sortMode, activeSearchQuery, workMode]);
 
   useEffect(() => {
     fetchProducts();
@@ -306,7 +331,7 @@ export default function ProcessPage() {
   useEffect(() => {
     setSelectedIds(new Set());
     setPage(1);
-  }, [statusFilter, completedOnly, sortMode, activeSearchQuery, pageSize, workMode]);
+  }, [statusFilter, imageStatusFilter, completedOnly, sortMode, activeSearchQuery, pageSize, workMode]);
 
   // Memoize a map of completed rows by product name from all active tasks
   const completedRowsMap = useMemo(() => {
@@ -319,6 +344,7 @@ export default function ProcessPage() {
     }>();
 
     tasks.forEach((task) => {
+      if (task.kind === 'main-image-processing') return;
       // Process finished/active task rows
       if (task.completedRows) {
         task.completedRows.forEach((row) => {
@@ -385,12 +411,44 @@ export default function ProcessPage() {
   const togglePage = (checked: boolean) => {
     setSelectedIds((current) => {
       const next = new Set(current);
-      products.forEach((product) => {
+      selectableProducts.forEach((product) => {
         if (checked) next.add(product.id);
         else next.delete(product.id);
       });
       return next;
     });
+  };
+
+  const handleStartImageProcessing = async () => {
+    if (!activeSite || imageEligibleSelectedIds.length === 0) return;
+
+    setIsStarting(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const response = await api.post<{ task_id: string; total: number }>(
+        '/api/processor/products/process-main-images',
+        { product_ids: imageEligibleSelectedIds },
+      );
+
+      addTask({
+        id: response.task_id,
+        filename: `${activeSite.name} 대표이미지`,
+        progress: 0,
+        total: response.total,
+        status: 'PENDING',
+        startTime: Date.now(),
+        kind: 'main-image-processing',
+      });
+
+      setSuccess(`${response.total}개 대표이미지 가공을 시작했습니다. 오른쪽 하단 진행 캡슐에서 상태를 확인할 수 있습니다.`);
+      setSelectedIds(new Set());
+      fetchProducts();
+    } catch (err: any) {
+      setError(err.message || '대표이미지 가공 시작 중 오류가 발생했습니다.');
+    } finally {
+      setIsStarting(false);
+    }
   };
 
   const handleStartSelectedProcessing = async () => {
@@ -573,16 +631,24 @@ export default function ProcessPage() {
 
               <span className={styles.connector} aria-hidden="true" />
 
-              <div className={`${styles.stageCard} ${styles.disabledStage}`} aria-disabled="true">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={workMode === 'image'}
+                className={`${styles.stageCard} ${workMode === 'image' ? styles.activeStage : ''}`}
+                onClick={() => setWorkMode('image')}
+              >
                 <span className={styles.stageNum}>3</span>
                 <span className={styles.stageBody}>
-                  <span className={styles.stageName}>
-                    대표이미지 AI
-                    <span className={styles.comingBadge}>출시 예정</span>
-                  </span>
-                  <span className={styles.stageDesc}>대표 이미지 자동 생성</span>
+                  <span className={styles.stageName}>대표이미지 AI</span>
+                  <span className={styles.stageDesc}>상품은 유지하고 배경 · 그림자 · 여백 가공</span>
+                  {stats && (
+                    <span className={styles.stageStats}>
+                      가공 완료 {stats.image_completed} · 확인 필요 {stats.image_failed}
+                    </span>
+                  )}
                 </span>
-              </div>
+              </button>
 
               <span className={styles.connector} aria-hidden="true" />
 
@@ -618,6 +684,19 @@ export default function ProcessPage() {
                   <p className={styles.eligibilityNote}>
                     선택 {selectedIds.size}개 중 <strong>AI 가공 완료 {completedSelectedIds.length}개</strong>만 대상
                     {selectedIds.size > completedSelectedIds.length && ` · 미완료 ${selectedIds.size - completedSelectedIds.length}개 제외`}
+                  </p>
+                )}
+              </div>
+            )}
+
+            {workMode === 'image' && (
+              <div className={styles.marketPanel} role="tabpanel">
+                <p className={styles.eligibilityNote}>
+                  상품 모양과 색상은 유지하고, 배경 제거 후 세 가지 스튜디오 프리셋 중 하나로 대표이미지를 가공합니다.
+                </p>
+                {selectedIds.size > 0 && (
+                  <p className={styles.eligibilityNote}>
+                    선택 {selectedIds.size}개 중 <strong>대표이미지 가공 가능 {imageEligibleSelectedIds.length}개</strong>가 대상입니다.
                   </p>
                 )}
               </div>
@@ -672,6 +751,19 @@ export default function ProcessPage() {
                 </select>
               </label>}
 
+              {workMode === 'image' && <label className={styles.filterGroup}>
+                <span>대표이미지 상태</span>
+                <select
+                  value={imageStatusFilter}
+                  onChange={(event) => setImageStatusFilter(event.target.value)}
+                >
+                  <option value="">전체</option>
+                  <option value="not_started">미가공</option>
+                  <option value="completed">완료</option>
+                  <option value="failed">확인 필요</option>
+                </select>
+              </label>}
+
               <label className={styles.filterGroup}>
                 <span>정렬</span>
                 <select
@@ -720,7 +812,9 @@ export default function ProcessPage() {
               <span className={styles.hintDot} aria-hidden="true" />
               {workMode === 'ai'
                 ? '아래 목록에서 가공할 상품을 선택하세요 — 선택하면 시작 버튼이 나타납니다'
-                : 'AI 가공이 완료된 상품을 선택하세요'}
+                : workMode === 'marketplace'
+                  ? 'AI 가공이 완료된 상품을 선택하세요'
+                  : '원본 대표이미지가 있는 상품을 선택하세요 — 상품 형태는 그대로 유지됩니다'}
             </div>
           )}
 
@@ -733,12 +827,15 @@ export default function ProcessPage() {
                       type="checkbox"
                       checked={isAllSelected}
                       onChange={(event) => togglePage(event.target.checked)}
+                      disabled={selectableProducts.length === 0}
                       title="현재 페이지 전체 선택"
-                      aria-label="현재 페이지 전체 선택"
+                      aria-label={workMode === 'image' ? '현재 페이지의 대표이미지 가공 가능 상품 전체 선택' : '현재 페이지 전체 선택'}
                     />
                   </th>
-                  <th>가공상태</th>
-                  <th className={styles.imageCell}>원본 사진</th>
+                  <th>{workMode === 'image' ? '대표이미지 상태' : '가공상태'}</th>
+                  <th className={`${styles.imageCell} ${workMode === 'image' ? styles.imageComparisonCell : ''}`}>
+                    {workMode === 'image' ? '원본 → 가공' : '대표 사진'}
+                  </th>
                   <th>상품명</th>
                   <th>옵션</th>
                   <th>가공된 상품명</th>
@@ -762,26 +859,31 @@ export default function ProcessPage() {
                 )}
                 {!isLoadingProducts && products.map((product) => {
                   const imageUrl = firstImage(product);
+                  const originalImageUrl = originalFirstImage(product);
                   const realTimeUpdate = completedRowsMap.get(product.original_name);
                   const displayStatus = realTimeUpdate ? realTimeUpdate.status : product.status;
+                  const rowStatus = workMode === 'image' ? product.image_processing_status : displayStatus;
                   const displayRefinedName = realTimeUpdate && realTimeUpdate.refined_name ? realTimeUpdate.refined_name : product.refined_name;
                   const displayKeywords = realTimeUpdate && realTimeUpdate.keywords ? realTimeUpdate.keywords : product.keywords;
                   const smartstoreProductName = product.platform_mappings?.find((mapping) => mapping.platform_name === 'naver')?.product_name;
                   const hasAiResult = displayStatus === 'completed' && (!!displayRefinedName || (displayKeywords?.length ?? 0) > 0);
                   return (
-                    <tr key={product.id} className={`${selectedIds.has(product.id) ? styles.selectedRow : ''} ${displayStatus === 'processing' ? styles.processingRow : ''}`.trim()}>
+                    <tr key={product.id} className={`${selectedIds.has(product.id) ? styles.selectedRow : ''} ${rowStatus === 'processing' ? styles.processingRow : ''}`.trim()}>
                       <td className={styles.checkboxCell}>
                         <input
                           type="checkbox"
                           checked={selectedIds.has(product.id)}
                           onChange={(event) => toggleProduct(product.id, event.target.checked)}
+                          disabled={workMode === 'image' && !hasProcessableImage(product)}
                           aria-label={`${product.original_name} 선택`}
                         />
                       </td>
                       <td>
                         <div className={styles.statusCell}>
-                          <span className={`${styles.statusBadge} ${styles[`status_${displayStatus}`] || ''}`}>
-                            {processingStatusLabel[displayStatus]}
+                          <span className={`${styles.statusBadge} ${styles[`status_${rowStatus}`] || ''}`}>
+                            {workMode === 'image'
+                              ? imageProcessingStatusLabel[product.image_processing_status]
+                              : processingStatusLabel[displayStatus]}
                           </span>
                           {product.change_type && (
                             <span
@@ -793,9 +895,19 @@ export default function ProcessPage() {
                           )}
                         </div>
                       </td>
-                      <td className={styles.imageCell}>
-                        {imageUrl ? (
-                          <img src={imageUrl} alt="" className={styles.productImage} />
+                      <td className={`${styles.imageCell} ${workMode === 'image' ? styles.imageComparisonCell : ''}`}>
+                        {workMode === 'image' && product.image_processing_status === 'completed' && originalImageUrl && product.processed_main_image_url ? (
+                          <div className={styles.imageComparison}>
+                            <img src={originalImageUrl} alt={`${product.original_name} 원본 대표이미지`} className={styles.productImage} />
+                            <span className={styles.comparisonArrow} aria-hidden="true">→</span>
+                            <img src={product.processed_main_image_url} alt={`${product.original_name} 가공 대표이미지`} className={styles.productImage} />
+                          </div>
+                        ) : imageUrl ? (
+                          <img
+                            src={workMode === 'image' ? originalImageUrl || imageUrl : imageUrl}
+                            alt={`${product.original_name} ${workMode === 'image' ? '원본 대표이미지' : '대표이미지'}`}
+                            className={styles.productImage}
+                          />
                         ) : (
                           <div className={styles.imagePlaceholder}>이미지 없음</div>
                         )}
@@ -903,10 +1015,18 @@ export default function ProcessPage() {
                 <div className={styles.selectionCopy}>
                   {workMode === 'ai' ? (
                     <strong>선택한 {selectedIds.size}개 상품을 기본 AI 가공합니다</strong>
-                  ) : (
+                  ) : workMode === 'marketplace' ? (
                     <strong>선택 {selectedIds.size}개 중 AI 가공 완료 {completedSelectedIds.length}개가 대상입니다</strong>
+                  ) : (
+                    <strong>선택한 {imageEligibleSelectedIds.length}개 상품의 대표이미지를 가공합니다</strong>
                   )}
-                  <span>{workMode === 'ai' ? '상품명, 키워드, 카테고리와 속성을 만듭니다' : '선택한 마켓에 맞는 상품명을 만듭니다'}</span>
+                  <span>
+                    {workMode === 'ai'
+                      ? '상품명, 키워드, 카테고리와 속성을 만듭니다'
+                      : workMode === 'marketplace'
+                        ? '선택한 마켓에 맞는 상품명을 만듭니다'
+                        : '상품은 유지하고 배경, 그림자와 여백만 조정합니다'}
+                  </span>
                 </div>
               </div>
               <div className={styles.selectionActions}>
@@ -926,7 +1046,7 @@ export default function ProcessPage() {
                   >
                     {isStarting ? '가공 시작 중...' : `선택 상품 가공 (${selectedIds.size})`}
                   </PillButton>
-                ) : (
+                ) : workMode === 'marketplace' ? (
                   <PillButton
                     variant="primary"
                     onClick={handleGenerateMarketplaceNames}
@@ -934,6 +1054,15 @@ export default function ProcessPage() {
                     type="button"
                   >
                     {isGeneratingMarketplaceNames ? '상품명 만드는 중...' : `상품명 만들기 (${completedSelectedIds.length})`}
+                  </PillButton>
+                ) : (
+                  <PillButton
+                    variant="primary"
+                    onClick={handleStartImageProcessing}
+                    disabled={imageEligibleSelectedIds.length === 0 || isStarting || isGeneratingMarketplaceNames}
+                    type="button"
+                  >
+                    {isStarting ? '대표이미지 가공 시작 중...' : `대표이미지 가공 (${imageEligibleSelectedIds.length})`}
                   </PillButton>
                 )}
               </div>

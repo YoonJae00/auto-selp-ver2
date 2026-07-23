@@ -94,6 +94,8 @@ class Product(Base):
     option_variants: Mapped[list | None] = mapped_column(JSON, nullable=True)
     standard_options: Mapped[list | None] = mapped_column(JSON, nullable=True)
     images_list: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    processed_image_path: Mapped[str | None] = mapped_column(String, nullable=True)
+    image_processing_status: Mapped[str] = mapped_column(String, default="not_started", nullable=False)
     image_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
     wholesale_status: Mapped[str | None] = mapped_column(String, nullable=True)
     wholesale_registered_at: Mapped[str | None] = mapped_column(String, nullable=True)
